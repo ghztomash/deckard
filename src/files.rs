@@ -2,13 +2,14 @@ use chrono::prelude::*;
 use infer::Type;
 use std::{
     fmt::{self, Display},
-    fs::{self, DirEntry, FileType},
+    fs::{self, DirEntry, FileType, File},
     os::unix::fs::MetadataExt,
     path::PathBuf,
-    time::SystemTime,
 };
+use colored::*;
+use chksum::md5;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum EntryType {
     File,
     Dir,
@@ -48,7 +49,7 @@ impl Display for EntryType {
 
 #[derive(Debug)]
 pub struct FileEntry {
-    pub id: u64,
+    pub id: String,
     pub path: PathBuf,
     pub name: String,
     pub prefix: String,
@@ -59,17 +60,21 @@ pub struct FileEntry {
     pub mime_type: Option<Type>,
     pub size: u64,
     pub depth: usize,
-    pub hash: Option<u64>,
+    pub hash: Option<String>,
     pub processed: bool,
 }
 
 impl FileEntry {
     pub fn new(entry: DirEntry, depth: usize) -> Self {
         let metadata = entry.metadata().unwrap();
+        let path = fs::canonicalize(&entry.path()).unwrap_or(entry.path());
+
+        let digest = md5::hash(path.to_str().unwrap());
+
         Self {
-            id: 0,
-            path: fs::canonicalize(&entry.path()).unwrap_or(entry.path()),
-            name: entry.file_name().into_string().unwrap_or_default(),
+            id: digest.to_hex_lowercase(),
+            path,
+            name: entry.file_name().into_string().unwrap(),
             prefix: entry
                 .path()
                 .file_stem()
@@ -87,13 +92,19 @@ impl FileEntry {
             file_type: EntryType::new(entry.file_type()),
             created: metadata.created().unwrap().into(),
             modified: metadata.modified().unwrap().into(),
-            // mime_type: infer::get_from_path(entry.path()).unwrap(),
             mime_type: None,
             size: metadata.size(),
             depth,
             hash: None,
             processed: false,
         }
+    }
+
+    pub fn process(&mut self) {
+        self.mime_type = infer::get_from_path(&self.path).ok().flatten();
+        let file = File::open(&self.path).unwrap();
+        self.hash = md5::chksum(file).map(|digest| digest.to_hex_lowercase()).ok();
+        self.processed = true;
     }
 }
 
@@ -102,10 +113,15 @@ impl Display for FileEntry {
         _ = write!(f, "{}", "  ".to_string().repeat(self.depth));
         write!(
             f,
-            "{}  {} {}B",
-            self.file_type,
-            self.name,
-            self.size,
+            "{} {} {} : {}",
+            if self.file_type == EntryType::Dir {
+                format!("{}  {}", self.file_type, self.name).bright_green().to_string()
+            } else {
+                format!("{}  {}", self.file_type, self.name.bold())
+            },
+            format!("{} B", self.size).to_string().yellow(),
+            self.created.format("%Y-%m-%d %H:%M:%S").to_string().bright_blue(),
+            self.id.purple(),
         )
     }
 }

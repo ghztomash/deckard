@@ -9,10 +9,11 @@ pub fn visit_dirs(dir: &Path, depth: usize) -> std::io::Result<()> {
             let entry = entry?;
             let path = entry.path();
 
-            let file = FileEntry::new(entry, depth);
-            println!("{:#?}", file);
-
-            if path.is_dir() {
+            if path.is_file() {
+                let file = FileEntry::new(entry, depth);
+                //println!("{:#?}", file);
+                println!("{}", file);
+            } else if path.is_dir() {
                 visit_dirs(&path, depth + 1).unwrap();
             }
         }
