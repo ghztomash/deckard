@@ -4,7 +4,7 @@ use files::FileEntry;
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
-pub fn visit_dirs(dirs: HashSet<PathBuf>) {
+pub fn visit_dirs(dirs: HashSet<PathBuf>) -> HashMap<String, FileEntry> {
     let mut files: HashMap<String, FileEntry> = HashMap::new();
     let mut dirs: HashSet<PathBuf> = HashSet::from(dirs);
 
@@ -19,6 +19,7 @@ pub fn visit_dirs(dirs: HashSet<PathBuf>) {
     }
 
     //println!("{:#?}", files);
+    files
 }
 
 pub fn visit_dir(dir: &Path, depth: usize) -> (HashMap<String, FileEntry>, HashSet<PathBuf>) {

@@ -9,7 +9,9 @@ use std::{
     path::PathBuf,
 };
 
-#[derive(Debug, Eq, PartialEq)]
+use std::collections::HashSet;
+
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum EntryType {
     File,
     Dir,
@@ -47,7 +49,7 @@ impl Display for EntryType {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FileEntry {
     pub id: String,
     pub path: PathBuf,
@@ -61,6 +63,8 @@ pub struct FileEntry {
     pub size: u64,
     pub depth: usize,
     pub hash: Option<String>,
+    pub checked: HashSet<String>,
+    pub matching: HashSet<String>,
     pub processed: bool,
 }
 
@@ -96,6 +100,8 @@ impl FileEntry {
             size: metadata.size(),
             depth,
             hash: None,
+            checked: HashSet::new(),
+            matching: HashSet::new(),
             processed: false,
         }
     }
@@ -107,6 +113,30 @@ impl FileEntry {
             .map(|digest| digest.to_hex_lowercase())
             .ok();
         self.processed = true;
+    }
+
+    pub fn compare(&self, other: &Self) -> bool {
+        let mut matching = false;
+
+        if self.size == other.size {
+            println!("{} and {} have the same size", self.name, other.name);
+
+            //self.matching.insert(other.id.clone());
+            //other.matching.insert(self.id.clone());
+
+            if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
+                matching = true;
+            }
+        }
+
+        //self.checked.insert(other.id.clone());
+        //other.checked.insert(self.id.clone());
+
+        matching
+    }
+
+    pub fn matches(&mut self, other: String) {
+        self.matching.insert(other);
     }
 }
 
