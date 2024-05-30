@@ -1,15 +1,15 @@
+use chksum::md5;
 use chrono::prelude::*;
+use colored::*;
 use infer::Type;
 use std::{
     fmt::{self, Display},
-    fs::{self, DirEntry, FileType, File},
+    fs::{self, DirEntry, File, FileType},
     os::unix::fs::MetadataExt,
     path::PathBuf,
 };
-use colored::*;
-use chksum::md5;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum EntryType {
     File,
     Dir,
@@ -40,14 +40,14 @@ impl Display for EntryType {
         let symbol = match self {
             EntryType::File => "",
             EntryType::Dir => "",
-            EntryType::Symlink => "l",
+            EntryType::Symlink => "󰈲",
             EntryType::Unknown => "?",
         };
         write!(f, "{}", symbol)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct FileEntry {
     pub id: String,
     pub path: PathBuf,
@@ -67,7 +67,7 @@ pub struct FileEntry {
 impl FileEntry {
     pub fn new(entry: DirEntry, depth: usize) -> Self {
         let metadata = entry.metadata().unwrap();
-        let path = fs::canonicalize(&entry.path()).unwrap_or(entry.path());
+        let path = fs::canonicalize(entry.path()).unwrap_or(entry.path());
 
         let digest = md5::hash(path.to_str().unwrap());
 
@@ -81,7 +81,7 @@ impl FileEntry {
                 .and_then(|os_str| os_str.to_str())
                 .map(|s| s.to_string())
                 .unwrap_or_default()
-                .split(".")
+                .split('.')
                 .collect::<Vec<&str>>()[0]
                 .to_string(),
             extention: entry
@@ -103,7 +103,9 @@ impl FileEntry {
     pub fn process(&mut self) {
         self.mime_type = infer::get_from_path(&self.path).ok().flatten();
         let file = File::open(&self.path).unwrap();
-        self.hash = md5::chksum(file).map(|digest| digest.to_hex_lowercase()).ok();
+        self.hash = md5::chksum(file)
+            .map(|digest| digest.to_hex_lowercase())
+            .ok();
         self.processed = true;
     }
 }
@@ -115,12 +117,17 @@ impl Display for FileEntry {
             f,
             "{} {} {} : {}",
             if self.file_type == EntryType::Dir {
-                format!("{}  {}", self.file_type, self.name).bright_green().to_string()
+                format!("{}  {}", self.file_type, self.name)
+                    .bright_green()
+                    .to_string()
             } else {
                 format!("{}  {}", self.file_type, self.name.bold())
             },
             format!("{} B", self.size).to_string().yellow(),
-            self.created.format("%Y-%m-%d %H:%M:%S").to_string().bright_blue(),
+            self.created
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+                .bright_blue(),
             self.id.purple(),
         )
     }

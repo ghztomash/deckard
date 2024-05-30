@@ -11,3 +11,4 @@ chrono = "0.4"
 clap = { version = "4", features = ["derive", "cargo"] }
 colored = "2"
 chksum = "0.3.0"
+tokio = { version = "1", features = ["full"] }

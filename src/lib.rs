@@ -1,24 +1,69 @@
 mod files;
 
 use files::FileEntry;
-use std::{fs, path::Path};
+use std::collections::{HashMap, HashSet};
+use std::{fs, path::Path, path::PathBuf};
 
-pub fn visit_dirs(dir: &Path, depth: usize) -> std::io::Result<()> {
+pub fn visit_dirs(dirs: HashSet<PathBuf>) {
+    let mut files: HashMap<String, FileEntry> = HashMap::new();
+    let mut dirs: HashSet<PathBuf> = HashSet::from(dirs);
+
+    while !dirs.is_empty() {
+        for dir in dirs.clone() {
+            let (f, d) = visit_dir(&dir, 0);
+            dirs.remove(&dir);
+
+            files.extend(f);
+            dirs.extend(d);
+        }
+    }
+
+    //println!("{:#?}", files);
+}
+
+pub fn visit_dir(dir: &Path, depth: usize) -> (HashMap<String, FileEntry>, HashSet<PathBuf>) {
+    let mut files: HashMap<String, FileEntry> = HashMap::new();
+    let mut dirs: HashSet<PathBuf> = HashSet::new();
+
     if dir.is_dir() {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
             let path = entry.path();
 
             if path.is_file() {
                 let file = FileEntry::new(entry, depth);
                 //println!("{:#?}", file);
                 println!("{}", file);
+                files.insert(file.id.to_string(), file);
             } else if path.is_dir() {
-                visit_dirs(&path, depth + 1).unwrap();
+                dirs.insert(path);
             }
         }
     }
-    Ok(())
+    (files, dirs)
+}
+
+pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
+    let mut paths: HashSet<PathBuf> = HashSet::with_capacity(target_paths.len());
+
+    for path in target_paths {
+        let path: PathBuf = path.as_ref().components().collect();
+        let mut to_insert = true;
+
+        // don't insert subfolders like
+        // path/ path/sub_path
+        for p in &paths {
+            if path.starts_with(p) {
+                println!("{:?} is part of {:?}", path, p);
+                to_insert = false;
+            }
+        }
+        if to_insert {
+            paths.insert(path);
+        }
+    }
+
+    paths
 }
 
 #[cfg(test)]
@@ -27,7 +72,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        visit_dirs(Path::new("."), 0).unwrap();
+        visit_dir(Path::new("."), 0);
         assert!(true);
     }
 }
