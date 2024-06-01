@@ -475,20 +475,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98cc8fbded0c607b7ba9dd60cd98df59af97e84d24e49c8557331cfc26d301ce"
 
 [[package]]
-name = "clone-hunter"
-version = "0.1.0"
-dependencies = [
- "chksum",
- "chrono",
- "clap",
- "colored",
- "infer",
- "tokio",
- "tree_magic",
- "tree_magic_mini",
-]
-
-[[package]]
 name = "cloudabi"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -518,6 +504,20 @@ name = "core-foundation-sys"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
+
+[[package]]
+name = "deckard"
+version = "0.1.0"
+dependencies = [
+ "chksum",
+ "chrono",
+ "clap",
+ "colored",
+ "infer",
+ "tokio",
+ "tree_magic",
+ "tree_magic_mini",
+]
 
 [[package]]
 name = "equivalent"

@@ -4,8 +4,6 @@ use file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
-use colored::*;
-
 pub fn index_dirs(dirs: HashSet<PathBuf>) -> HashMap<PathBuf, FileEntry> {
     let mut files: HashMap<PathBuf, FileEntry> = HashMap::new();
     let mut dirs: HashSet<PathBuf> = HashSet::from(dirs);

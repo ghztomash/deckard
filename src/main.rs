@@ -1,4 +1,4 @@
-use clone_hunter::*;
+use deckard::*;
 mod cli;
 mod file;
 
