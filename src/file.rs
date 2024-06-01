@@ -69,10 +69,9 @@ pub struct FileEntry {
 impl FileEntry {
     pub fn new(entry: DirEntry) -> Self {
         let metadata = entry.metadata().unwrap();
-        let path = fs::canonicalize(entry.path()).unwrap_or(entry.path());
 
         Self {
-            path,
+            path: entry.path(),
             name: entry.file_name().into_string().unwrap(),
             prefix: entry
                 .path()
@@ -99,6 +98,10 @@ impl FileEntry {
         }
     }
 
+    pub fn full_path(&self) -> PathBuf {
+        fs::canonicalize(self.path.clone()).unwrap_or(self.path.clone())
+    }
+
     pub fn process(&mut self) {
         let mut file = File::open(&self.path).unwrap();
 
@@ -115,8 +118,8 @@ impl FileEntry {
         // println!("{:?}", self.mime_type);
 
         self.hash = md5::chksum(magic)
-        // self.hash = md5::chksum(file)
-        // self.hash = sha2_256::chksum(file)
+            // self.hash = md5::chksum(file)
+            // self.hash = sha2_256::chksum(file)
             .map(|digest| digest.to_hex_lowercase())
             .ok();
         self.processed = true;
