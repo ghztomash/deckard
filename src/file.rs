@@ -4,7 +4,7 @@ use colored::*;
 use infer::Type;
 use std::{
     fmt::{self, Display},
-    fs::{self, DirEntry, File, FileType},
+    fs::{self, read, DirEntry, File, FileType},
     io::Read,
     os::unix::fs::MetadataExt,
     path::PathBuf,
@@ -103,6 +103,13 @@ impl FileEntry {
     }
 
     pub fn process(&mut self) {
+        if self.file_type != EntryType::File {
+            println!(
+                "process: {} is not a file!",
+                self.path.to_string_lossy().red()
+            );
+            return;
+        }
         let mut file = File::open(&self.path).unwrap();
 
         let mut magic = [0; 32];
@@ -129,6 +136,22 @@ impl FileEntry {
 
     pub fn compare(&self, other: &Self) -> bool {
         let mut matching = false;
+
+        if self.file_type != EntryType::File {
+            println!(
+                "compare self: {} is not a file!",
+                self.path.to_string_lossy().red()
+            );
+            return false;
+        }
+
+        if other.file_type != EntryType::File {
+            println!(
+                "compare other: {} is not a file!",
+                other.path.to_string_lossy().red()
+            );
+            return false;
+        }
 
         if self.size == other.size {
             // println!("{} and {} have the same size", self.name, other.name);

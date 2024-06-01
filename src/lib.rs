@@ -1,8 +1,10 @@
-mod file;
+pub mod file;
 
-use file::FileEntry;
+use file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
+
+use colored::*;
 
 pub fn index_dirs(dirs: HashSet<PathBuf>) -> HashMap<PathBuf, FileEntry> {
     let mut files: HashMap<PathBuf, FileEntry> = HashMap::new();
@@ -35,7 +37,9 @@ pub fn visit_dir(dir: &Path) -> (HashMap<PathBuf, FileEntry>, HashSet<PathBuf>) 
                 let file = FileEntry::new(entry);
                 //println!("{:#?}", file);
                 //println!("{}", file);
-                files.insert(file.path.clone(), file);
+                if file.file_type == EntryType::File {
+                    files.insert(file.path.clone(), file);
+                }
             } else if path.is_dir() {
                 dirs.insert(path);
             }
