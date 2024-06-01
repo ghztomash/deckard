@@ -8,16 +8,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'clone-hunter'",
+            "name": "Debug unit tests in library 'deckard'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--lib",
-                    "--package=clone-hunter"
+                    "--package=deckard"
                 ],
                 "filter": {
-                    "name": "clone-hunter",
+                    "name": "deckard",
                     "kind": "lib"
                 }
             },
@@ -27,15 +27,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'clone-hunter'",
+            "name": "Debug executable 'deckard'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=clone-hunter",
-                    "--package=clone-hunter"
+                    "--bin=deckard",
+                    "--package=deckard"
                 ],
                 "filter": {
-                    "name": "clone-hunter",
+                    "name": "deckard",
                     "kind": "bin"
                 }
             },
@@ -45,15 +45,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'clone-hunter' test_files",
+            "name": "Debug executable 'deckard' test_files",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=clone-hunter",
-                    "--package=clone-hunter"
+                    "--bin=deckard",
+                    "--package=deckard"
                 ],
                 "filter": {
-                    "name": "clone-hunter",
+                    "name": "deckard",
                     "kind": "bin"
                 }
             },
@@ -63,16 +63,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'clone-hunter'",
+            "name": "Debug unit tests in executable 'deckard'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=clone-hunter",
-                    "--package=clone-hunter"
+                    "--bin=deckard",
+                    "--package=deckard"
                 ],
                 "filter": {
-                    "name": "clone-hunter",
+                    "name": "deckard",
                     "kind": "bin"
                 }
             },
