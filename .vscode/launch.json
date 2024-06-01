@@ -1,0 +1,84 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'clone-hunter'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=clone-hunter"
+                ],
+                "filter": {
+                    "name": "clone-hunter",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'clone-hunter'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=clone-hunter",
+                    "--package=clone-hunter"
+                ],
+                "filter": {
+                    "name": "clone-hunter",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'clone-hunter' test_files",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=clone-hunter",
+                    "--package=clone-hunter"
+                ],
+                "filter": {
+                    "name": "clone-hunter",
+                    "kind": "bin"
+                }
+            },
+            "args": ["test_files"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'clone-hunter'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=clone-hunter",
+                    "--package=clone-hunter"
+                ],
+                "filter": {
+                    "name": "clone-hunter",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
