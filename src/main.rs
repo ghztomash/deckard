@@ -29,26 +29,26 @@ async fn main() {
     println!("Paths: {}", format!("{:?}", target_paths).yellow());
 
     let now = Instant::now();
-    let files = visit_dirs(target_paths);
+    let files_index = visit_dirs(target_paths);
 
     let elapsed = now.elapsed();
     // let mut vec_files = Vec::from_iter(files.values());
-    let mut vec_files = Vec::with_capacity(files.capacity());
+    let mut vec_files = Vec::with_capacity(files_index.capacity());
     println!(
         "Indexed {} files in {}",
-        files.capacity().to_string().green(),
+        files_index.capacity().to_string().green(),
         format!("{:.2?}", elapsed).blue()
     );
 
     let now = Instant::now();
-    for (_, mut f) in files.clone() {
+    for (_, mut f) in files_index.clone() {
         f.process();
         vec_files.push(f);
     }
     let elapsed = now.elapsed();
     println!(
         "Processed {} files in {}",
-        files.capacity().to_string().green(),
+        files_index.capacity().to_string().green(),
         format!("{:.2?}", elapsed).blue()
     );
 
@@ -92,11 +92,11 @@ async fn main() {
 
     println!("\nMatches:");
     for (file, file_copies) in file_matches {
-        let name = files.get(&file).unwrap().name.clone();
+        let name = files_index.get(&file).unwrap().name.clone();
         let mut match_names = Vec::new();
 
         for fc in file_copies {
-            match_names.push(files.get(&fc).unwrap().name.clone());
+            match_names.push(files_index.get(&fc).unwrap().name.clone());
         }
 
         println!("{} matches {:?}", name, match_names);

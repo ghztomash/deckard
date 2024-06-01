@@ -1,10 +1,11 @@
-use chksum::md5;
+use chksum::{md5, sha2_256};
 use chrono::prelude::*;
 use colored::*;
 use infer::Type;
 use std::{
     fmt::{self, Display},
     fs::{self, DirEntry, File, FileType},
+    io::Read,
     os::unix::fs::MetadataExt,
     path::PathBuf,
 };
@@ -59,11 +60,10 @@ pub struct FileEntry {
     pub file_type: EntryType,
     pub created: DateTime<Local>,
     pub modified: DateTime<Local>,
-    pub mime_type: Option<Type>,
+    pub mime_type: Option<String>,
     pub size: u64,
     pub depth: usize,
     pub hash: Option<String>,
-    pub checked: HashSet<String>,
     pub matching: HashSet<String>,
     pub processed: bool,
 }
@@ -100,29 +100,44 @@ impl FileEntry {
             size: metadata.size(),
             depth,
             hash: None,
-            checked: HashSet::new(),
             matching: HashSet::new(),
             processed: false,
         }
     }
 
     pub fn process(&mut self) {
-        self.mime_type = infer::get_from_path(&self.path).ok().flatten();
-        let file = File::open(&self.path).unwrap();
-        self.hash = md5::chksum(file)
+        let mut file = File::open(&self.path).unwrap();
+
+        let mut magic = [0; 32];
+        _ = file.read_exact(&mut magic);
+
+        // TODO: Configurable process
+
+        // let infer = infer::get_from_path(&self.path).ok().flatten();
+        // println!({:?},infer);
+
+        // Find the MIME type
+        // self.mime_type = Some(tree_magic::from_u8(&magic));
+        // println!("{:?}", self.mime_type);
+
+        self.hash = md5::chksum(magic)
+        // self.hash = md5::chksum(file)
+        // self.hash = sha2_256::chksum(file)
             .map(|digest| digest.to_hex_lowercase())
             .ok();
         self.processed = true;
+
+        // println!("{:?}", self.hash);
     }
 
     pub fn compare(&self, other: &Self) -> bool {
         let mut matching = false;
 
         if self.size == other.size {
-            println!("{} and {} have the same size", self.name, other.name);
+            // println!("{} and {} have the same size", self.name, other.name);
 
-            //self.matching.insert(other.id.clone());
-            //other.matching.insert(self.id.clone());
+            // self.matching.insert(other.id.clone());
+            // other.matching.insert(self.id.clone());
 
             if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
                 matching = true;
