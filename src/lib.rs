@@ -34,7 +34,7 @@ pub fn visit_dir(dir: &Path, depth: usize) -> (HashMap<String, FileEntry>, HashS
             if path.is_file() {
                 let file = FileEntry::new(entry, depth);
                 //println!("{:#?}", file);
-                println!("{}", file);
+                //println!("{}", file);
                 files.insert(file.id.to_string(), file);
             } else if path.is_dir() {
                 dirs.insert(path);
