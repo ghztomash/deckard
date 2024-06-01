@@ -100,6 +100,8 @@ pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
 
     for path in target_paths {
         let path: PathBuf = path.as_ref().components().collect();
+        let path = fs::canonicalize(&path).unwrap_or(path);
+
         let mut to_insert = true;
 
         // don't insert subfolders like
