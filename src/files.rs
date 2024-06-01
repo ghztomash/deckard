@@ -52,7 +52,6 @@ impl Display for EntryType {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FileEntry {
-    pub id: String,
     pub path: PathBuf,
     pub name: String,
     pub prefix: String,
@@ -62,21 +61,17 @@ pub struct FileEntry {
     pub modified: DateTime<Local>,
     pub mime_type: Option<String>,
     pub size: u64,
-    pub depth: usize,
     pub hash: Option<String>,
-    pub matching: HashSet<String>,
+    pub matching: HashSet<PathBuf>,
     pub processed: bool,
 }
 
 impl FileEntry {
-    pub fn new(entry: DirEntry, depth: usize) -> Self {
+    pub fn new(entry: DirEntry) -> Self {
         let metadata = entry.metadata().unwrap();
         let path = fs::canonicalize(entry.path()).unwrap_or(entry.path());
 
-        let digest = md5::hash(path.to_str().unwrap());
-
         Self {
-            id: digest.to_hex_lowercase(),
             path,
             name: entry.file_name().into_string().unwrap(),
             prefix: entry
@@ -98,7 +93,6 @@ impl FileEntry {
             modified: metadata.modified().unwrap().into(),
             mime_type: None,
             size: metadata.size(),
-            depth,
             hash: None,
             matching: HashSet::new(),
             processed: false,
@@ -150,14 +144,13 @@ impl FileEntry {
         matching
     }
 
-    pub fn matches(&mut self, other: String) {
-        self.matching.insert(other);
+    pub fn matches(&mut self, other: &PathBuf) {
+        self.matching.insert(other.clone());
     }
 }
 
 impl Display for FileEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        _ = write!(f, "{}", "  ".to_string().repeat(self.depth));
         write!(
             f,
             "{} {} {} : {}",
@@ -173,7 +166,7 @@ impl Display for FileEntry {
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string()
                 .bright_blue(),
-            self.id.purple(),
+            self.path.to_string_lossy().purple(),
         )
     }
 }

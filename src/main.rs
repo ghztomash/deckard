@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use clone_hunter::*;
 mod cli;
@@ -52,7 +53,7 @@ async fn main() {
         format!("{:.2?}", elapsed).blue()
     );
 
-    let mut file_matches: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut file_matches: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
 
     let now = Instant::now();
     for i in 0..vec_files.len() {
@@ -61,20 +62,20 @@ async fn main() {
             let ff = &vec_files[j];
             let matching = f.compare(ff);
             if matching {
-                match file_matches.get_mut(&f.id) {
+                match file_matches.get_mut(&f.path) {
                     Some(ref mut v) => {
-                        v.insert(ff.id.clone());
+                        v.insert(ff.path.clone());
                     }
                     None => {
-                        file_matches.insert(f.id.clone(), HashSet::from([ff.id.clone()]));
+                        file_matches.insert(f.path.clone(), HashSet::from([ff.path.clone()]));
                     }
                 };
-                match file_matches.get_mut(&ff.id) {
+                match file_matches.get_mut(&ff.path) {
                     Some(ref mut v) => {
-                        v.insert(f.id.clone());
+                        v.insert(f.path.clone());
                     }
                     None => {
-                        file_matches.insert(ff.id.clone(), HashSet::from([f.id.clone()]));
+                        file_matches.insert(ff.path.clone(), HashSet::from([f.path.clone()]));
                     }
                 };
                 //f.matches(ff.id);
@@ -99,6 +100,6 @@ async fn main() {
             match_names.push(files_index.get(&fc).unwrap().name.clone());
         }
 
-        println!("{} matches {:?}", name, match_names);
+        println!("{} matches {:?}", name.yellow(), match_names);
     }
 }

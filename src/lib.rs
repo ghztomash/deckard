@@ -4,13 +4,13 @@ use files::FileEntry;
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
-pub fn visit_dirs(dirs: HashSet<PathBuf>) -> HashMap<String, FileEntry> {
-    let mut files: HashMap<String, FileEntry> = HashMap::new();
+pub fn visit_dirs(dirs: HashSet<PathBuf>) -> HashMap<PathBuf, FileEntry> {
+    let mut files: HashMap<PathBuf, FileEntry> = HashMap::new();
     let mut dirs: HashSet<PathBuf> = HashSet::from(dirs);
 
     while !dirs.is_empty() {
         for dir in dirs.clone() {
-            let (f, d) = visit_dir(&dir, 0);
+            let (f, d) = visit_dir(&dir);
             dirs.remove(&dir);
 
             files.extend(f);
@@ -22,8 +22,8 @@ pub fn visit_dirs(dirs: HashSet<PathBuf>) -> HashMap<String, FileEntry> {
     files
 }
 
-pub fn visit_dir(dir: &Path, depth: usize) -> (HashMap<String, FileEntry>, HashSet<PathBuf>) {
-    let mut files: HashMap<String, FileEntry> = HashMap::new();
+pub fn visit_dir(dir: &Path) -> (HashMap<PathBuf, FileEntry>, HashSet<PathBuf>) {
+    let mut files: HashMap<PathBuf, FileEntry> = HashMap::new();
     let mut dirs: HashSet<PathBuf> = HashSet::new();
 
     if dir.is_dir() {
@@ -32,10 +32,10 @@ pub fn visit_dir(dir: &Path, depth: usize) -> (HashMap<String, FileEntry>, HashS
             let path = entry.path();
 
             if path.is_file() {
-                let file = FileEntry::new(entry, depth);
+                let file = FileEntry::new(entry);
                 //println!("{:#?}", file);
                 //println!("{}", file);
-                files.insert(file.id.to_string(), file);
+                files.insert(file.path.clone(), file);
             } else if path.is_dir() {
                 dirs.insert(path);
             }
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        visit_dir(Path::new("."), 0);
+        visit_dir(Path::new("."));
         assert!(true);
     }
 }
