@@ -55,13 +55,17 @@ async fn main() {
 
     println!("\nMatches:");
     for (file, file_copies) in &file_index.duplicates {
-        let name = file_index.files.get(file).unwrap().name.clone();
+        let name = file_index.file_name(file).unwrap();
         let mut match_names = Vec::new();
 
-        for fc in file_copies {
-            match_names.push(file_index.files.get(fc).unwrap().name.clone());
+        for file_copy in file_copies {
+            match_names.push(file_index.file_name(file_copy).unwrap());
         }
 
-        println!("{} matches {:?}", name.yellow(), match_names);
+        println!(
+            "{} matches {}",
+            name.yellow(),
+            format!("{:?}", match_names).yellow()
+        );
     }
 }

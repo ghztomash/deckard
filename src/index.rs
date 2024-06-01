@@ -38,36 +38,40 @@ impl FileIndex {
     }
 
     pub fn find_duplicates(&mut self) {
-        let mut vec_files = Vec::with_capacity(self.files.len());
-        // let mut vec_files: Vec<&mut FileEntry> = files_index.values_mut().into_iter().collect();
-
-        for (_, f) in &self.files {
-            vec_files.push(f);
-        }
+        let vec_files: Vec<&FileEntry> = self.files.values().into_iter().collect();
 
         for i in 0..vec_files.len() {
             for j in i + 1..vec_files.len() {
-                let f = &vec_files[i];
-                let ff = &vec_files[j];
-                let matching = f.compare(ff);
+                let this_file = vec_files[i];
+                let other_file = vec_files[j];
 
-                if matching {
-                    match self.duplicates.get_mut(&f.path) {
-                        Some(ref mut v) => {
-                            v.insert(ff.path.clone());
+                // check if the files are matching
+                if this_file.compare(other_file) {
+                    match self.duplicates.get_mut(&this_file.path) {
+                        // file already exists, add another duplicate
+                        Some(this) => {
+                            this.insert(other_file.path.clone());
                         }
+                        // insert a new entry
                         None => {
-                            self.duplicates
-                                .insert(f.path.clone(), HashSet::from([ff.path.clone()]));
+                            self.duplicates.insert(
+                                this_file.path.clone(),
+                                HashSet::from([other_file.path.clone()]),
+                            );
                         }
                     };
-                    match self.duplicates.get_mut(&ff.path) {
-                        Some(ref mut v) => {
-                            v.insert(f.path.clone());
+                    // backlink this to the other file
+                    match self.duplicates.get_mut(&other_file.path) {
+                        // file already exists, add another duplicate
+                        Some(other) => {
+                            other.insert(this_file.path.clone());
                         }
+                        // insert a new entry
                         None => {
-                            self.duplicates
-                                .insert(ff.path.clone(), HashSet::from([f.path.clone()]));
+                            self.duplicates.insert(
+                                other_file.path.clone(),
+                                HashSet::from([this_file.path.clone()]),
+                            );
                         }
                     };
                 }
@@ -81,6 +85,14 @@ impl FileIndex {
 
     pub fn duplicates_len(&self) -> usize {
         self.duplicates.len()
+    }
+
+    pub fn file_name(&self, file: &PathBuf) -> Option<String> {
+        self.files.get(file).and_then(|f| Some(f.name.clone()))
+    }
+
+    pub fn file(&self, file: &PathBuf) -> Option<FileEntry> {
+        self.files.get(file).and_then(|f| Some(f.clone()))
     }
 }
 
