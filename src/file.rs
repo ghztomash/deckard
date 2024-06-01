@@ -10,8 +10,6 @@ use std::{
     path::PathBuf,
 };
 
-use std::collections::HashSet;
-
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum EntryType {
     File,
@@ -62,7 +60,6 @@ pub struct FileEntry {
     pub mime_type: Option<String>,
     pub size: u64,
     pub hash: Option<String>,
-    pub matching: HashSet<PathBuf>,
     pub processed: bool,
 }
 
@@ -93,13 +90,8 @@ impl FileEntry {
             mime_type: None,
             size: metadata.size(),
             hash: None,
-            matching: HashSet::new(),
             processed: false,
         }
-    }
-
-    pub fn full_path(&self) -> PathBuf {
-        fs::canonicalize(self.path.clone()).unwrap_or(self.path.clone())
     }
 
     pub fn process(&mut self) {
@@ -155,23 +147,12 @@ impl FileEntry {
 
         if self.size == other.size {
             // println!("{} and {} have the same size", self.name, other.name);
-
-            // self.matching.insert(other.id.clone());
-            // other.matching.insert(self.id.clone());
-
             if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
                 matching = true;
             }
         }
 
-        //self.checked.insert(other.id.clone());
-        //other.checked.insert(self.id.clone());
-
         matching
-    }
-
-    pub fn matches(&mut self, other: &PathBuf) {
-        self.matching.insert(other.clone());
     }
 }
 

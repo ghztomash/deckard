@@ -1,9 +1,12 @@
 use deckard::*;
 mod cli;
 mod file;
+mod index;
 
 use colored::*;
 use std::time::Instant;
+
+use index::FileIndex;
 
 #[tokio::main]
 async fn main() {
@@ -23,39 +26,40 @@ async fn main() {
     println!("Paths: {}", format!("{:?}", target_paths).yellow());
 
     let now = Instant::now();
-    let mut files_index = index_dirs(target_paths);
+    let mut file_index = FileIndex::new(target_paths);
+    file_index.index_dirs();
     let elapsed = now.elapsed();
     println!(
         "Indexed {} files in {}",
-        &files_index.len().to_string().green(),
+        file_index.files_len().to_string().green(),
         format!("{:.2?}", elapsed).blue()
     );
 
     let now = Instant::now();
-    process_files(&mut files_index);
+    file_index.process_files();
     let elapsed = now.elapsed();
     println!(
         "Processed {} files in {}",
-        &files_index.len().to_string().green(),
+        file_index.files_len().to_string().green(),
         format!("{:.2?}", elapsed).blue()
     );
 
     let now = Instant::now();
-    let file_matches = find_matches(&files_index);
+    file_index.find_duplicates();
     let elapsed = now.elapsed();
     println!(
         "Found {} matches in {}",
-        file_matches.len().to_string().green(),
+        file_index.duplicates_len().to_string().green(),
         format!("{:.2?}", elapsed).blue()
     );
 
     println!("\nMatches:");
-    for (file, file_copies) in file_matches {
-        let name = files_index.get(&file).unwrap().name.clone();
+    for (file, file_copies) in &file_index.duplicates {
+        let name = file_index.files.get(file).unwrap().name.clone();
         let mut match_names = Vec::new();
 
         for fc in file_copies {
-            match_names.push(files_index.get(&fc).unwrap().name.clone());
+            match_names.push(file_index.files.get(fc).unwrap().name.clone());
         }
 
         println!("{} matches {:?}", name.yellow(), match_names);
