@@ -1,40 +1,58 @@
+use rayon::iter::ParallelIterator;
+use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
+use rayon::prelude::*;
+use rayon::ThreadPool;
+
+use std::sync::{Arc, Mutex};
+
 use crate::file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
+
+    // TODO: Try BTreeMap
     pub files: HashMap<PathBuf, FileEntry>,
     pub duplicates: HashMap<PathBuf, HashSet<PathBuf>>,
+    pub pool: ThreadPool,
 }
 
 impl FileIndex {
     pub fn new(dirs: HashSet<PathBuf>) -> Self {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(32)
+            .build()
+            .unwrap();
         FileIndex {
             dirs,
             files: HashMap::new(),
             duplicates: HashMap::new(),
+            pool,
         }
     }
 
     pub fn index_dirs(&mut self) {
         let mut dirs: HashSet<PathBuf> = self.dirs.clone();
+        let mut files: HashMap<PathBuf, FileEntry> = HashMap::new();
 
+        // TODO: make this concurrent too
         while !dirs.is_empty() {
             for dir in dirs.clone() {
                 let (f, d) = visit_dir(&dir);
                 dirs.remove(&dir);
 
-                self.files.extend(f);
+                files.extend(f);
                 dirs.extend(d);
             }
         }
+        self.files.extend(files);
     }
 
     pub fn process_files(&mut self) {
-        for (_, f) in &mut self.files {
-            f.process();
-        }
+        let vec_files: Vec<&mut FileEntry> = self.files.values_mut().collect();
+
+        vec_files.into_par_iter().for_each(|f| f.process());
     }
 
     pub fn find_duplicates(&mut self) {
@@ -101,13 +119,12 @@ fn visit_dir(dir: &Path) -> (HashMap<PathBuf, FileEntry>, HashSet<PathBuf>) {
     let mut dirs: HashSet<PathBuf> = HashSet::new();
 
     if dir.is_dir() {
-        for entry in fs::read_dir(dir).unwrap() {
+        for entry in fs::read_dir(&dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
 
-            if path.is_file() {
+            if path.is_file() && !path.is_symlink() {
                 let file = FileEntry::new(entry);
-                //println!("{:#?}", file);
                 //println!("{}", file);
                 if file.file_type == EntryType::File {
                     files.insert(file.path.clone(), file);

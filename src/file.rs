@@ -1,14 +1,25 @@
+use base64::prelude::*;
 use chksum::{md5, sha2_256};
 use chrono::prelude::*;
 use colored::*;
+use image_hasher::{HashAlg, HasherConfig};
 use infer::Type;
 use std::{
     fmt::{self, Display},
     fs::{self, read, DirEntry, File, FileType},
-    io::Read,
+    io::{Read, Seek},
     os::unix::fs::MetadataExt,
     path::PathBuf,
+    u8, usize,
 };
+
+use image::io::Reader as ImageReader;
+use image_hasher::ImageHash;
+use std::io::Cursor;
+
+use log::{debug, warn};
+
+const MAGIC_SIZE: usize = 8;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum EntryType {
@@ -60,6 +71,9 @@ pub struct FileEntry {
     pub mime_type: Option<String>,
     pub size: u64,
     pub hash: Option<String>,
+    pub full_hash: Option<String>,
+    pub image_hash: Option<String>,
+    pub data: Option<String>,
     pub processed: bool,
 }
 
@@ -90,13 +104,16 @@ impl FileEntry {
             mime_type: None,
             size: metadata.size(),
             hash: None,
+            full_hash: None,
+            image_hash: None,
+            data: None,
             processed: false,
         }
     }
 
     pub fn process(&mut self) {
         if self.file_type != EntryType::File {
-            println!(
+            warn!(
                 "process: {} is not a file!",
                 self.path.to_string_lossy().red()
             );
@@ -104,8 +121,9 @@ impl FileEntry {
         }
         let mut file = File::open(&self.path).unwrap();
 
-        let mut magic = [0; 32];
-        _ = file.read_exact(&mut magic);
+        let mut magic = [0; MAGIC_SIZE];
+        file.read_exact(&mut magic);
+        // .expect(format!("reading {:?} size: {}, data:  {:?}", file, self.size, magic).as_str());
 
         // TODO: Configurable process
 
@@ -113,24 +131,51 @@ impl FileEntry {
         // println!({:?},infer);
 
         // Find the MIME type
-        // self.mime_type = Some(tree_magic::from_u8(&magic));
+        self.mime_type = Some(tree_magic::from_u8(&magic));
         // println!("{:?}", self.mime_type);
 
-        self.hash = md5::chksum(magic)
+        self.hash = md5::chksum(&magic)
             // self.hash = md5::chksum(file)
-            // self.hash = sha2_256::chksum(file)
             .map(|digest| digest.to_hex_lowercase())
             .ok();
+
+        let mut buffer = Vec::new();
+        // read the whole file
+        file.rewind();
+        file.read_to_end(&mut buffer).unwrap();
+        // self.full_hash = sha2_256::chksum(&file)
+        self.full_hash = sha2_256::chksum(&buffer)
+            .map(|digest| digest.to_hex_lowercase())
+            .ok();
+
+        // full data
+        // self.data = Some(BASE64_STANDARD.encode(&buffer));
+
+        if self.mime_type.as_ref().unwrap().contains("image") {
+            let img = ImageReader::new(Cursor::new(&buffer))
+                .with_guessed_format()
+                .unwrap()
+                .decode()
+                .unwrap();
+            // let image = image::open(&self.path).unwrap();
+            let hasher = HasherConfig::new().to_hasher();
+            let hash = hasher.hash_image(&img);
+            self.image_hash = Some(hash.to_base64());
+            debug!(
+                "{} Image hash: {}",
+                self.path.to_string_lossy(),
+                hash.to_base64()
+            );
+        }
+
         self.processed = true;
 
         // println!("{:?}", self.hash);
     }
 
     pub fn compare(&self, other: &Self) -> bool {
-        let mut matching = false;
-
         if self.file_type != EntryType::File {
-            println!(
+            warn!(
                 "compare self: {} is not a file!",
                 self.path.to_string_lossy().red()
             );
@@ -138,21 +183,62 @@ impl FileEntry {
         }
 
         if other.file_type != EntryType::File {
-            println!(
+            warn!(
                 "compare other: {} is not a file!",
                 other.path.to_string_lossy().red()
             );
             return false;
         }
 
-        if self.size == other.size {
-            // println!("{} and {} have the same size", self.name, other.name);
-            if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
-                matching = true;
+        if self.mime_type.as_ref().unwrap().contains("image")
+            && other.mime_type.as_ref().unwrap().contains("image")
+        {
+            let img1: ImageHash<Vec<u8>> =
+                ImageHash::from_base64(self.image_hash.as_ref().unwrap().as_str()).unwrap();
+            let img2 = ImageHash::from_base64(other.image_hash.as_ref().unwrap().as_str()).unwrap();
+
+            let distance = img1.dist(&img2);
+            debug!(
+                "{} and {} Hamming Distance: {}",
+                self.path.to_string_lossy(),
+                other.path.to_string_lossy(),
+                img1.dist(&img2)
+            );
+            if distance <= 10 {
+                return true;
             }
         }
 
-        matching
+        if self.size == other.size {
+            // println!("{} and {} have the same size", self.name, other.name);
+            if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
+                // sheck the full file size
+                // TODO calculate full checksum hash for the files
+
+                // let this_file = File::open(&self.path).unwrap();
+                // let this_hash = sha2_256::chksum(this_file)
+                //     .map(|digest| digest.to_hex_lowercase())
+                //     .unwrap();
+
+                // let other_file = File::open(&other.path).unwrap();
+                // let other_hash = sha2_256::chksum(other_file)
+                //     .map(|digest| digest.to_hex_lowercase())
+                //     .unwrap();
+
+                // if this_hash == other_hash {
+                //     matching = true;
+                // }
+
+                if self.full_hash.is_some()
+                    && self.full_hash == other.full_hash
+                    && other.full_hash.is_some()
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
