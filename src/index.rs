@@ -9,6 +9,8 @@ use crate::file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
+use log::{debug, error, warn};
+
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
     // TODO: Try BTreeMap
@@ -31,19 +33,24 @@ impl FileIndex {
                 .sort(false)
                 .skip_hidden(false)
                 .into_iter()
-                .filter_map(|e| {
-                    let entry = e.unwrap();
+                .filter_map(|entry| {
+                    match entry {
+                        Ok(entry) => {
+                            let path = entry.path();
 
-                    let path = entry.path();
-
-                    if path.is_file() && !path.is_symlink() {
-                        let file = FileEntry::new(
-                            path.to_owned(),
-                            entry.file_name.to_owned(),
-                            entry.metadata().unwrap(),
-                        );
-                        if file.file_type == EntryType::File {
-                            return Some((path, file));
+                            if path.is_file() && !path.is_symlink() {
+                                let file = FileEntry::new(
+                                    path.to_owned(),
+                                    entry.file_name.to_owned(),
+                                    entry.metadata().unwrap(),
+                                );
+                                if file.file_type == EntryType::File {
+                                    return Some((path, file));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("failed reading file {}", e);
                         }
                     }
                     None

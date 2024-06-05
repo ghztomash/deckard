@@ -174,24 +174,35 @@ impl FileEntry {
             .map(|digest| digest.to_hex_lowercase())
             .ok();
 
-        // full data
-        // self.data = Some(BASE64_STANDARD.encode(&buffer));
-
         if self.mime_type.as_ref().unwrap().contains("image") {
-            let img = ImageReader::new(Cursor::new(&buffer))
-                .with_guessed_format()
-                .unwrap()
-                .decode()
-                .unwrap();
-            // let image = image::open(&self.path).unwrap();
-            let hasher = HasherConfig::new().to_hasher();
-            let hash = hasher.hash_image(&img);
-            self.image_hash = Some(hash.to_base64());
-            debug!(
-                "{} Image hash: {}",
-                self.path.to_string_lossy(),
-                hash.to_base64()
-            );
+            match ImageReader::new(Cursor::new(&buffer)).with_guessed_format() {
+                Ok(r) => match r.decode() {
+                    Ok(img) => {
+                        let hasher = HasherConfig::new().to_hasher();
+                        let hash = hasher.hash_image(&img);
+                        self.image_hash = Some(hash.to_base64());
+                        debug!(
+                            "{} Image hash: {}",
+                            self.path.to_string_lossy(),
+                            hash.to_base64()
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "{} decoding image failed: {}",
+                            self.path.to_string_lossy(),
+                            e
+                        );
+                    }
+                },
+                Err(e) => {
+                    warn!(
+                        "{} reading image failed: {}",
+                        self.path.to_string_lossy(),
+                        e
+                    );
+                }
+            };
         }
 
         self.processed = true;
