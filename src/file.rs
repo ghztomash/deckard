@@ -5,8 +5,9 @@ use colored::*;
 use image_hasher::{HashAlg, HasherConfig};
 use infer::Type;
 use std::{
+    ffi::OsString,
     fmt::{self, Display},
-    fs::{self, read, DirEntry, File, FileType},
+    fs::{self, read, DirEntry, File, FileType, Metadata},
     io::{Read, Seek},
     os::unix::fs::MetadataExt,
     path::PathBuf,
@@ -73,12 +74,38 @@ pub struct FileEntry {
     pub hash: Option<String>,
     pub full_hash: Option<String>,
     pub image_hash: Option<String>,
-    pub data: Option<String>,
     pub processed: bool,
 }
 
 impl FileEntry {
-    pub fn new(entry: DirEntry) -> Self {
+    pub fn new(path: PathBuf, name: OsString, metadata: Metadata) -> Self {
+        Self {
+            path: path.to_owned(),
+            name: name.into_string().unwrap(),
+            prefix: path
+                .file_stem()
+                .and_then(|os_str| os_str.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default()
+                .split('.')
+                .collect::<Vec<&str>>()[0]
+                .to_string(),
+            extention: path
+                .extension()
+                .and_then(|os_str| os_str.to_str())
+                .map(|s| s.to_string()),
+            file_type: EntryType::new(Ok(metadata.file_type())),
+            created: metadata.created().unwrap().into(),
+            modified: metadata.modified().unwrap().into(),
+            mime_type: None,
+            size: metadata.size(),
+            hash: None,
+            full_hash: None,
+            image_hash: None,
+            processed: false,
+        }
+    }
+    pub fn from_dir_entry(entry: DirEntry) -> Self {
         let metadata = entry.metadata().unwrap();
 
         Self {
@@ -106,7 +133,6 @@ impl FileEntry {
             hash: None,
             full_hash: None,
             image_hash: None,
-            data: None,
             processed: false,
         }
     }

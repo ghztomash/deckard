@@ -11,48 +11,53 @@ use std::{fs, path::Path, path::PathBuf};
 
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
-
     // TODO: Try BTreeMap
     pub files: HashMap<PathBuf, FileEntry>,
     pub duplicates: HashMap<PathBuf, HashSet<PathBuf>>,
-    pub pool: ThreadPool,
 }
 
 impl FileIndex {
     pub fn new(dirs: HashSet<PathBuf>) -> Self {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(32)
-            .build()
-            .unwrap();
         FileIndex {
             dirs,
             files: HashMap::new(),
             duplicates: HashMap::new(),
-            pool,
         }
     }
 
     pub fn index_dirs(&mut self) {
-        let mut dirs: HashSet<PathBuf> = self.dirs.clone();
-        let mut files: HashMap<PathBuf, FileEntry> = HashMap::new();
+        for dir in &self.dirs {
+            let index: HashMap<PathBuf, FileEntry> = jwalk::WalkDir::new(dir)
+                .sort(false)
+                .skip_hidden(false)
+                .into_iter()
+                .filter_map(|e| {
+                    let entry = e.unwrap();
 
-        // TODO: make this concurrent too
-        while !dirs.is_empty() {
-            for dir in dirs.clone() {
-                let (f, d) = visit_dir(&dir);
-                dirs.remove(&dir);
+                    let path = entry.path();
 
-                files.extend(f);
-                dirs.extend(d);
-            }
+                    if path.is_file() && !path.is_symlink() {
+                        let file = FileEntry::new(
+                            path.to_owned(),
+                            entry.file_name.to_owned(),
+                            entry.metadata().unwrap(),
+                        );
+                        if file.file_type == EntryType::File {
+                            return Some((path, file));
+                        }
+                    }
+                    None
+                })
+                .collect();
+            self.files.extend(index);
         }
-        self.files.extend(files);
     }
 
     pub fn process_files(&mut self) {
-        let vec_files: Vec<&mut FileEntry> = self.files.values_mut().collect();
-
-        vec_files.into_par_iter().for_each(|f| f.process());
+        self.files
+            .values_mut()
+            .par_bridge()
+            .for_each(|f| f.process());
     }
 
     pub fn find_duplicates(&mut self) {
@@ -124,7 +129,7 @@ fn visit_dir(dir: &Path) -> (HashMap<PathBuf, FileEntry>, HashSet<PathBuf>) {
             let path = entry.path();
 
             if path.is_file() && !path.is_symlink() {
-                let file = FileEntry::new(entry);
+                let file = FileEntry::from_dir_entry(entry);
                 //println!("{}", file);
                 if file.file_type == EntryType::File {
                     files.insert(file.path.clone(), file);

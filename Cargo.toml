@@ -19,12 +19,13 @@ mime_guess = "2.0"
 log = "0.4"
 
 rayon = "1.10"
+jwalk = "0.8"
 
 env_logger = "0.11"
 image_hasher = "2.0.0"
 imagehash = "0.3.0"
-image = "0.25.1"
-walkdir = "2.5.0"
+image = "0.25"
+walkdir = "2.5"
 
 [dev-dependencies]
 criterion = "0.5"
