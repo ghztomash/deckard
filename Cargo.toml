@@ -25,3 +25,6 @@ harness = false
 [[bench]]
 name = "index"
 harness = false
+
+[[bin]]
+name = "deckard"
