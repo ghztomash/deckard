@@ -1,4 +1,5 @@
 pub mod file;
+mod hasher;
 pub mod index;
 
 use file::{EntryType, FileEntry};
