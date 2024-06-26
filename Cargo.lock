@@ -782,7 +782,6 @@ dependencies = [
  "base64",
  "chksum",
  "chrono",
- "colored",
  "criterion",
  "image 0.25.1",
  "image_hasher",

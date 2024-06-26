@@ -17,8 +17,6 @@ log = "0.4"
 rayon = "1.10"
 jwalk = "0.8"
 
-colored = "2"
-
 image_hasher = "2.0.0"
 imagehash = "0.3.0"
 image = "0.25"

@@ -1,7 +1,6 @@
 use base64::prelude::*;
 use chksum::{md5, sha2_256};
 use chrono::prelude::*;
-use colored::*;
 use image_hasher::{HashAlg, HasherConfig};
 use infer::Type;
 use std::{
@@ -105,9 +104,9 @@ impl FileEntry {
             processed: false,
         }
     }
+
     pub fn from_dir_entry(entry: DirEntry) -> Self {
         let metadata = entry.metadata().unwrap();
-
         Self {
             path: entry.path(),
             name: entry.file_name().into_string().unwrap(),
@@ -139,10 +138,7 @@ impl FileEntry {
 
     pub fn process(&mut self) {
         if self.file_type != EntryType::File {
-            warn!(
-                "process: {} is not a file!",
-                self.path.to_string_lossy().red()
-            );
+            warn!("process: {} is not a file!", self.path.to_string_lossy());
             return;
         }
         let mut file = File::open(&self.path).unwrap();
@@ -214,7 +210,7 @@ impl FileEntry {
         if self.file_type != EntryType::File {
             warn!(
                 "compare self: {} is not a file!",
-                self.path.to_string_lossy().red()
+                self.path.to_string_lossy()
             );
             return false;
         }
@@ -222,7 +218,7 @@ impl FileEntry {
         if other.file_type != EntryType::File {
             warn!(
                 "compare other: {} is not a file!",
-                other.path.to_string_lossy().red()
+                other.path.to_string_lossy()
             );
             return false;
         }
@@ -286,17 +282,12 @@ impl Display for FileEntry {
             "{} {} {} : {}",
             if self.file_type == EntryType::Dir {
                 format!("{}  {}", self.file_type, self.name)
-                    .bright_green()
-                    .to_string()
             } else {
-                format!("{}  {}", self.file_type, self.name.bold())
+                format!("{}  {}", self.file_type, self.name)
             },
-            format!("{} B", self.size).to_string().yellow(),
-            self.created
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string()
-                .bright_blue(),
-            self.path.to_string_lossy().purple(),
+            format!("{} B", self.size),
+            self.created.format("%Y-%m-%d %H:%M:%S"),
+            self.path.to_string_lossy(),
         )
     }
 }

@@ -131,7 +131,7 @@ fn visit_dir(dir: &Path) -> (HashMap<PathBuf, FileEntry>, HashSet<PathBuf>) {
     let mut dirs: HashSet<PathBuf> = HashSet::new();
 
     if dir.is_dir() {
-        for entry in fs::read_dir(&dir).unwrap() {
+        for entry in fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
 

@@ -6,8 +6,6 @@ use file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
-use colored::*;
-
 use index::FileIndex;
 
 pub fn find_duplicates(dirs: HashSet<PathBuf>) -> HashMap<PathBuf, HashSet<PathBuf>> {
