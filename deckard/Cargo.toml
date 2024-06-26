@@ -1,0 +1,36 @@
+[package]
+name = "deckard"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4"
+chksum = "0.3"
+base64 = "0.22"
+tokio = { version = "1", features = ["full"] }
+infer = "0.15"
+tree_magic_mini = "3.1"
+tree_magic = "0.2"
+mime_guess = "2.0"
+log = "0.4"
+
+rayon = "1.10"
+jwalk = "0.8"
+
+colored = "2"
+
+image_hasher = "2.0.0"
+imagehash = "0.3.0"
+image = "0.25"
+walkdir = "2.5"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "process"
+harness = false
+
+[[bench]]
+name = "index"
+harness = false
