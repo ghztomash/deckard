@@ -1,3 +1,4 @@
+pub mod config;
 pub mod file;
 mod hasher;
 pub mod index;

@@ -13,6 +13,10 @@ tree_magic_mini = "3.1"
 tree_magic = "0.2"
 mime_guess = "2.0"
 log = "0.4"
+thiserror = "1.0"
+
+confy = "0.6"
+serde = { version = "1.0", features = ["derive"] }
 
 rayon = "1.10"
 jwalk = "0.8"
