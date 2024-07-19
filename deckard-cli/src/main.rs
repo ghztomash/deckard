@@ -22,8 +22,10 @@ fn main() {
     let target_paths = collect_paths(target_dirs.clone());
     println!("Paths: {}", format!("{:?}", target_paths).yellow());
 
+    let config = deckard::config::SearchConfig::default();
+
     let now = Instant::now();
-    let mut file_index = FileIndex::new(target_paths);
+    let mut file_index = FileIndex::new(target_paths, config);
     file_index.index_dirs();
     let elapsed = now.elapsed();
     println!(

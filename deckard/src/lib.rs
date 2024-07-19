@@ -3,14 +3,20 @@ pub mod file;
 mod hasher;
 pub mod index;
 
+use config::SearchConfig;
 use file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
+use log::{debug, warn};
+
 use index::FileIndex;
 
-pub fn find_duplicates(dirs: HashSet<PathBuf>) -> HashMap<PathBuf, HashSet<PathBuf>> {
-    let mut file_index = FileIndex::new(dirs);
+pub fn find_duplicates(
+    dirs: HashSet<PathBuf>,
+    config: SearchConfig,
+) -> HashMap<PathBuf, HashSet<PathBuf>> {
+    let mut file_index = FileIndex::new(dirs, config);
     file_index.index_dirs();
     file_index.process_files();
     file_index.find_duplicates();
@@ -30,7 +36,7 @@ pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
         // path/ path/sub_path
         for p in &paths {
             if path.starts_with(p) {
-                println!("{:?} is part of {:?}", path, p);
+                debug!("{:?} is part of {:?}", path, p);
                 to_insert = false;
             }
         }

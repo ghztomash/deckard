@@ -273,6 +273,8 @@ impl FileEntry {
 
         false
     }
+
+    fn read_data() {}
 }
 
 impl Display for FileEntry {

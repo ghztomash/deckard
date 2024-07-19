@@ -5,25 +5,28 @@ use rayon::ThreadPool;
 
 use std::sync::{Arc, Mutex};
 
+use crate::config::SearchConfig;
 use crate::file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
     // TODO: Try BTreeMap
     pub files: HashMap<PathBuf, FileEntry>,
     pub duplicates: HashMap<PathBuf, HashSet<PathBuf>>,
+    pub config: SearchConfig,
 }
 
 impl FileIndex {
-    pub fn new(dirs: HashSet<PathBuf>) -> Self {
+    pub fn new(dirs: HashSet<PathBuf>, config: SearchConfig) -> Self {
         FileIndex {
             dirs,
             files: HashMap::new(),
             duplicates: HashMap::new(),
+            config,
         }
     }
 
@@ -31,7 +34,7 @@ impl FileIndex {
         for dir in &self.dirs {
             let index: HashMap<PathBuf, FileEntry> = jwalk::WalkDir::new(dir)
                 .sort(false)
-                .skip_hidden(false)
+                .skip_hidden(self.config.skip_hidden)
                 .into_iter()
                 .filter_map(|entry| {
                     match entry {
@@ -45,6 +48,27 @@ impl FileIndex {
                                     entry.metadata().unwrap(),
                                 );
                                 if file.file_type == EntryType::File {
+                                    // Check filename filter
+                                    if let Some(filter) = self.config.filter.as_ref() {
+                                        if !entry.file_name().to_string_lossy().contains(filter) {
+                                            trace!(
+                                                "File {} does not match pattern {}",
+                                                entry.file_name().to_string_lossy(),
+                                                filter
+                                            );
+                                            return None;
+                                        }
+                                    }
+                                    // Skip empty files
+                                    if self.config.skip_empty
+                                        && entry.metadata().unwrap().len() == 0
+                                    {
+                                        trace!(
+                                            "Skipping empty file {}",
+                                            entry.path().to_string_lossy()
+                                        );
+                                        return None;
+                                    }
                                     return Some((path, file));
                                 }
                             }

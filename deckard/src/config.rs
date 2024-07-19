@@ -13,7 +13,7 @@ impl Default for SearchConfig {
     fn default() -> Self {
         Self {
             skip_empty: true,
-            skip_hidden: false,
+            skip_hidden: true,
             full_hash: false,
             check_image: false,
             filter: None,
@@ -22,7 +22,7 @@ impl Default for SearchConfig {
 }
 
 impl SearchConfig {
-    pub fn load (config_name: &str) -> Self {
+    pub fn load(config_name: &str) -> Self {
         confy::load("deckard", config_name).unwrap()
     }
 
