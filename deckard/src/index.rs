@@ -56,12 +56,13 @@ impl FileIndex {
                                             .to_lowercase()
                                             .contains(&filter.to_lowercase())
                                         {
+                                            return None;
+                                        } else {
                                             trace!(
-                                                "File '{}' does not match pattern '{}'",
+                                                "File '{}' matches filter pattern '{}'",
                                                 entry.file_name().to_string_lossy(),
                                                 filter
                                             );
-                                            return None;
                                         }
                                     }
                                     // Skip empty files
