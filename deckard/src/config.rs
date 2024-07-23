@@ -1,3 +1,4 @@
+use log::debug;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -12,8 +13,8 @@ pub struct SearchConfig {
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            skip_empty: true,
-            skip_hidden: true,
+            skip_empty: false,
+            skip_hidden: false,
             full_hash: false,
             check_image: false,
             filter: None,
@@ -23,6 +24,10 @@ impl Default for SearchConfig {
 
 impl SearchConfig {
     pub fn load(config_name: &str) -> Self {
+        debug!(
+            "config path {:?}",
+            confy::get_configuration_file_path("deckard", config_name)
+        );
         confy::load("deckard", config_name).unwrap()
     }
 

@@ -50,9 +50,14 @@ impl FileIndex {
                                 if file.file_type == EntryType::File {
                                     // Check filename filter
                                     if let Some(filter) = self.config.filter.as_ref() {
-                                        if !entry.file_name().to_string_lossy().contains(filter) {
+                                        if !entry
+                                            .file_name()
+                                            .to_string_lossy()
+                                            .to_lowercase()
+                                            .contains(&filter.to_lowercase())
+                                        {
                                             trace!(
-                                                "File {} does not match pattern {}",
+                                                "File '{}' does not match pattern '{}'",
                                                 entry.file_name().to_string_lossy(),
                                                 filter
                                             );
