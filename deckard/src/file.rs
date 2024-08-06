@@ -19,6 +19,8 @@ use std::io::Cursor;
 
 use log::{debug, warn};
 
+use crate::{config::SearchConfig, hasher};
+
 const MAGIC_SIZE: usize = 8;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -136,7 +138,7 @@ impl FileEntry {
         }
     }
 
-    pub fn process(&mut self) {
+    pub fn process(&mut self, config: &SearchConfig) {
         if self.file_type != EntryType::File {
             warn!("process: {} is not a file!", self.path.to_string_lossy());
             return;
@@ -206,7 +208,7 @@ impl FileEntry {
         // println!("{:?}", self.hash);
     }
 
-    pub fn compare(&self, other: &Self) -> bool {
+    pub fn compare(&self, other: &Self, config: &SearchConfig) -> bool {
         if self.file_type != EntryType::File {
             warn!(
                 "compare self: {} is not a file!",
@@ -263,8 +265,8 @@ impl FileEntry {
                 // }
 
                 if self.full_hash.is_some()
-                    && self.full_hash == other.full_hash
                     && other.full_hash.is_some()
+                    && self.full_hash == other.full_hash
                 {
                     return true;
                 }

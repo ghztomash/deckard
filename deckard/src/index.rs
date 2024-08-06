@@ -94,7 +94,7 @@ impl FileIndex {
         self.files
             .values_mut()
             .par_bridge()
-            .for_each(|f| f.process());
+            .for_each(|f| f.process(&self.config));
     }
 
     pub fn find_duplicates(&mut self) {
@@ -106,7 +106,7 @@ impl FileIndex {
                 let other_file = vec_files[j];
 
                 // check if the files are matching
-                if this_file.compare(other_file) {
+                if this_file.compare(other_file, &self.config) {
                     match self.duplicates.get_mut(&this_file.path) {
                         // file already exists, add another duplicate
                         Some(this) => {

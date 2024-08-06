@@ -7,6 +7,7 @@ use std::io::Read;
 use std::io::Seek;
 use std::path::Path;
 
+#[inline]
 pub fn get_full_hash<P: AsRef<Path>>(hash: &str, path: P) -> String {
     let file = File::open(path).unwrap();
     let digest = match hash {
@@ -18,6 +19,7 @@ pub fn get_full_hash<P: AsRef<Path>>(hash: &str, path: P) -> String {
     digest
 }
 
+#[inline]
 pub fn get_quick_hash<P: AsRef<Path>>(hash: &str, size: u64, splits: u64, path: P) -> String {
     let mut size = size;
     let mut file = File::open(path).unwrap();
