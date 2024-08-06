@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use log::debug;
 use serde::{Deserialize, Serialize};
 
@@ -25,13 +27,21 @@ impl Default for SearchConfig {
 impl SearchConfig {
     pub fn load(config_name: &str) -> Self {
         debug!(
-            "config path {:?}",
-            confy::get_configuration_file_path("deckard", config_name)
+            "load config path {:?}",
+            confy::get_configuration_file_path("deckard", config_name).unwrap()
         );
         confy::load("deckard", config_name).unwrap()
     }
 
     pub fn save(&self, config_name: &str) {
+        debug!(
+            "save config path {:?}",
+            confy::get_configuration_file_path("deckard", config_name).unwrap()
+        );
         confy::store("deckard", config_name, &self).unwrap();
+    }
+
+    pub fn get_config_path() -> PathBuf {
+        confy::get_configuration_file_path("deckard", None).unwrap()
     }
 }
