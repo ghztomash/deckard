@@ -66,7 +66,7 @@ pub struct FileEntry {
     pub path: PathBuf,
     pub name: String,
     pub prefix: String,
-    pub extention: Option<String>,
+    pub extension: Option<String>,
     pub file_type: EntryType,
     pub created: DateTime<Local>,
     pub modified: DateTime<Local>,
@@ -91,7 +91,7 @@ impl FileEntry {
                 .split('.')
                 .collect::<Vec<&str>>()[0]
                 .to_string(),
-            extention: path
+            extension: path
                 .extension()
                 .and_then(|os_str| os_str.to_str())
                 .map(|s| s.to_string()),
@@ -121,7 +121,7 @@ impl FileEntry {
                 .split('.')
                 .collect::<Vec<&str>>()[0]
                 .to_string(),
-            extention: entry
+            extension: entry
                 .path()
                 .extension()
                 .and_then(|os_str| os_str.to_str())
