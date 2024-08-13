@@ -104,7 +104,7 @@ pub fn get_config() -> SearchConfig {
 
     let full_hash = args.get_flag("full_hash");
     if full_hash == true {
-        config.full_hash = full_hash
+        config.hasher_config.full_hash = full_hash
     }
 
     debug!("with arguments {:#?}", config);

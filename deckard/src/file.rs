@@ -17,7 +17,7 @@ use image::io::Reader as ImageReader;
 use image_hasher::ImageHash;
 use std::io::Cursor;
 
-use log::{debug, warn};
+use log::{debug, trace, warn};
 
 use crate::{config::SearchConfig, hasher};
 
@@ -146,7 +146,11 @@ impl FileEntry {
         let mut file = File::open(&self.path).unwrap();
 
         let mut magic = [0; MAGIC_SIZE];
-        file.read_exact(&mut magic);
+        let result = file.read_exact(&mut magic);
+        if result.is_err() {
+            warn!("read magic: {:?} for {:?}", result, self.path);
+        }
+
         // .expect(format!("reading {:?} size: {}, data:  {:?}", file, self.size, magic).as_str());
 
         // TODO: Configurable process
@@ -158,49 +162,64 @@ impl FileEntry {
         self.mime_type = Some(tree_magic::from_u8(&magic));
         // println!("{:?}", self.mime_type);
 
-        self.hash = md5::chksum(&magic)
-            // self.hash = md5::chksum(file)
-            .map(|digest| digest.to_hex_lowercase())
-            .ok();
+        // self.hash = md5::chksum(&magic)
+        //     // self.hash = md5::chksum(file)
+        //     .map(|digest| digest.to_hex_lowercase())
+        //     .ok();
+        self.hash = Some(hasher::get_quick_hash(
+            config.hasher_config.hash_algorithm.as_ref(),
+            config.hasher_config.size,
+            config.hasher_config.splits,
+            &self.path,
+        ));
 
-        let mut buffer = Vec::new();
-        // read the whole file
-        file.rewind();
-        file.read_to_end(&mut buffer).unwrap();
-        // self.full_hash = sha2_256::chksum(&file)
-        self.full_hash = sha2_256::chksum(&buffer)
-            .map(|digest| digest.to_hex_lowercase())
-            .ok();
+        // self.full_hash = sha2_256::chksum(&buffer)
+        //     .map(|digest| digest.to_hex_lowercase())
+        //     .ok();
+        if config.hasher_config.full_hash {
+            self.full_hash = Some(hasher::get_full_hash(
+                config.hasher_config.hash_algorithm.as_ref(),
+                &self.path,
+            ))
+        }
 
-        if self.mime_type.as_ref().unwrap().contains("image") {
-            match ImageReader::new(Cursor::new(&buffer)).with_guessed_format() {
-                Ok(r) => match r.decode() {
-                    Ok(img) => {
-                        let hasher = HasherConfig::new().to_hasher();
-                        let hash = hasher.hash_image(&img);
-                        self.image_hash = Some(hash.to_base64());
-                        debug!(
-                            "{} Image hash: {}",
-                            self.path.to_string_lossy(),
-                            hash.to_base64()
-                        );
-                    }
+        if config.check_image {
+            if self.mime_type.as_ref().unwrap().contains("image") {
+                // read the whole file
+                let mut buffer = Vec::new();
+                let result = file.rewind();
+                trace!("image rewind: {:?}", result);
+                let result = file.read_to_end(&mut buffer);
+                trace!("image read: {:?}", result);
+                match ImageReader::new(Cursor::new(&buffer)).with_guessed_format() {
+                    Ok(r) => match r.decode() {
+                        Ok(img) => {
+                            let hasher = HasherConfig::new().to_hasher();
+                            let hash = hasher.hash_image(&img);
+                            self.image_hash = Some(hash.to_base64());
+                            debug!(
+                                "{} Image hash: {}",
+                                self.path.to_string_lossy(),
+                                hash.to_base64()
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "{} decoding image failed: {}",
+                                self.path.to_string_lossy(),
+                                e
+                            );
+                        }
+                    },
                     Err(e) => {
                         warn!(
-                            "{} decoding image failed: {}",
+                            "{} reading image failed: {}",
                             self.path.to_string_lossy(),
                             e
                         );
                     }
-                },
-                Err(e) => {
-                    warn!(
-                        "{} reading image failed: {}",
-                        self.path.to_string_lossy(),
-                        e
-                    );
-                }
-            };
+                };
+            }
         }
 
         self.processed = true;
@@ -225,29 +244,32 @@ impl FileEntry {
             return false;
         }
 
-        if self.mime_type.as_ref().unwrap().contains("image")
-            && other.mime_type.as_ref().unwrap().contains("image")
-        {
-            let img1: ImageHash<Vec<u8>> =
-                ImageHash::from_base64(self.image_hash.as_ref().unwrap().as_str()).unwrap();
-            let img2 = ImageHash::from_base64(other.image_hash.as_ref().unwrap().as_str()).unwrap();
+        if config.check_image {
+            if self.mime_type.as_ref().unwrap().contains("image")
+                && other.mime_type.as_ref().unwrap().contains("image")
+            {
+                let img1: ImageHash<Vec<u8>> =
+                    ImageHash::from_base64(self.image_hash.as_ref().unwrap().as_str()).unwrap();
+                let img2 =
+                    ImageHash::from_base64(other.image_hash.as_ref().unwrap().as_str()).unwrap();
 
-            let distance = img1.dist(&img2);
-            debug!(
-                "{} and {} Hamming Distance: {}",
-                self.path.to_string_lossy(),
-                other.path.to_string_lossy(),
-                img1.dist(&img2)
-            );
-            if distance <= 10 {
-                return true;
+                let distance = img1.dist(&img2);
+                debug!(
+                    "{} and {} Hamming Distance: {}",
+                    self.path.to_string_lossy(),
+                    other.path.to_string_lossy(),
+                    img1.dist(&img2)
+                );
+                if distance <= 10 {
+                    return true;
+                }
             }
         }
 
         if self.size == other.size {
             // println!("{} and {} have the same size", self.name, other.name);
             if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
-                // sheck the full file size
+                // check the full file size
                 // TODO calculate full checksum hash for the files
 
                 // let this_file = File::open(&self.path).unwrap();
@@ -263,11 +285,14 @@ impl FileEntry {
                 // if this_hash == other_hash {
                 //     matching = true;
                 // }
-
-                if self.full_hash.is_some()
-                    && other.full_hash.is_some()
-                    && self.full_hash == other.full_hash
-                {
+                if config.hasher_config.full_hash {
+                    if self.full_hash.is_some()
+                        && other.full_hash.is_some()
+                        && self.full_hash == other.full_hash
+                    {
+                        return true;
+                    }
+                } else {
                     return true;
                 }
             }
