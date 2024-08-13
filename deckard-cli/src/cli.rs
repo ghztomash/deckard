@@ -1,5 +1,6 @@
 use clap::{command, value_parser, Arg, Command};
 use deckard::config::SearchConfig;
+use log::debug;
 
 pub fn cli() -> Command {
     command!()
@@ -61,7 +62,7 @@ pub fn get_config() -> SearchConfig {
     let args = cli().get_matches();
     let mut config = deckard::config::SearchConfig::load("deckard-cli");
 
-    dbg!(&config);
+    debug!("loaded {:#?}", config);
 
     let filter = match args.get_one::<String>("filter") {
         Some(v) => Some(v.to_owned()),
@@ -91,7 +92,7 @@ pub fn get_config() -> SearchConfig {
         config.full_hash = full_hash
     }
 
-    dbg!(&config);
+    debug!("with arguments {:#?}", config);
 
     config
 }
