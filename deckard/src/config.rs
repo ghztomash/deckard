@@ -30,6 +30,7 @@ pub struct SearchConfig {
     pub check_image: bool,
     pub include_filter: Option<String>,
     pub exclude_filter: Option<String>,
+    pub threads: usize,
 }
 
 impl Default for SearchConfig {
@@ -41,6 +42,7 @@ impl Default for SearchConfig {
             check_image: false,
             include_filter: None,
             exclude_filter: None,
+            threads: 0,
         }
     }
 }

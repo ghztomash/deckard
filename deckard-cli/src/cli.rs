@@ -107,6 +107,13 @@ pub fn get_config() -> SearchConfig {
         config.hasher_config.full_hash = full_hash
     }
 
+    match args.get_one::<usize>("threads") {
+        Some(v) => {
+            config.threads = v.to_owned();
+        }
+        None => {}
+    };
+
     debug!("with arguments {:#?}", config);
 
     config

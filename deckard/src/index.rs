@@ -1,3 +1,4 @@
+use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
 use rayon::prelude::*;
@@ -22,6 +23,16 @@ pub struct FileIndex {
 
 impl FileIndex {
     pub fn new(dirs: HashSet<PathBuf>, config: SearchConfig) -> Self {
+        // Define number of threads to use
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(config.threads)
+            .build_global()
+            .unwrap();
+        debug!(
+            "Built thread pool with with {} threads",
+            rayon::current_num_threads()
+        );
+
         FileIndex {
             dirs,
             files: HashMap::new(),
@@ -33,6 +44,7 @@ impl FileIndex {
     pub fn index_dirs(&mut self) {
         for dir in &self.dirs {
             let index: HashMap<PathBuf, FileEntry> = jwalk::WalkDir::new(dir)
+                .parallelism(Parallelism::RayonNewPool(self.config.threads))
                 .sort(false)
                 .skip_hidden(self.config.skip_hidden)
                 .into_iter()
