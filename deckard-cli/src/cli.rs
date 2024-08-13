@@ -42,11 +42,18 @@ pub fn cli() -> Command {
                 .help("Compare every byte of the file"),
         )
         .arg(
-            Arg::new("filter")
+            Arg::new("include_filter")
                 .short('f')
-                .long("filter")
+                .long("include_filter")
                 .value_parser(value_parser!(String))
-                .help("Compare only files that contain filter in their file name"),
+                .help("Include files that contain filter in their file name"),
+        )
+        .arg(
+            Arg::new("exclude_filter")
+                .short('x')
+                .long("exclude_filter")
+                .value_parser(value_parser!(String))
+                .help("Exclude files that contain filter in their file name"),
         )
         .arg(
             Arg::new("threads")
@@ -64,12 +71,20 @@ pub fn get_config() -> SearchConfig {
 
     debug!("loaded {:#?}", config);
 
-    let filter = match args.get_one::<String>("filter") {
+    let include_filter = match args.get_one::<String>("include_filter") {
         Some(v) => Some(v.to_owned()),
         None => None,
     };
-    if filter.is_some() {
-        config.filter = filter
+    if include_filter.is_some() {
+        config.include_filter = include_filter
+    }
+
+    let exclude_filter = match args.get_one::<String>("exclude_filter") {
+        Some(v) => Some(v.to_owned()),
+        None => None,
+    };
+    if exclude_filter.is_some() {
+        config.exclude_filter = exclude_filter
     }
 
     let skip_hidden = args.get_flag("skip_hidden");

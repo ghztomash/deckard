@@ -9,7 +9,8 @@ pub struct SearchConfig {
     pub skip_hidden: bool,
     pub full_hash: bool,
     pub check_image: bool,
-    pub filter: Option<String>,
+    pub include_filter: Option<String>,
+    pub exclude_filter: Option<String>,
 }
 
 impl Default for SearchConfig {
@@ -19,7 +20,8 @@ impl Default for SearchConfig {
             skip_hidden: false,
             full_hash: false,
             check_image: false,
-            filter: None,
+            include_filter: None,
+            exclude_filter: None,
         }
     }
 }

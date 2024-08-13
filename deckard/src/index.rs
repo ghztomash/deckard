@@ -49,19 +49,38 @@ impl FileIndex {
                                 );
                                 if file.file_type == EntryType::File {
                                     // Check filename filter
-                                    if let Some(filter) = self.config.filter.as_ref() {
+                                    if let Some(exclude_filter) =
+                                        self.config.exclude_filter.as_ref()
+                                    {
+                                        if entry
+                                            .file_name()
+                                            .to_string_lossy()
+                                            .to_lowercase()
+                                            .contains(&exclude_filter.to_lowercase())
+                                        {
+                                            trace!(
+                                                "File '{}' matches exclude filter pattern '{}'",
+                                                entry.file_name().to_string_lossy(),
+                                                exclude_filter
+                                            );
+                                            return None;
+                                        }
+                                    }
+                                    if let Some(include_filter) =
+                                        self.config.include_filter.as_ref()
+                                    {
                                         if !entry
                                             .file_name()
                                             .to_string_lossy()
                                             .to_lowercase()
-                                            .contains(&filter.to_lowercase())
+                                            .contains(&include_filter.to_lowercase())
                                         {
                                             return None;
                                         } else {
                                             trace!(
-                                                "File '{}' matches filter pattern '{}'",
+                                                "File '{}' matches include filter pattern '{}'",
                                                 entry.file_name().to_string_lossy(),
-                                                filter
+                                                include_filter
                                             );
                                         }
                                     }
