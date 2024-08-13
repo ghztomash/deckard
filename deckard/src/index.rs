@@ -174,26 +174,3 @@ impl FileIndex {
         self.files.get(file).and_then(|f| Some(f.clone()))
     }
 }
-
-fn visit_dir(dir: &Path) -> (HashMap<PathBuf, FileEntry>, HashSet<PathBuf>) {
-    let mut files: HashMap<PathBuf, FileEntry> = HashMap::new();
-    let mut dirs: HashSet<PathBuf> = HashSet::new();
-
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-
-            if path.is_file() && !path.is_symlink() {
-                let file = FileEntry::from_dir_entry(entry);
-                //println!("{}", file);
-                if file.file_type == EntryType::File {
-                    files.insert(file.path.clone(), file);
-                }
-            } else if path.is_dir() {
-                dirs.insert(path);
-            }
-        }
-    }
-    (files, dirs)
-}
