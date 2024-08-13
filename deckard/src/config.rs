@@ -23,14 +23,35 @@ impl Default for HasherConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct ImageConfig {
+    pub check_image: bool,
+    pub hash_algorithm: String,
+    pub filter_algorithm: String,
+    pub size: u64,
+    pub threshold: u64,
+}
+
+impl Default for ImageConfig {
+    fn default() -> Self {
+        Self {
+            check_image: false,
+            hash_algorithm: "gradient".to_string(),
+            filter_algorithm: "triangle".to_string(),
+            size: 8,
+            threshold: 10,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SearchConfig {
     pub skip_empty: bool,
     pub skip_hidden: bool,
-    pub hasher_config: HasherConfig,
-    pub check_image: bool,
+    pub threads: usize,
     pub include_filter: Option<String>,
     pub exclude_filter: Option<String>,
-    pub threads: usize,
+    pub hasher_config: HasherConfig,
+    pub image_config: ImageConfig,
 }
 
 impl Default for SearchConfig {
@@ -38,11 +59,11 @@ impl Default for SearchConfig {
         Self {
             skip_empty: false,
             skip_hidden: false,
-            hasher_config: HasherConfig::default(),
-            check_image: false,
+            threads: 0,
             include_filter: None,
             exclude_filter: None,
-            threads: 0,
+            hasher_config: HasherConfig::default(),
+            image_config: ImageConfig::default(),
         }
     }
 }

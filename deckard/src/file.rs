@@ -1,7 +1,7 @@
 use base64::prelude::*;
 use chksum::{md5, sha2_256};
 use chrono::prelude::*;
-use image_hasher::{HashAlg, HasherConfig};
+use image_hasher::{FilterType, HashAlg, HasherConfig};
 use infer::Type;
 use std::{
     ffi::OsString,
@@ -10,7 +10,7 @@ use std::{
     io::{Read, Seek},
     os::unix::fs::MetadataExt,
     path::PathBuf,
-    u8, usize,
+    u32, u8, usize,
 };
 
 use image::io::Reader as ImageReader;
@@ -183,7 +183,7 @@ impl FileEntry {
             ))
         }
 
-        if config.check_image {
+        if config.image_config.check_image {
             if self.mime_type.as_ref().unwrap().contains("image") {
                 // read the whole file
                 let mut buffer = Vec::new();
@@ -194,7 +194,14 @@ impl FileEntry {
                 match ImageReader::new(Cursor::new(&buffer)).with_guessed_format() {
                     Ok(r) => match r.decode() {
                         Ok(img) => {
-                            let hasher = HasherConfig::new().to_hasher();
+                            let hasher = HasherConfig::new()
+                                .hash_size(
+                                    config.image_config.size as u32,
+                                    config.image_config.size as u32,
+                                )
+                                .resize_filter(FilterType::Triangle)
+                                .hash_alg(HashAlg::Gradient)
+                                .to_hasher();
                             let hash = hasher.hash_image(&img);
                             self.image_hash = Some(hash.to_base64());
                             debug!(
@@ -244,7 +251,7 @@ impl FileEntry {
             return false;
         }
 
-        if config.check_image {
+        if config.image_config.check_image {
             if self.mime_type.as_ref().unwrap().contains("image")
                 && other.mime_type.as_ref().unwrap().contains("image")
             {
@@ -260,7 +267,7 @@ impl FileEntry {
                     other.path.to_string_lossy(),
                     img1.dist(&img2)
                 );
-                if distance <= 10 {
+                if distance <= config.image_config.threshold as u32 {
                     return true;
                 }
             }

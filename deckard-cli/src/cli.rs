@@ -99,7 +99,7 @@ pub fn get_config() -> SearchConfig {
 
     let check_image = args.get_flag("check_image");
     if check_image == true {
-        config.check_image = check_image
+        config.image_config.check_image = check_image
     }
 
     let full_hash = args.get_flag("full_hash");
