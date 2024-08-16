@@ -24,12 +24,14 @@ pub struct FileIndex {
 impl FileIndex {
     pub fn new(dirs: HashSet<PathBuf>, config: SearchConfig) -> Self {
         // Define number of threads to use
-        rayon::ThreadPoolBuilder::new()
+        if let Err(e) = rayon::ThreadPoolBuilder::new()
             .num_threads(config.threads)
             .build_global()
-            .unwrap();
+        {
+            error!("error building thread pool: {:?}", e);
+        }
         debug!(
-            "Built thread pool with with {} threads",
+            "Using thread pool with with {} threads",
             rayon::current_num_threads()
         );
 
