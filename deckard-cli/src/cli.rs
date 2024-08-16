@@ -15,6 +15,13 @@ pub fn cli() -> Command {
                 .num_args(1..),
         )
         .arg(
+            Arg::new("open_config")
+                .short('O')
+                .long("open_config")
+                .action(clap::ArgAction::SetTrue)
+                .help("Open config file"),
+        )
+        .arg(
             Arg::new("skip_hidden")
                 .short('H')
                 .long("skip_hidden")

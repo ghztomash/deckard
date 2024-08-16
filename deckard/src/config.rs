@@ -93,7 +93,7 @@ impl SearchConfig {
         confy::store("deckard", config_name, &self).unwrap();
     }
 
-    pub fn get_config_path() -> PathBuf {
-        confy::get_configuration_file_path("deckard", None).unwrap()
+    pub fn get_config_path(config_name: &str) -> PathBuf {
+        confy::get_configuration_file_path("deckard", config_name).unwrap()
     }
 }

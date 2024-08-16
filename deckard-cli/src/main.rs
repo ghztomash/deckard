@@ -14,6 +14,11 @@ fn main() {
     let args = cli::cli().get_matches();
     let config = cli::get_config();
 
+    if args.get_flag("open_config") {
+        open_config();
+        return;
+    }
+
     let target_dirs = match args.get_many::<String>("params") {
         Some(values) => values.map(|v| v.as_str()).collect::<Vec<&str>>(),
         None => vec!["."],
@@ -65,4 +70,11 @@ fn main() {
             format!("{:#?}", match_names).yellow()
         );
     }
+}
+
+/// Open the default configuration file in the default editor
+fn open_config() {
+    let config_path = config::SearchConfig::get_config_path("deckard-cli");
+    println!("Opening default configuration file: {:?}", config_path);
+    let _ = std::process::Command::new("open").arg(config_path).output();
 }
