@@ -61,8 +61,8 @@ fn main() {
 
         println!(
             "{} matches {}",
-            name.yellow(),
-            format!("{:?}", match_names).yellow()
+            name.green(),
+            format!("{:#?}", match_names).yellow()
         );
     }
 }

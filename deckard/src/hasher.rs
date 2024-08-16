@@ -119,7 +119,7 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug>(
                     .hash_alg(hash)
                     .to_hasher();
                 let hash = hasher.hash_image(&img).to_base64();
-                trace!("Image hash: {}", hash);
+                trace!("Image {:?} hash: {}", path, hash);
                 return Some(hash);
             }
             Err(e) => {
@@ -127,7 +127,7 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug>(
             }
         },
         Err(e) => {
-            warn!("Reading image {:?} failed: {}", path, e);
+            error!("Reading image {:?} failed: {}", path, e);
         }
     };
     None

@@ -33,7 +33,7 @@ pub fn cli() -> Command {
                 .short('i')
                 .long("check_image")
                 .action(clap::ArgAction::SetTrue)
-                .help("Compare image files"),
+                .help("Compare image files perceptually"),
         )
         .arg(
             Arg::new("full_hash")
