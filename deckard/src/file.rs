@@ -218,7 +218,8 @@ impl FileEntry {
             }
         }
 
-        if config.image_config.check_image {
+        if config.image_config.check_image && self.mime_type.is_some() && other.mime_type.is_some()
+        {
             if self.mime_type.as_ref().unwrap().contains("image")
                 && other.mime_type.as_ref().unwrap().contains("image")
                 && self.image_hash.is_some()
@@ -232,8 +233,8 @@ impl FileEntry {
                 let distance = img1.dist(&img2);
                 debug!(
                     "{} and {} Hamming Distance: {}",
-                    self.path.to_string_lossy(),
-                    other.path.to_string_lossy(),
+                    self.name,
+                    other.name,
                     img1.dist(&img2)
                 );
                 if distance <= config.image_config.threshold as u32 {
