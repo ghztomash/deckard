@@ -13,9 +13,7 @@ use std::{
     u32, u8, usize,
 };
 
-use image::io::Reader as ImageReader;
 use image_hasher::ImageHash;
-use std::io::Cursor;
 
 use log::{debug, error, trace, warn};
 

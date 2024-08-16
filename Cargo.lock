@@ -796,6 +796,7 @@ dependencies = [
  "chrono",
  "confy",
  "criterion",
+ "env_logger",
  "image 0.25.1",
  "image_hasher",
  "imagehash",
