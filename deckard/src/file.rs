@@ -17,7 +17,7 @@ use image::io::Reader as ImageReader;
 use image_hasher::ImageHash;
 use std::io::Cursor;
 
-use log::{debug, trace, warn};
+use log::{debug, error, trace, warn};
 
 use crate::{config::SearchConfig, hasher};
 
@@ -145,27 +145,14 @@ impl FileEntry {
         }
         let mut file = File::open(&self.path).unwrap();
 
-        let mut magic = [0; MAGIC_SIZE];
-        let result = file.read_exact(&mut magic);
-        if result.is_err() {
-            warn!("read magic: {:?} for {:?}", result, self.path);
+        if self.size >= MAGIC_SIZE as u64 {
+            let mut magic = [0; MAGIC_SIZE];
+            file.read_exact(&mut magic)
+                .unwrap_or_else(|e| warn!("read magic: {:?} for {:?}", e, self.path));
+            // Find the MIME type
+            self.mime_type = Some(tree_magic::from_u8(&magic));
         }
 
-        // .expect(format!("reading {:?} size: {}, data:  {:?}", file, self.size, magic).as_str());
-
-        // TODO: Configurable process
-
-        // let infer = infer::get_from_path(&self.path).ok().flatten();
-        // println!({:?},infer);
-
-        // Find the MIME type
-        self.mime_type = Some(tree_magic::from_u8(&magic));
-        // println!("{:?}", self.mime_type);
-
-        // self.hash = md5::chksum(&magic)
-        //     // self.hash = md5::chksum(file)
-        //     .map(|digest| digest.to_hex_lowercase())
-        //     .ok();
         self.hash = Some(hasher::get_quick_hash(
             config.hasher_config.hash_algorithm.as_ref(),
             config.hasher_config.size,
@@ -173,9 +160,6 @@ impl FileEntry {
             &self.path,
         ));
 
-        // self.full_hash = sha2_256::chksum(&buffer)
-        //     .map(|digest| digest.to_hex_lowercase())
-        //     .ok();
         if config.hasher_config.full_hash {
             self.full_hash = Some(hasher::get_full_hash(
                 config.hasher_config.hash_algorithm.as_ref(),
@@ -184,54 +168,21 @@ impl FileEntry {
         }
 
         if config.image_config.check_image {
-            if self.mime_type.as_ref().unwrap().contains("image") {
-                // read the whole file
-                let mut buffer = Vec::new();
-                let result = file.rewind();
-                trace!("image rewind: {:?}", result);
-                let result = file.read_to_end(&mut buffer);
-                trace!("image read: {:?}", result);
-                match ImageReader::new(Cursor::new(&buffer)).with_guessed_format() {
-                    Ok(r) => match r.decode() {
-                        Ok(img) => {
-                            let hasher = HasherConfig::new()
-                                .hash_size(
-                                    config.image_config.size as u32,
-                                    config.image_config.size as u32,
-                                )
-                                .resize_filter(FilterType::Triangle)
-                                .hash_alg(HashAlg::Gradient)
-                                .to_hasher();
-                            let hash = hasher.hash_image(&img);
-                            self.image_hash = Some(hash.to_base64());
-                            debug!(
-                                "{} Image hash: {}",
-                                self.path.to_string_lossy(),
-                                hash.to_base64()
-                            );
-                        }
-                        Err(e) => {
-                            warn!(
-                                "{} decoding image failed: {}",
-                                self.path.to_string_lossy(),
-                                e
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            "{} reading image failed: {}",
-                            self.path.to_string_lossy(),
-                            e
-                        );
-                    }
-                };
+            if let Some(mime) = self.mime_type.as_ref() {
+                if mime.contains("image") {
+                    self.image_hash = hasher::get_image_hash(
+                        config.image_config.hash_algorithm.as_ref(),
+                        config.image_config.filter_algorithm.as_ref(),
+                        config.image_config.size,
+                        &self.path,
+                    );
+                }
+            } else {
+                warn!("No MIME type for file {}", self.path.to_string_lossy())
             }
         }
 
         self.processed = true;
-
-        // println!("{:?}", self.hash);
     }
 
     pub fn compare(&self, other: &Self, config: &SearchConfig) -> bool {
@@ -251,9 +202,27 @@ impl FileEntry {
             return false;
         }
 
+        if self.size == other.size {
+            if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
+                // check the full file
+                if config.hasher_config.full_hash {
+                    if self.full_hash.is_some()
+                        && other.full_hash.is_some()
+                        && self.full_hash == other.full_hash
+                    {
+                        return true;
+                    }
+                } else {
+                    return true;
+                }
+            }
+        }
+
         if config.image_config.check_image {
             if self.mime_type.as_ref().unwrap().contains("image")
                 && other.mime_type.as_ref().unwrap().contains("image")
+                && self.image_hash.is_some()
+                && other.image_hash.is_some()
             {
                 let img1: ImageHash<Vec<u8>> =
                     ImageHash::from_base64(self.image_hash.as_ref().unwrap().as_str()).unwrap();
@@ -268,38 +237,6 @@ impl FileEntry {
                     img1.dist(&img2)
                 );
                 if distance <= config.image_config.threshold as u32 {
-                    return true;
-                }
-            }
-        }
-
-        if self.size == other.size {
-            // println!("{} and {} have the same size", self.name, other.name);
-            if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
-                // check the full file size
-                // TODO calculate full checksum hash for the files
-
-                // let this_file = File::open(&self.path).unwrap();
-                // let this_hash = sha2_256::chksum(this_file)
-                //     .map(|digest| digest.to_hex_lowercase())
-                //     .unwrap();
-
-                // let other_file = File::open(&other.path).unwrap();
-                // let other_hash = sha2_256::chksum(other_file)
-                //     .map(|digest| digest.to_hex_lowercase())
-                //     .unwrap();
-
-                // if this_hash == other_hash {
-                //     matching = true;
-                // }
-                if config.hasher_config.full_hash {
-                    if self.full_hash.is_some()
-                        && other.full_hash.is_some()
-                        && self.full_hash == other.full_hash
-                    {
-                        return true;
-                    }
-                } else {
                     return true;
                 }
             }
