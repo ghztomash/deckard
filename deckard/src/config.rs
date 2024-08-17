@@ -17,7 +17,7 @@ impl Default for HasherConfig {
             full_hash: false,
             hash_algorithm: "sha1".to_string(),
             size: 1024,
-            splits: 4,
+            splits: 8,
         }
     }
 }
@@ -35,10 +35,10 @@ impl Default for ImageConfig {
     fn default() -> Self {
         Self {
             check_image: false,
-            hash_algorithm: "gradient".to_string(),
-            filter_algorithm: "triangle".to_string(),
-            size: 8,
-            threshold: 10,
+            hash_algorithm: "mean".to_string(),
+            filter_algorithm: "nearest".to_string(),
+            size: 16,
+            threshold: 40,
         }
     }
 }

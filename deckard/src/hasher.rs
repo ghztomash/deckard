@@ -1,6 +1,7 @@
 use chksum::md5;
 use chksum::sha1;
 use chksum::sha2_256;
+use chksum::sha2_512;
 use core::panic;
 use image::io::Reader as ImageReader;
 use image_hasher::{FilterType, HashAlg, HasherConfig};
@@ -17,6 +18,7 @@ pub fn get_full_hash<P: AsRef<Path>>(hash: &str, path: P) -> String {
         "md5" => md5::chksum(file).unwrap().to_hex_lowercase(),
         "sha1" => sha1::chksum(file).unwrap().to_hex_lowercase(),
         "sha256" => sha2_256::chksum(file).unwrap().to_hex_lowercase(),
+        "sha512" => sha2_512::chksum(file).unwrap().to_hex_lowercase(),
         _ => panic!("wrong hashing algorithm"),
     };
     digest
@@ -73,6 +75,7 @@ pub fn get_quick_hash<P: AsRef<Path>>(hash: &str, size: u64, splits: u64, path: 
         "md5" => md5::chksum(&total_buffer).unwrap().to_hex_lowercase(),
         "sha1" => sha1::chksum(&total_buffer).unwrap().to_hex_lowercase(),
         "sha256" => sha2_256::chksum(&total_buffer).unwrap().to_hex_lowercase(),
+        "sha512" => sha2_512::chksum(&total_buffer).unwrap().to_hex_lowercase(),
         _ => panic!("wrong hashing algorithm"),
     };
     digest
@@ -123,11 +126,11 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug>(
                 return Some(hash);
             }
             Err(e) => {
-                error!("Decoding image {:?} failed: {}", path, e);
+                warn!("Decoding image {:?} failed: {}", path, e);
             }
         },
         Err(e) => {
-            error!("Reading image {:?} failed: {}", path, e);
+            warn!("Reading image {:?} failed: {}", path, e);
         }
     };
     None
