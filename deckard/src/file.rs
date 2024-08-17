@@ -148,7 +148,7 @@ impl FileEntry {
         }
 
         self.hash = Some(hasher::get_quick_hash(
-            config.hasher_config.hash_algorithm.as_ref(),
+            &config.hasher_config.hash_algorithm,
             config.hasher_config.size,
             config.hasher_config.splits,
             &self.path,
@@ -156,7 +156,7 @@ impl FileEntry {
 
         if config.hasher_config.full_hash {
             self.full_hash = Some(hasher::get_full_hash(
-                config.hasher_config.hash_algorithm.as_ref(),
+                &config.hasher_config.hash_algorithm,
                 &self.path,
             ))
         }
@@ -165,8 +165,8 @@ impl FileEntry {
             if let Some(mime) = self.mime_type.as_ref() {
                 if mime.contains("image") {
                     self.image_hash = hasher::get_image_hash(
-                        config.image_config.hash_algorithm.as_ref(),
-                        config.image_config.filter_algorithm.as_ref(),
+                        &config.image_config.hash_algorithm,
+                        &config.image_config.filter_algorithm,
                         config.image_config.size,
                         &self.path,
                     );
@@ -239,8 +239,6 @@ impl FileEntry {
 
         false
     }
-
-    fn read_data() {}
 }
 
 impl Display for FileEntry {

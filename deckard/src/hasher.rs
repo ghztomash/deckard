@@ -1,31 +1,31 @@
-use chksum::md5;
-use chksum::sha1;
-use chksum::sha2_256;
-use chksum::sha2_512;
-use core::panic;
+use crate::config::{HashAlgorithm, ImageFilterAlgorithm, ImageHashAlgorithm};
+use chksum::{md5, sha1, sha2_256, sha2_512};
 use image::io::Reader as ImageReader;
-use image_hasher::{FilterType, HashAlg, HasherConfig};
+use image_hasher::HasherConfig;
 use log::{debug, error, trace, warn};
 use std::fs::File;
-use std::io::Read;
-use std::io::Seek;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 #[inline]
-pub fn get_full_hash<P: AsRef<Path>>(hash: &str, path: P) -> String {
+pub fn get_full_hash<P: AsRef<Path>>(hash: &HashAlgorithm, path: P) -> String {
     let file = File::open(path).unwrap();
     let digest = match hash {
-        "md5" => md5::chksum(file).unwrap().to_hex_lowercase(),
-        "sha1" => sha1::chksum(file).unwrap().to_hex_lowercase(),
-        "sha256" => sha2_256::chksum(file).unwrap().to_hex_lowercase(),
-        "sha512" => sha2_512::chksum(file).unwrap().to_hex_lowercase(),
-        _ => panic!("wrong hashing algorithm"),
+        HashAlgorithm::MD5 => md5::chksum(file).unwrap().to_hex_lowercase(),
+        HashAlgorithm::SHA1 => sha1::chksum(file).unwrap().to_hex_lowercase(),
+        HashAlgorithm::SHA256 => sha2_256::chksum(file).unwrap().to_hex_lowercase(),
+        HashAlgorithm::SHA512 => sha2_512::chksum(file).unwrap().to_hex_lowercase(),
     };
     digest
 }
 
 #[inline]
-pub fn get_quick_hash<P: AsRef<Path>>(hash: &str, size: u64, splits: u64, path: P) -> String {
+pub fn get_quick_hash<P: AsRef<Path>>(
+    hash: &HashAlgorithm,
+    size: u64,
+    splits: u64,
+    path: P,
+) -> String {
     let mut size = size;
     let mut file = File::open(path).unwrap();
     let mut total_buffer = vec![0; 0];
@@ -70,56 +70,29 @@ pub fn get_quick_hash<P: AsRef<Path>>(hash: &str, size: u64, splits: u64, path: 
         total_buffer.append(&mut file_len.to_le_bytes().to_vec());
     }
 
-    // TODO: Move parsing to config
     let digest = match hash {
-        "md5" => md5::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-        "sha1" => sha1::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-        "sha256" => sha2_256::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-        "sha512" => sha2_512::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-        _ => panic!("wrong hashing algorithm"),
+        HashAlgorithm::MD5 => md5::chksum(&total_buffer).unwrap().to_hex_lowercase(),
+        HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).unwrap().to_hex_lowercase(),
+        HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).unwrap().to_hex_lowercase(),
+        HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).unwrap().to_hex_lowercase(),
     };
     digest
 }
 
 #[inline]
 pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug>(
-    hash: &str,
-    filter: &str,
+    hash: &ImageHashAlgorithm,
+    filter: &ImageFilterAlgorithm,
     size: u64,
     path: &P,
 ) -> Option<String> {
-    // TODO: Move parsing to config
-    let hash = match hash.to_lowercase().as_ref() {
-        "mean" => HashAlg::Mean,
-        "median" => HashAlg::Median,
-        "gradient" => HashAlg::Gradient,
-        "vert_gradient" => HashAlg::VertGradient,
-        "double_gradient" => HashAlg::DoubleGradient,
-        "blockhash" => HashAlg::Blockhash,
-        _ => {
-            error!("wrong hash algorithm {}", hash);
-            HashAlg::Gradient
-        }
-    };
-    let filter = match filter.to_lowercase().as_ref() {
-        "nearest" => FilterType::Nearest,
-        "triangle" => FilterType::Triangle,
-        "catmull" => FilterType::CatmullRom,
-        "gaussian" => FilterType::Gaussian,
-        "lanczos" => FilterType::Lanczos3,
-        _ => {
-            error!("wrong filter algorithm {}", filter);
-            FilterType::Triangle
-        }
-    };
-
     match ImageReader::open(path) {
         Ok(r) => match r.decode() {
             Ok(img) => {
                 let hasher = HasherConfig::new()
                     .hash_size(size as u32, size as u32)
-                    .resize_filter(filter)
-                    .hash_alg(hash)
+                    .resize_filter(filter.into_filter_type())
+                    .hash_alg(hash.into_hash_alg())
                     .to_hasher();
                 let hash = hasher.hash_image(&img).to_base64();
                 trace!("Image {:?} hash: {}", path, hash);

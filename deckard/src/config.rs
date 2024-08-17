@@ -1,21 +1,30 @@
-use std::path::PathBuf;
-
+use image_hasher::{FilterType, HashAlg};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HasherConfig {
     pub full_hash: bool,
-    pub hash_algorithm: String,
+    pub hash_algorithm: HashAlgorithm,
     pub size: u64,
     pub splits: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum HashAlgorithm {
+    MD5,
+    SHA1,
+    SHA256,
+    SHA512,
 }
 
 impl Default for HasherConfig {
     fn default() -> Self {
         Self {
             full_hash: false,
-            hash_algorithm: "sha1".to_string(),
+            hash_algorithm: HashAlgorithm::SHA1,
             size: 1024,
             splits: 8,
         }
@@ -25,18 +34,64 @@ impl Default for HasherConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ImageConfig {
     pub check_image: bool,
-    pub hash_algorithm: String,
-    pub filter_algorithm: String,
+    pub hash_algorithm: ImageHashAlgorithm,
+    pub filter_algorithm: ImageFilterAlgorithm,
     pub size: u64,
     pub threshold: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageHashAlgorithm {
+    Mean,
+    Median,
+    Gradient,
+    VertGradient,
+    DoubleGradient,
+    Blockhash,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageFilterAlgorithm {
+    Nearest,
+    Triangle,
+    CatmullRom,
+    Gaussian,
+    Lanczos3,
+}
+
+impl ImageHashAlgorithm {
+    pub fn into_hash_alg(&self) -> HashAlg {
+        match self {
+            ImageHashAlgorithm::Mean => HashAlg::Mean,
+            ImageHashAlgorithm::Median => HashAlg::Median,
+            ImageHashAlgorithm::Gradient => HashAlg::Gradient,
+            ImageHashAlgorithm::VertGradient => HashAlg::VertGradient,
+            ImageHashAlgorithm::DoubleGradient => HashAlg::DoubleGradient,
+            ImageHashAlgorithm::Blockhash => HashAlg::Blockhash,
+        }
+    }
+}
+
+impl ImageFilterAlgorithm {
+    pub fn into_filter_type(&self) -> FilterType {
+        match self {
+            ImageFilterAlgorithm::Nearest => FilterType::Nearest,
+            ImageFilterAlgorithm::Triangle => FilterType::Triangle,
+            ImageFilterAlgorithm::CatmullRom => FilterType::CatmullRom,
+            ImageFilterAlgorithm::Gaussian => FilterType::Gaussian,
+            ImageFilterAlgorithm::Lanczos3 => FilterType::Lanczos3,
+        }
+    }
 }
 
 impl Default for ImageConfig {
     fn default() -> Self {
         Self {
             check_image: false,
-            hash_algorithm: "mean".to_string(),
-            filter_algorithm: "nearest".to_string(),
+            hash_algorithm: ImageHashAlgorithm::Mean,
+            filter_algorithm: ImageFilterAlgorithm::Nearest,
             size: 16,
             threshold: 40,
         }
