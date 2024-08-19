@@ -146,10 +146,8 @@ impl FileEntry {
             return;
         }
 
-        if self.size >= MAGIC_SIZE as u64 {
-            self.mime_type = get_mime_type(&self.path);
-            trace!("{} found mime type {:?}", self.name, self.mime_type);
-        }
+        self.mime_type = Some(get_mime_type(&self.path));
+        trace!("{} found mime type {:?}", self.name, self.mime_type);
 
         self.hash = Some(hasher::get_quick_hash(
             &config.hasher_config.hash_algorithm,
@@ -300,15 +298,23 @@ impl Display for FileEntry {
 }
 
 #[inline]
-pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Option<String> {
-    let mut file = File::open(&path).unwrap();
-    let mut magic = [0; MAGIC_SIZE];
-    file.read_exact(&mut magic)
-        .unwrap_or_else(|e| warn!("read magic: {:?} for {:?}", e, path));
-    // Find the MIME type
-    let mime_type = tree_magic::from_u8(&magic);
-    // TODO: Add guessing by file extension
-    // let mime = mime_guess::guess_mime_type(path);
-    // trace!("mime_guess: {}", mime);
-    Some(mime_type)
+pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> String {
+    let mime = mime_guess::from_path(&path).first();
+    match mime {
+        Some(mime_type) => {
+            return mime_type.to_string();
+        }
+        None => {
+            let mut file = File::open(&path).unwrap();
+
+            let mut magic = [0; MAGIC_SIZE];
+            if file.metadata().unwrap().size() >= MAGIC_SIZE as u64 {
+                file.read_exact(&mut magic)
+                    .unwrap_or_else(|e| warn!("read magic: {:?} for {:?}", e, path));
+            }
+            // Find the MIME type
+            let mime_type = tree_magic::from_u8(&magic);
+            return mime_type;
+        }
+    }
 }
