@@ -1,11 +1,23 @@
 use crate::config::{HashAlgorithm, ImageFilterAlgorithm, ImageHashAlgorithm};
 use chksum::{md5, sha1, sha2_256, sha2_512};
 use image::io::Reader as ImageReader;
-use image_hasher::HasherConfig;
+use image_hasher::{HasherConfig, ImageHash};
 use log::{debug, error, trace, warn};
-use std::fs::File;
-use std::io::{Read, Seek};
-use std::path::Path;
+use rusty_chromaprint::{Configuration, Fingerprinter};
+use std::{
+    fs::File,
+    io::{Read, Seek},
+    path::Path,
+};
+use symphonia::core::{
+    audio::SampleBuffer,
+    codecs::{DecoderOptions, CODEC_TYPE_NULL},
+    errors::Error,
+    formats::FormatOptions,
+    io::MediaSourceStream,
+    meta::MetadataOptions,
+    probe::Hint,
+};
 
 #[inline]
 pub fn get_full_hash<P: AsRef<Path>>(hash: &HashAlgorithm, path: P) -> String {
@@ -107,4 +119,92 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug>(
         }
     };
     None
+}
+
+#[inline]
+pub fn get_audio_hash(
+    path: impl AsRef<Path> + std::fmt::Debug,
+    config: &Configuration,
+) -> Option<Vec<u32>> {
+    let file = std::fs::File::open(path.as_ref()).expect("failed to open media");
+
+    let mut hint = Hint::new();
+    // Provide the file extension as a hint.
+    if let Some(extension) = path.as_ref().extension() {
+        if let Some(extension_str) = extension.to_str() {
+            hint.with_extension(extension_str);
+        }
+    }
+
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    // guess the format
+    let probe = symphonia::default::get_probe()
+        .format(&hint, mss, &Default::default(), &Default::default())
+        .expect("failed to prove audio format");
+    let mut format = probe.format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .expect("no supported audio tracks");
+
+    let dec_opts: DecoderOptions = Default::default();
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &dec_opts)
+        .expect("unsupported codec");
+
+    let track_id = track.id;
+
+    let sample_rate = track.codec_params.sample_rate.expect("missing sample rate");
+    let channels = track
+        .codec_params
+        .channels
+        .expect("missing audio channels")
+        .count() as u32;
+
+    let mut printer = Fingerprinter::new(&config);
+    printer
+        .start(sample_rate, channels)
+        .expect("initializing audio fingerprinter");
+
+    let mut sample_buf = None;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(_) => break,
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
+            Ok(audio_buf) => {
+                if sample_buf.is_none() {
+                    let spec = *audio_buf.spec();
+                    let duration = audio_buf.capacity() as u64;
+                    sample_buf = Some(SampleBuffer::<i16>::new(duration, spec));
+                }
+
+                if let Some(buf) = &mut sample_buf {
+                    buf.copy_interleaved_ref(audio_buf);
+                    printer.consume(buf.samples());
+                }
+            }
+            Err(Error::DecodeError(_)) => (),
+            Err(_) => break,
+        }
+    }
+
+    printer.finish();
+    // trace!(
+    //     "Audio {:?} fingerprint: {:08x?}",
+    //     path,
+    //     printer.fingerprint()
+    // );
+
+    Some(printer.fingerprint().to_vec())
 }

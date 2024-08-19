@@ -1,7 +1,7 @@
 use image_hasher::{FilterType, HashAlg};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{fs::File, path::PathBuf};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HasherConfig {
@@ -99,6 +99,27 @@ impl Default for ImageConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct AudioConfig {
+    pub compare: bool,
+    pub remove_silence: bool,
+    pub silence_threshold: u64,
+    pub frame_size: u64,
+    pub threshold: u64,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            compare: false,
+            remove_silence: false,
+            silence_threshold: 40,
+            frame_size: 4096,
+            threshold: 40,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SearchConfig {
     pub skip_empty: bool,
     pub skip_hidden: bool,
@@ -107,6 +128,7 @@ pub struct SearchConfig {
     pub exclude_filter: Option<String>,
     pub hasher_config: HasherConfig,
     pub image_config: ImageConfig,
+    pub audio_config: AudioConfig,
 }
 
 impl Default for SearchConfig {
@@ -119,6 +141,7 @@ impl Default for SearchConfig {
             exclude_filter: None,
             hasher_config: HasherConfig::default(),
             image_config: ImageConfig::default(),
+            audio_config: AudioConfig::default(),
         }
     }
 }

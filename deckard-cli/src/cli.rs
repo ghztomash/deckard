@@ -43,6 +43,13 @@ pub fn cli() -> Command {
                 .help("Compare image files perceptually"),
         )
         .arg(
+            Arg::new("check_audio")
+                .short('a')
+                .long("check_audio")
+                .action(clap::ArgAction::SetTrue)
+                .help("Compare audio files similarities"),
+        )
+        .arg(
             Arg::new("full_hash")
                 .long("full_hash")
                 .action(clap::ArgAction::SetTrue)
@@ -107,6 +114,11 @@ pub fn get_config() -> SearchConfig {
     let check_image = args.get_flag("check_image");
     if check_image == true {
         config.image_config.check_image = check_image
+    }
+
+    let check_audio = args.get_flag("check_audio");
+    if check_audio == true {
+        config.audio_config.compare = check_audio
     }
 
     let full_hash = args.get_flag("full_hash");

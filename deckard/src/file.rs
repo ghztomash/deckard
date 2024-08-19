@@ -3,6 +3,7 @@ use chksum::{md5, sha2_256};
 use chrono::prelude::*;
 use image_hasher::{FilterType, HashAlg, HasherConfig};
 use infer::Type;
+use rusty_chromaprint::Configuration;
 use std::{
     ffi::OsString,
     fmt::{self, Display},
@@ -73,6 +74,7 @@ pub struct FileEntry {
     pub hash: Option<String>,
     pub full_hash: Option<String>,
     pub image_hash: Option<String>,
+    pub audio_hash: Option<Vec<u32>>,
     pub processed: bool,
 }
 
@@ -101,6 +103,7 @@ impl FileEntry {
             hash: None,
             full_hash: None,
             image_hash: None,
+            audio_hash: None,
             processed: false,
         }
     }
@@ -132,6 +135,7 @@ impl FileEntry {
             hash: None,
             full_hash: None,
             image_hash: None,
+            audio_hash: None,
             processed: false,
         }
     }
@@ -170,6 +174,17 @@ impl FileEntry {
                         config.image_config.size,
                         &self.path,
                     );
+                }
+            } else {
+                warn!("No MIME type for file {}", self.path.to_string_lossy())
+            }
+        }
+
+        if config.audio_config.compare {
+            if let Some(mime) = self.mime_type.as_ref() {
+                if mime.contains("audio") {
+                    let chroma_config = Configuration::preset_test1();
+                    self.audio_hash = hasher::get_audio_hash(&self.path, &chroma_config);
                 }
             } else {
                 warn!("No MIME type for file {}", self.path.to_string_lossy())
@@ -232,6 +247,32 @@ impl FileEntry {
                     img1.dist(&img2)
                 );
                 if distance <= config.image_config.threshold as u32 {
+                    return true;
+                }
+            }
+        }
+
+        if config.audio_config.compare && self.mime_type.is_some() && other.mime_type.is_some() {
+            if self.mime_type.as_ref().unwrap().contains("audio")
+                && other.mime_type.as_ref().unwrap().contains("audio")
+                && self.audio_hash.is_some()
+                && other.audio_hash.is_some()
+            {
+                let this_audio = self.audio_hash.clone().unwrap();
+                let other_audio = other.audio_hash.clone().unwrap();
+                let chroma_config = Configuration::preset_test1();
+
+                let segments = rusty_chromaprint::match_fingerprints(
+                    &this_audio,
+                    &other_audio,
+                    &chroma_config,
+                )
+                .unwrap();
+                debug!("{} and {} segments: {:?}", self.name, other.name, segments);
+
+                let score: f64 = segments.iter().map(|s| s.score).sum();
+
+                if !segments.is_empty() && score as u32 <= config.audio_config.threshold as u32 {
                     return true;
                 }
             }
