@@ -97,7 +97,7 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug>(
     filter: &ImageFilterAlgorithm,
     size: u64,
     path: &P,
-) -> Option<String> {
+) -> Option<ImageHash> {
     match ImageReader::open(path) {
         Ok(r) => match r.decode() {
             Ok(img) => {
@@ -106,8 +106,8 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug>(
                     .resize_filter(filter.into_filter_type())
                     .hash_alg(hash.into_hash_alg())
                     .to_hasher();
-                let hash = hasher.hash_image(&img).to_base64();
-                trace!("Image {:?} hash: {}", path, hash);
+                let hash = hasher.hash_image(&img);
+                trace!("Image {:?} hash: {}", path, hash.to_base64());
                 return Some(hash);
             }
             Err(e) => {

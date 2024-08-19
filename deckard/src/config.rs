@@ -33,7 +33,7 @@ impl Default for HasherConfig {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ImageConfig {
-    pub check_image: bool,
+    pub compare: bool,
     pub hash_algorithm: ImageHashAlgorithm,
     pub filter_algorithm: ImageFilterAlgorithm,
     pub size: u64,
@@ -89,7 +89,7 @@ impl ImageFilterAlgorithm {
 impl Default for ImageConfig {
     fn default() -> Self {
         Self {
-            check_image: false,
+            compare: false,
             hash_algorithm: ImageHashAlgorithm::Mean,
             filter_algorithm: ImageFilterAlgorithm::Nearest,
             size: 16,

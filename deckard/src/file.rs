@@ -73,7 +73,7 @@ pub struct FileEntry {
     pub size: u64,
     pub hash: Option<String>,
     pub full_hash: Option<String>,
-    pub image_hash: Option<String>,
+    pub image_hash: Option<ImageHash>,
     pub audio_hash: Option<Vec<u32>>,
     pub processed: bool,
 }
@@ -163,7 +163,7 @@ impl FileEntry {
             ))
         }
 
-        if config.image_config.check_image {
+        if config.image_config.compare {
             if let Some(mime) = self.mime_type.as_ref() {
                 if mime.contains("image") {
                     self.image_hash = hasher::get_image_hash(
@@ -225,24 +225,19 @@ impl FileEntry {
             }
         }
 
-        if config.image_config.check_image && self.mime_type.is_some() && other.mime_type.is_some()
-        {
+        if config.image_config.compare && self.mime_type.is_some() && other.mime_type.is_some() {
             if self.mime_type.as_ref().unwrap().contains("image")
                 && other.mime_type.as_ref().unwrap().contains("image")
                 && self.image_hash.is_some()
                 && other.image_hash.is_some()
             {
-                let img1: ImageHash<Vec<u8>> =
-                    ImageHash::from_base64(self.image_hash.as_ref().unwrap().as_str()).unwrap();
-                let img2 =
-                    ImageHash::from_base64(other.image_hash.as_ref().unwrap().as_str()).unwrap();
+                let this_image = self.image_hash.as_ref().unwrap();
+                let other_image = other.image_hash.as_ref().unwrap();
 
-                let distance = img1.dist(&img2);
+                let distance = this_image.dist(&other_image);
                 debug!(
                     "{} and {} hamming distance: {}",
-                    self.name,
-                    other.name,
-                    img1.dist(&img2)
+                    self.name, other.name, distance
                 );
                 if distance <= config.image_config.threshold as u32 {
                     return true;

@@ -40,7 +40,7 @@ pub fn cli() -> Command {
                 .short('i')
                 .long("check_image")
                 .action(clap::ArgAction::SetTrue)
-                .help("Compare image files perceptually"),
+                .help("Compare image files similarities"),
         )
         .arg(
             Arg::new("check_audio")
@@ -113,7 +113,7 @@ pub fn get_config() -> SearchConfig {
 
     let check_image = args.get_flag("check_image");
     if check_image == true {
-        config.image_config.check_image = check_image
+        config.image_config.compare = check_image
     }
 
     let check_audio = args.get_flag("check_audio");
