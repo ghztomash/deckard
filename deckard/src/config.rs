@@ -157,6 +157,15 @@ impl SearchConfig {
                 return c;
             }
             Err(e) => {
+                match &e {
+                    confy::ConfyError::BadTomlData(_) => {
+                        std::fs::remove_file(
+                            confy::get_configuration_file_path("deckard", config_name).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                    _ => {}
+                }
                 error!("failed loading config {:?}", e);
                 return Self::default();
             }
