@@ -157,7 +157,7 @@ pub fn get_audio_hash(
 
     let track_id = track.id;
 
-    let sample_rate = track.codec_params.sample_rate.expect("missing sample rate");
+    let sample_rate = 11025;
     let channels = track
         .codec_params
         .channels
@@ -200,11 +200,6 @@ pub fn get_audio_hash(
     }
 
     printer.finish();
-    // trace!(
-    //     "Audio {:?} fingerprint: {:08x?}",
-    //     path,
-    //     printer.fingerprint()
-    // );
 
     Some(printer.fingerprint().to_vec())
 }
