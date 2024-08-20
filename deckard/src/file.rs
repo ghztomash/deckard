@@ -265,7 +265,10 @@ impl FileEntry {
 
                 let score: f64 = segments.iter().map(|s| s.score).sum();
 
-                if !segments.is_empty() && score as u32 <= config.audio_config.threshold as u32 {
+                if !segments.is_empty()
+                    && segments.len() <= config.audio_config.segments_limit as usize
+                    && score as f32 <= config.audio_config.threshold
+                {
                     return true;
                 }
             }

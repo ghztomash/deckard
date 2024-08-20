@@ -101,20 +101,16 @@ impl Default for ImageConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AudioConfig {
     pub compare: bool,
-    pub remove_silence: bool,
-    pub silence_threshold: u64,
-    pub frame_size: u64,
-    pub threshold: u64,
+    pub segments_limit: u64,
+    pub threshold: f32,
 }
 
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             compare: false,
-            remove_silence: false,
-            silence_threshold: 40,
-            frame_size: 4096,
-            threshold: 40,
+            segments_limit: 2,
+            threshold: 5.0,
         }
     }
 }
