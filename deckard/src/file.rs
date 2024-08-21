@@ -261,13 +261,25 @@ impl FileEntry {
                     &chroma_config,
                 )
                 .unwrap();
-                debug!("{} and {} segments: {:?}", self.name, other.name, segments);
 
-                let score: f64 = segments.iter().map(|s| s.score).sum();
+                // find average score
+                let score = if !segments.is_empty() {
+                    segments.iter().map(|s| s.score).sum::<f64>() / segments.len() as f64
+                } else {
+                    32.0 // is the maximum fingerprint score
+                };
+
+                debug!(
+                    "{} and {} matching segments {} with score {}",
+                    self.name,
+                    other.name,
+                    segments.len(),
+                    score
+                );
 
                 if !segments.is_empty()
                     && segments.len() <= config.audio_config.segments_limit as usize
-                    && score as f32 <= config.audio_config.threshold
+                    && score <= config.audio_config.threshold
                 {
                     return true;
                 }

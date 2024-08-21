@@ -102,7 +102,7 @@ impl Default for ImageConfig {
 pub struct AudioConfig {
     pub compare: bool,
     pub segments_limit: u64,
-    pub threshold: f32,
+    pub threshold: f64,
 }
 
 impl Default for AudioConfig {
