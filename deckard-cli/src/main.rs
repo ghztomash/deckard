@@ -1,3 +1,4 @@
+use color_eyre::eyre::Result;
 use colored::*;
 use deckard::index::FileIndex;
 use deckard::*;
@@ -6,14 +7,16 @@ use std::time::Instant;
 
 mod cli;
 
-fn main() {
+fn main() -> Result<()> {
+    color_eyre::install()?;
     env_logger::init();
+
     let args = cli::cli().get_matches();
     let config = cli::get_config();
 
     if args.get_flag("open_config") {
         open_config();
-        return;
+        return Ok(());
     }
 
     let target_dirs = match args.get_many::<String>("params") {
@@ -67,6 +70,8 @@ fn main() {
             format!("{:#?}", match_names).yellow()
         );
     }
+
+    Ok(())
 }
 
 /// Open the default configuration file in the default editor
