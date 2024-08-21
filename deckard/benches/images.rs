@@ -1,8 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use deckard::collect_paths;
-use deckard::config::SearchConfig;
+use deckard::config::{ImageFilterAlgorithm, ImageHashAlgorithm, SearchConfig};
 use deckard::index::FileIndex;
-use env_logger;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     // env_logger::init();
@@ -14,7 +13,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         g.bench_with_input(BenchmarkId::new("size", i), i, |b, &i| {
             b.iter(|| {
                 let mut config = black_box(SearchConfig::default());
-                config.image_config.check_image = true;
+                config.image_config.compare = true;
                 config.image_config.size = i as u64;
 
                 let mut index = black_box(FileIndex::new(
@@ -28,20 +27,20 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     }
 
     for i in [
-        "mean",
-        "median",
-        "gradient",
-        "vert_gradient",
-        "double_gradient",
-        "blockhash",
+        ImageHashAlgorithm::Mean,
+        ImageHashAlgorithm::Median,
+        ImageHashAlgorithm::Gradient,
+        ImageHashAlgorithm::VertGradient,
+        ImageHashAlgorithm::DoubleGradient,
+        ImageHashAlgorithm::Blockhash,
     ]
     .iter()
     {
-        g.bench_with_input(BenchmarkId::new("hash", i), i, |b, &i| {
+        g.bench_with_input(BenchmarkId::new("hash", format!("{:?}", i)), i, |b, &i| {
             b.iter(|| {
                 let mut config = black_box(SearchConfig::default());
-                config.image_config.check_image = true;
-                config.image_config.hash_algorithm = black_box(i.to_string());
+                config.image_config.compare = true;
+                config.image_config.hash_algorithm = black_box(i);
 
                 let mut index = black_box(FileIndex::new(
                     black_box(collect_paths(vec!["../test_files/images"])),
@@ -53,21 +52,33 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         });
     }
 
-    for i in ["nearest", "triangle", "catmull", "gaussian", "lanczos"].iter() {
-        g.bench_with_input(BenchmarkId::new("filter", i), i, |b, &i| {
-            b.iter(|| {
-                let mut config = black_box(SearchConfig::default());
-                config.image_config.check_image = true;
-                config.image_config.filter_algorithm = black_box(i.to_string());
+    for i in [
+        ImageFilterAlgorithm::Nearest,
+        ImageFilterAlgorithm::Triangle,
+        ImageFilterAlgorithm::CatmullRom,
+        ImageFilterAlgorithm::Gaussian,
+        ImageFilterAlgorithm::Lanczos3,
+    ]
+    .iter()
+    {
+        g.bench_with_input(
+            BenchmarkId::new("filter", format!("{:?}", i)),
+            i,
+            |b, &i| {
+                b.iter(|| {
+                    let mut config = black_box(SearchConfig::default());
+                    config.image_config.compare = true;
+                    config.image_config.filter_algorithm = black_box(i);
 
-                let mut index = black_box(FileIndex::new(
-                    black_box(collect_paths(vec!["../test_files/images"])),
-                    config,
-                ));
-                black_box(index.index_dirs());
-                index.process_files();
-            })
-        });
+                    let mut index = black_box(FileIndex::new(
+                        black_box(collect_paths(vec!["../test_files/images"])),
+                        config,
+                    ));
+                    black_box(index.index_dirs());
+                    index.process_files();
+                })
+            },
+        );
     }
 
     g.finish();

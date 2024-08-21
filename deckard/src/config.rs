@@ -40,7 +40,7 @@ pub struct ImageConfig {
     pub threshold: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageHashAlgorithm {
     Mean,
@@ -51,7 +51,7 @@ pub enum ImageHashAlgorithm {
     Blockhash,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageFilterAlgorithm {
     Nearest,
