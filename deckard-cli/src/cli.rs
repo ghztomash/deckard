@@ -85,53 +85,48 @@ pub fn get_config() -> SearchConfig {
 
     debug!("loaded {:#?}", config);
 
-    let include_filter = match args.get_one::<String>("include_filter") {
-        Some(v) => Some(v.to_owned()),
-        None => None,
-    };
+    let include_filter = args
+        .get_one::<String>("include_filter")
+        .map(|v| v.to_owned());
     if include_filter.is_some() {
         config.include_filter = include_filter
     }
 
-    let exclude_filter = match args.get_one::<String>("exclude_filter") {
-        Some(v) => Some(v.to_owned()),
-        None => None,
-    };
+    let exclude_filter = args
+        .get_one::<String>("exclude_filter")
+        .map(|v| v.to_owned());
     if exclude_filter.is_some() {
         config.exclude_filter = exclude_filter
     }
 
     let skip_hidden = args.get_flag("skip_hidden");
-    if skip_hidden == true {
+    if skip_hidden {
         config.skip_hidden = skip_hidden
     }
 
     let skip_empty = args.get_flag("skip_empty");
-    if skip_empty == true {
+    if skip_empty {
         config.skip_empty = skip_empty
     }
 
     let check_image = args.get_flag("check_image");
-    if check_image == true {
+    if check_image {
         config.image_config.compare = check_image
     }
 
     let check_audio = args.get_flag("check_audio");
-    if check_audio == true {
+    if check_audio {
         config.audio_config.compare = check_audio
     }
 
     let full_hash = args.get_flag("full_hash");
-    if full_hash == true {
+    if full_hash {
         config.hasher_config.full_hash = full_hash
     }
 
-    match args.get_one::<usize>("threads") {
-        Some(v) => {
-            config.threads = v.to_owned();
-        }
-        None => {}
-    };
+    if let Some(t) = args.get_one::<usize>("threads") {
+        config.threads = *t;
+    }
 
     debug!("with arguments {:#?}", config);
 

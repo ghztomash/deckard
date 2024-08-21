@@ -1,7 +1,7 @@
 use image_hasher::{FilterType, HashAlg};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
-use std::{fs::File, path::PathBuf};
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HasherConfig {
@@ -149,9 +149,7 @@ impl SearchConfig {
             confy::get_configuration_file_path("deckard", config_name).unwrap()
         );
         match confy::load("deckard", config_name) {
-            Ok(c) => {
-                return c;
-            }
+            Ok(c) => c,
             Err(e) => {
                 match &e {
                     confy::ConfyError::BadTomlData(_) => {
@@ -163,7 +161,7 @@ impl SearchConfig {
                     _ => {}
                 }
                 error!("failed loading config {:?}", e);
-                return Self::default();
+                Self::default()
             }
         }
     }

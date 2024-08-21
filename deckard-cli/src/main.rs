@@ -1,13 +1,10 @@
-use deckard::*;
-
 use colored::*;
+use deckard::index::FileIndex;
+use deckard::*;
+use log::info;
 use std::time::Instant;
 
-use deckard::index::FileIndex;
-
 mod cli;
-
-use log::info;
 
 fn main() {
     env_logger::init();
