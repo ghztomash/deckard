@@ -61,7 +61,7 @@ fn main() {
         let mut match_names = Vec::new();
 
         for file_copy in file_copies {
-            match_names.push(file_index.file_name(file_copy).unwrap());
+            match_names.push(file_copy.to_string_lossy());
         }
 
         println!(
