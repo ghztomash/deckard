@@ -13,6 +13,7 @@ use std::{fs, path::Path, path::PathBuf};
 
 use log::{debug, error, trace, warn};
 
+#[derive(Debug, Default, Clone)]
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
     // TODO: Try BTreeMap

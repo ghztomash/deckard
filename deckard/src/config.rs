@@ -3,7 +3,7 @@ use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct HasherConfig {
     pub full_hash: bool,
     pub hash_algorithm: HashAlgorithm,
@@ -11,7 +11,7 @@ pub struct HasherConfig {
     pub splits: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum HashAlgorithm {
     MD5,
@@ -31,7 +31,7 @@ impl Default for HasherConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct ImageConfig {
     pub compare: bool,
     pub hash_algorithm: ImageHashAlgorithm,
@@ -98,7 +98,7 @@ impl Default for ImageConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct AudioConfig {
     pub compare: bool,
     pub segments_limit: u64,
@@ -115,7 +115,7 @@ impl Default for AudioConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SearchConfig {
     pub skip_empty: bool,
     pub skip_hidden: bool,
