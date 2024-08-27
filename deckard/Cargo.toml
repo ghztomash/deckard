@@ -30,6 +30,8 @@ walkdir = "2.5"
 
 symphonia = { version = "0.5.4", features = ["mp3", "aac", "opt-simd"]}
 rusty-chromaprint = "0.2.0"
+common-path = "1.0.0"
+pathdiff = "0.2.1"
 
 [dev-dependencies]
 criterion = "0.5"

@@ -6,7 +6,7 @@ pub mod index;
 use config::SearchConfig;
 use file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
-use std::{fs, path::Path, path::PathBuf};
+use std::{env, fs, path::Path, path::PathBuf};
 
 use log::{debug, warn};
 
@@ -48,6 +48,18 @@ pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
     paths
 }
 
+pub fn find_common_path(target_paths: HashSet<PathBuf>) -> Option<PathBuf> {
+    let paths: Vec<&Path> = target_paths.iter().map(|p| p.as_path()).collect();
+    common_path::common_path_all(paths)
+}
+
+pub fn to_relative_path(path: PathBuf) -> PathBuf {
+    let current_dir = env::current_dir().expect("failed getting current directory");
+    let relative_path =
+        pathdiff::diff_paths(path, current_dir).expect("failed getting relative path");
+    relative_path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,5 +68,40 @@ mod tests {
     fn it_works() {
         // visit_dir(Path::new("."));
         assert!(true);
+    }
+
+    #[test]
+    fn collect_common_path() {}
+
+    #[test]
+    fn collect_different_path() {}
+
+    #[test]
+    fn common_path() {
+        let paths: HashSet<PathBuf> = [
+            PathBuf::from("/home/user/tmp/coverage/test"),
+            PathBuf::from("/home/user/tmp/covert/operator"),
+            PathBuf::from("/home/user/tmp/coven/members"),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        let common = find_common_path(paths);
+        assert_eq!(common, Some(PathBuf::from("/home/user/tmp")));
+    }
+
+    #[test]
+    fn no_common_path() {
+        let paths: HashSet<PathBuf> = [
+            PathBuf::from("/home/user/tmp/covert/operator"),
+            PathBuf::from("./coven/members"),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        let common = find_common_path(paths);
+        assert_eq!(common, None);
     }
 }
