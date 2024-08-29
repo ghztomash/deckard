@@ -14,6 +14,7 @@ pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
 /// Initialize the terminal
 pub fn init() -> io::Result<Tui> {
+    execute!(stdout(), EnterAlternateScreen)?;
     enable_raw_mode()?;
     set_panic_hook();
     let stdout = io::stdout();
@@ -21,7 +22,8 @@ pub fn init() -> io::Result<Tui> {
     Terminal::with_options(
         backend,
         TerminalOptions {
-            viewport: Viewport::Inline(8),
+            // viewport: Viewport::Inline(8),
+            viewport: Viewport::Fullscreen,
         },
     )
 }
