@@ -13,7 +13,14 @@ fn main() -> Result<()> {
 
     let mut terminal = tui::init()?;
 
-    let app_result = app::App::default().run(&mut terminal);
+    let target_dirs = match args.get_many::<String>("params") {
+        Some(values) => values.map(|v| v.as_str()).collect::<Vec<&str>>(),
+        None => vec!["."],
+    };
+
+    let target_paths = deckard::collect_paths(target_dirs);
+
+    let app_result = app::App::new(target_paths, config).run(&mut terminal);
 
     tui::restore()?;
     terminal.clear()?;
