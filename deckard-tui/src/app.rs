@@ -44,6 +44,7 @@ pub struct App {
     clone_scroll_state: ScrollbarState,
     selected_file: Option<PathBuf>,
     selected_clone: Option<PathBuf>,
+    marked_files: Vec<PathBuf>,
     show_file_clones: bool,
     show_file_info: bool,
 }
@@ -62,6 +63,7 @@ impl App {
             clone_scroll_state: ScrollbarState::new(0),
             selected_file: None,
             selected_clone: None,
+            marked_files: Vec::new(),
             show_file_clones: false,
             show_file_info: false,
         }
@@ -311,9 +313,9 @@ impl App {
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
         let header = if self.show_file_clones {
-            vec!["File", "Size"]
+            vec!["File", "Total"]
         } else {
-            vec!["File", "Size", "Clones"]
+            vec!["File", "Total", "Clones"]
         };
 
         let header = header
@@ -333,19 +335,22 @@ impl App {
             } else {
                 k.to_string_lossy().to_string()
             };
-            let size = self.file_index.file_size_string(k).unwrap_or_default();
             let duplicates = duplicates[k].len();
+            let size = humansize::format_size(
+                self.file_index.file_size(k).unwrap_or_default() * (duplicates + 1) as u64,
+                humansize::DECIMAL,
+            );
 
             let cells = if self.show_file_clones {
                 vec![
                     Cell::from(Text::from(format!("{path}"))),
-                    Cell::from(Text::from(format!("{size}").blue())),
+                    Cell::from(Text::from(format!("{size}"))),
                 ]
             } else {
                 vec![
-                    Cell::from(Text::from(format!("{path}"))),
+                    Cell::from(Text::from(format!("{path}").yellow())),
                     Cell::from(Text::from(format!("{size}").blue())),
-                    Cell::from(Text::from(format!("{duplicates}").yellow())),
+                    Cell::from(Text::from(format!("{duplicates}").magenta())),
                 ]
             };
             cells
@@ -369,9 +374,7 @@ impl App {
         .highlight_spacing(HighlightSpacing::Always);
 
         StatefulWidget::render(table, area, buf, &mut self.file_table_state);
-    }
 
-    fn render_scrollbar(&mut self, buf: &mut Buffer, area: Rect) {
         let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
         scrollbar.render(
             area.inner(Margin {
@@ -387,7 +390,7 @@ impl App {
         let header_style = Style::default();
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-        let header = ["File", "Date", "Size"]
+        let header = ["Clone", "Date", "Size"]
             .into_iter()
             .map(Cell::from)
             .collect::<Row>()
@@ -413,11 +416,14 @@ impl App {
             } else {
                 k.to_string_lossy().to_string()
             };
-            let size = self.file_index.file_size_string(k).unwrap_or_default();
+            let size = humansize::format_size(
+                self.file_index.file_size(k).unwrap_or_default(),
+                humansize::DECIMAL,
+            );
             let date = self.file_index.files[k].created;
 
             let cells = vec![
-                Cell::from(Text::from(format!("{path}"))),
+                Cell::from(Text::from(format!("{path}").yellow())),
                 Cell::from(Text::from(format!("{date}").red())),
                 Cell::from(Text::from(format!("{size}").blue())),
             ];
@@ -446,10 +452,10 @@ impl App {
     }
 
     fn render_header(&self, buf: &mut Buffer, area: Rect) {
-        let title = Line::from("Deckard");
+        let title = Line::from("Deckard".bold());
         let header = Paragraph::new(title).style(Style::new()).centered().block(
             Block::bordered()
-                .border_type(BorderType::Double)
+                .border_type(BorderType::Plain)
                 .border_style(Style::new()),
         );
         header.render(area, buf)
@@ -468,13 +474,12 @@ impl App {
         let file_entry = &self.file_index.files[selected_file];
 
         let info_lines = vec![
-            Line::from(vec![
-                "name: ".into(),
-                file_entry.name.to_string().green(),
-            ]),
+            Line::from(vec!["name: ".into(), file_entry.name.to_string().yellow()]),
             Line::from(vec![
                 "size: ".into(),
-                humansize::format_size(file_entry.size, humansize::DECIMAL).to_string().blue(),
+                humansize::format_size(file_entry.size, humansize::DECIMAL)
+                    .to_string()
+                    .blue(),
                 " (".into(),
                 file_entry.size.to_string().blue(),
                 ")".into(),
@@ -489,15 +494,25 @@ impl App {
             ]),
             Line::from(vec![
                 "mime: ".into(),
-                file_entry.mime_type.as_ref().unwrap_or(&"none".to_string()).to_string().yellow(),
+                file_entry
+                    .mime_type
+                    .as_ref()
+                    .unwrap_or(&"none".to_string())
+                    .to_string()
+                    .cyan(),
             ]),
             Line::from(vec![
                 "hash: ".into(),
-                file_entry.hash.as_ref().unwrap_or(&"none".to_string()).to_string().yellow(),
+                file_entry
+                    .hash
+                    .as_ref()
+                    .unwrap_or(&"none".to_string())
+                    .to_string()
+                    .cyan(),
             ]),
             Line::from(vec![
                 "path: ".into(),
-                file_entry.path.to_string_lossy().to_string().green(),
+                file_entry.path.to_string_lossy().to_string().yellow(),
             ]),
         ];
 
@@ -538,10 +553,11 @@ impl App {
 
         let duplicate_lines = vec![
             Line::from(vec![
-                "Total duplicate files: ".into(),
-                self.file_table_len.to_string().green(),
+                "Clones: ".into(),
+                self.file_table_len.to_string().magenta(),
+                " Total: ".into(),
             ]),
-            Line::from(vec!["Search Paths: ".into(), dir_joined.yellow()]),
+            Line::from(vec![ "Paths: ".into(), dir_joined.yellow()]),
         ];
         // duplicate_lines.extend(dir_lines);
 
@@ -643,7 +659,6 @@ impl App {
             .split(main_sub_area[0]);
 
         self.render_table(buf, main_sub_area_left[0]);
-        self.render_scrollbar(buf, main_sub_area_left[0]);
 
         if self.show_file_info {
             self.render_file_info(buf, main_sub_area_left[1]);

@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::SearchConfig;
 use crate::file::{EntryType, FileEntry};
-use humansize::DECIMAL;
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::Path, path::PathBuf};
 
@@ -186,7 +185,7 @@ impl FileIndex {
         self.files.get(file).and_then(|f| Some(f.name.clone()))
     }
 
-    pub fn file(&self, file: &PathBuf) -> Option<FileEntry> {
+    pub fn file_entry(&self, file: &PathBuf) -> Option<FileEntry> {
         self.files.get(file).and_then(|f| Some(f.clone()))
     }
 
@@ -194,9 +193,5 @@ impl FileIndex {
         self.files.get(file).and_then(|f| Some(f.size))
     }
 
-    pub fn file_size_string(&self, file: &PathBuf) -> Option<String> {
-        self.files
-            .get(file)
-            .and_then(|f| Some(humansize::format_size(f.size, DECIMAL)))
     }
 }
