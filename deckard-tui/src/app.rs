@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, env, path::PathBuf};
+use std::{borrow::Cow, collections::HashSet, env, ops::Index, path::PathBuf};
 
 use color_eyre::{
     eyre::{bail, Result, WrapErr},
@@ -131,9 +131,29 @@ impl App {
 
     fn select(&mut self) {}
 
-    fn open_file(&mut self) {}
+    fn open_file(&mut self) {
+        let selected_file = if self.show_file_clones {
+            self.selected_clone.as_ref()
+        } else {
+            self.selected_file.as_ref()
+        };
+        if let Some(selected_file) = selected_file {
+            _ = open::that(selected_file);
+        }
+    }
 
-    fn open_path(&mut self) {}
+    fn open_path(&mut self) {
+        let selected_file = if self.show_file_clones {
+            self.selected_clone.as_ref()
+        } else {
+            self.selected_file.as_ref()
+        };
+        if let Some(selected_file) = selected_file {
+            if let Some(path) = selected_file.parent() {
+                _ = open::that(path);
+            }
+        }
+    }
 
     fn delete(&mut self) {}
 
@@ -454,7 +474,10 @@ impl App {
             ]),
             Line::from(vec![
                 "size: ".into(),
+                humansize::format_size(file_entry.size, humansize::DECIMAL).to_string().blue(),
+                " (".into(),
                 file_entry.size.to_string().blue(),
+                ")".into(),
             ]),
             Line::from(vec![
                 "created: ".into(),
