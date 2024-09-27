@@ -4,7 +4,7 @@ use color_eyre::{
     eyre::{bail, Result, WrapErr},
     owo_colors::OwoColorize,
 };
-use config::SearchConfig;
+use deckard::config::SearchConfig;
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
@@ -13,7 +13,7 @@ use ratatui::{
     symbols::border,
     text::{Line, Text},
     widgets::{
-        block::{Position, Title},
+        block::{title, Position, Title},
         Block, BorderType, Borders, Cell, HighlightSpacing, Paragraph, Row, Scrollbar,
         ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, TableState, Widget,
     },
@@ -21,7 +21,6 @@ use ratatui::{
 };
 
 use deckard::index::FileIndex;
-use deckard::*;
 
 #[derive(Debug, Default)]
 enum PopupState {
@@ -65,7 +64,7 @@ impl App {
             selected_clone: None,
             marked_files: Vec::new(),
             show_file_clones: false,
-            show_file_info: false,
+            show_file_info: true,
         }
     }
 
@@ -326,15 +325,9 @@ impl App {
             .height(1);
 
         let duplicates = &self.file_index.duplicates;
-        let common_path = deckard::find_common_path(self.file_index.dirs.clone());
 
         let rows = duplicates.keys().into_iter().map(|k| {
-            let path = if let Some(common_path) = &common_path {
-                let k = k.strip_prefix(&common_path).unwrap_or(k);
-                k.to_string_lossy().to_string()
-            } else {
-                k.to_string_lossy().to_string()
-            };
+            let path = self.format_path(k);
             let duplicates = duplicates[k].len();
             let size = humansize::format_size(
                 self.file_index.file_size(k).unwrap_or_default() * (duplicates + 1) as u64,
@@ -368,10 +361,15 @@ impl App {
                 vec![Constraint::Min(10), Constraint::Max(12), Constraint::Max(8)]
             },
         )
-        .header(header)
+        // .header(header)
         .highlight_style(selected_style)
         .highlight_symbol(Text::from(vec![bar.into()]))
-        .highlight_spacing(HighlightSpacing::Always);
+        .highlight_spacing(HighlightSpacing::Always)
+        .block(
+            Block::bordered()
+                .border_type(BorderType::Plain)
+                .border_style(Style::new()),
+        );
 
         StatefulWidget::render(table, area, buf, &mut self.file_table_state);
 
@@ -407,15 +405,9 @@ impl App {
             .duplicates
             .get(selected_file.unwrap())
             .unwrap();
-        let common_path = deckard::find_common_path(self.file_index.dirs.clone());
 
         let rows = duplicates.into_iter().map(|k| {
-            let path = if let Some(common_path) = &common_path {
-                let k = k.strip_prefix(&common_path).unwrap_or(k);
-                k.to_string_lossy().to_string()
-            } else {
-                k.to_string_lossy().to_string()
-            };
+            let path = self.format_path(k);
             let size = humansize::format_size(
                 self.file_index.file_size(k).unwrap_or_default(),
                 humansize::DECIMAL,
@@ -446,18 +438,27 @@ impl App {
         .header(header)
         .highlight_style(selected_style)
         .highlight_symbol(Text::from(vec![bar.into()]))
-        .highlight_spacing(HighlightSpacing::Always);
+        .highlight_spacing(HighlightSpacing::Always)
+        .block(
+            Block::bordered()
+                .title(" Clones ")
+                .border_type(BorderType::Plain)
+                .border_style(Style::new()),
+        );
 
         StatefulWidget::render(table, area, buf, &mut self.clone_table_state);
     }
 
     fn render_header(&self, buf: &mut Buffer, area: Rect) {
-        let title = Line::from("Deckard".bold());
-        let header = Paragraph::new(title).style(Style::new()).centered().block(
-            Block::bordered()
-                .border_type(BorderType::Plain)
-                .border_style(Style::new()),
-        );
+        let spans = vec![
+            "Deckard".bold(),
+            " v".into(),
+            format!("{}", env!("CARGO_PKG_VERSION")).into(),
+        ];
+        let title = Line::from(spans);
+        let header = Paragraph::new(title)
+            .style(Style::new().gray().reversed())
+            .centered();
         header.render(area, buf)
     }
 
@@ -512,7 +513,10 @@ impl App {
             ]),
             Line::from(vec![
                 "path: ".into(),
-                file_entry.path.to_string_lossy().to_string().yellow(),
+                deckard::to_relative_path(&file_entry.path)
+                    .to_string_lossy()
+                    .to_string()
+                    .yellow(),
             ]),
         ];
 
@@ -520,14 +524,14 @@ impl App {
 
         let summary = Paragraph::new(file_info_text).style(Style::new()).block(
             Block::bordered()
-                .border_type(BorderType::Double)
+                .border_type(BorderType::Plain)
                 .border_style(Style::new()),
         );
         summary.render(area, buf)
     }
 
     fn render_summary(&self, buf: &mut Buffer, area: Rect) {
-        let common_path = deckard::find_common_path(self.file_index.dirs.clone());
+        let common_path = deckard::find_common_path(&self.file_index.dirs);
         let dirs: Vec<PathBuf> = self.file_index.dirs.clone().into_iter().collect();
 
         let dir_lines: Vec<String> = dirs
@@ -536,7 +540,7 @@ impl App {
                 if let Some(common_path) = &common_path {
                     format!(
                         "{}",
-                        to_relative_path(d.clone())
+                        deckard::to_relative_path(d)
                             // d.strip_prefix(&common_path)
                             // .unwrap_or(d)
                             .to_string_lossy()
@@ -557,7 +561,7 @@ impl App {
                 self.file_table_len.to_string().magenta(),
                 " Total: ".into(),
             ]),
-            Line::from(vec![ "Paths: ".into(), dir_joined.yellow()]),
+            Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
         ];
         // duplicate_lines.extend(dir_lines);
 
@@ -565,7 +569,7 @@ impl App {
 
         let summary = Paragraph::new(duplicates_text).style(Style::new()).block(
             Block::bordered()
-                .border_type(BorderType::Double)
+                .border_type(BorderType::Plain)
                 .border_style(Style::new()),
         );
         summary.render(area, buf)
@@ -580,11 +584,7 @@ impl App {
             " Quit ".into(),
             "<Q> ".blue().bold(),
         ]);
-        let info_footer = Paragraph::new(instructions).style(Style::new()).block(
-            Block::bordered()
-                .border_type(BorderType::Double)
-                .border_style(Style::new()),
-        );
+        let info_footer = Paragraph::new(instructions).style(Style::new());
         info_footer.render(area, buf)
     }
 }
@@ -592,10 +592,10 @@ impl App {
 impl App {
     fn render_ui(&mut self, area: Rect, buf: &mut Buffer) {
         let rects = Layout::vertical([
-            Constraint::Length(3),
+            Constraint::Length(1),
             Constraint::Min(5),
             Constraint::Max(5),
-            Constraint::Length(3),
+            Constraint::Length(1),
         ])
         .split(area);
 
@@ -676,5 +676,17 @@ impl App {
         // Paragraph::new(duplicates_text)
         //     .block(Block::new().borders(Borders::all()))
         //     .render(main_sub_area[1], buf);
+    }
+
+    fn format_path(&self, path: &PathBuf) -> String {
+        let common_path = deckard::find_common_path(&self.file_index.dirs);
+
+        let relative_path = if let Some(common_path) = &common_path {
+            let path = path.strip_prefix(&common_path).unwrap_or(path);
+            path
+        } else {
+            path
+        };
+        relative_path.to_string_lossy().to_string()
     }
 }

@@ -48,12 +48,12 @@ pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
     paths
 }
 
-pub fn find_common_path(target_paths: HashSet<PathBuf>) -> Option<PathBuf> {
+pub fn find_common_path(target_paths: &HashSet<PathBuf>) -> Option<PathBuf> {
     let paths: Vec<&Path> = target_paths.iter().map(|p| p.as_path()).collect();
     common_path::common_path_all(paths)
 }
 
-pub fn to_relative_path(path: PathBuf) -> PathBuf {
+pub fn to_relative_path(path: &PathBuf) -> PathBuf {
     let current_dir = env::current_dir().expect("failed getting current directory");
     let relative_path =
         pathdiff::diff_paths(path, current_dir).expect("failed getting relative path");
@@ -87,7 +87,7 @@ mod tests {
         .cloned()
         .collect();
 
-        let common = find_common_path(paths);
+        let common = find_common_path(&paths);
         assert_eq!(common, Some(PathBuf::from("/home/user/tmp")));
     }
 
@@ -101,7 +101,7 @@ mod tests {
         .cloned()
         .collect();
 
-        let common = find_common_path(paths);
+        let common = find_common_path(&paths);
         assert_eq!(common, None);
     }
 }
