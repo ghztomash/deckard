@@ -51,9 +51,9 @@ impl EntryType {
 impl Display for EntryType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let symbol = match self {
-            EntryType::File => "",
-            EntryType::Dir => "",
-            EntryType::Symlink => "󰈲",
+            EntryType::File => "file",
+            EntryType::Dir => "dir",
+            EntryType::Symlink => "link",
             EntryType::Unknown => "?",
         };
         write!(f, "{}", symbol)

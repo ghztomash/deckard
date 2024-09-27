@@ -41,6 +41,7 @@ pub struct App {
     file_table_state: TableState,
     file_table_len: usize,
     clone_table_state: TableState,
+    clone_scroll_state: ScrollbarState,
     selected_file: Option<PathBuf>,
     selected_clone: Option<PathBuf>,
     show_file_clones: bool,
@@ -58,6 +59,7 @@ impl App {
             file_table_state: TableState::new(),
             file_table_len: 0,
             clone_table_state: TableState::new(),
+            clone_scroll_state: ScrollbarState::new(0),
             selected_file: None,
             selected_clone: None,
             show_file_clones: false,
@@ -157,11 +159,19 @@ impl App {
     }
 
     pub fn next(&mut self) {
-        self.next_file();
+        if self.show_file_clones {
+            self.next_clone();
+        } else {
+            self.next_file();
+        }
     }
 
     pub fn previous(&mut self) {
-        self.previous_file();
+        if self.show_file_clones {
+            self.previous_clone();
+        } else {
+            self.previous_file();
+        }
     }
 
     fn next_file(&mut self) {
@@ -208,6 +218,74 @@ impl App {
         self.scroll_state = self.scroll_state.position(i);
     }
 
+    fn next_clone(&mut self) {
+        if self.selected_file.is_none() {
+            return ();
+        }
+        let selected_file = self.selected_file.as_ref().unwrap();
+        let clones_len = self
+            .file_index
+            .duplicates
+            .get(selected_file)
+            .map_or(0, |d| d.len());
+
+        let i = match self.clone_table_state.selected() {
+            Some(i) => {
+                if i >= clones_len - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.clone_table_state.select(Some(i));
+        self.selected_clone = self
+            .file_index
+            .duplicates
+            .get(selected_file)
+            .unwrap()
+            .iter()
+            .collect::<Vec<&PathBuf>>()
+            .get(i)
+            .map(|&p| p.clone());
+        self.clone_scroll_state = self.clone_scroll_state.position(i);
+    }
+
+    fn previous_clone(&mut self) {
+        if self.selected_file.is_none() {
+            return ();
+        }
+        let selected_file = self.selected_file.as_ref().unwrap();
+        let clones_len = self
+            .file_index
+            .duplicates
+            .get(selected_file)
+            .map_or(0, |d| d.len());
+
+        let i = match self.clone_table_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    clones_len - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.clone_table_state.select(Some(i));
+        self.selected_clone = self
+            .file_index
+            .duplicates
+            .get(selected_file)
+            .unwrap()
+            .iter()
+            .collect::<Vec<&PathBuf>>()
+            .get(i)
+            .map(|&p| p.clone());
+        self.clone_scroll_state = self.clone_scroll_state.position(i);
+    }
+
     fn render_table(&mut self, buf: &mut Buffer, area: Rect) {
         let header_style = Style::default().add_modifier(Modifier::BOLD);
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
@@ -227,19 +305,6 @@ impl App {
 
         let duplicates = &self.file_index.duplicates;
         let common_path = deckard::find_common_path(self.file_index.dirs.clone());
-        let dirs: Vec<PathBuf> = self.file_index.dirs.clone().into_iter().collect();
-
-        // convert paths to lines of text
-        let files: Vec<String> = duplicates
-            .keys()
-            .map(|k| {
-                if let Some(common_path) = &common_path {
-                    let k = k.strip_prefix(&common_path).unwrap_or(k);
-                    return k.to_string_lossy().to_string();
-                }
-                k.to_string_lossy().to_string()
-            })
-            .collect();
 
         let rows = duplicates.keys().into_iter().map(|k| {
             let path = if let Some(common_path) = &common_path {
@@ -272,15 +337,11 @@ impl App {
         let bar = "->";
         let table = Table::new(
             rows,
-            if self.show_file_clones {[
-                Constraint::Min(10),
-                Constraint::Max(12),
-                Constraint::Max(0),
-            ]} else {[
-                Constraint::Min(10),
-                Constraint::Max(12),
-                Constraint::Max(10),
-            ]},
+            if self.show_file_clones {
+                vec![Constraint::Min(10), Constraint::Max(12)]
+            } else {
+                vec![Constraint::Min(10), Constraint::Max(12), Constraint::Max(8)]
+            },
         )
         .header(header)
         .highlight_style(selected_style)
@@ -291,14 +352,11 @@ impl App {
     }
 
     fn render_scrollbar(&mut self, buf: &mut Buffer, area: Rect) {
-        let scrollbar = Scrollbar::default()
-            .orientation(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None);
+        let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
         scrollbar.render(
             area.inner(Margin {
                 vertical: 1,
-                horizontal: 1,
+                horizontal: 0,
             }),
             buf,
             &mut self.scroll_state,
@@ -336,11 +394,11 @@ impl App {
                 k.to_string_lossy().to_string()
             };
             let size = self.file_index.file_size_string(k).unwrap_or_default();
-            // let duplicates = duplicates[k].len();
+            let date = self.file_index.files[k].created;
 
             let cells = vec![
                 Cell::from(Text::from(format!("{path}"))),
-                Cell::from(Text::from(format!("0").red())),
+                Cell::from(Text::from(format!("{date}").red())),
                 Cell::from(Text::from(format!("{size}").blue())),
             ];
             cells
@@ -378,12 +436,49 @@ impl App {
     }
 
     fn render_file_info(&self, buf: &mut Buffer, area: Rect) {
-        let selected_file = self.selected_file.as_ref();
+        let selected_file = if self.show_file_clones {
+            self.selected_clone.as_ref()
+        } else {
+            self.selected_file.as_ref()
+        };
         if selected_file.is_none() {
             return ();
         }
+        let selected_file = selected_file.unwrap();
+        let file_entry = &self.file_index.files[selected_file];
 
-        let file_info_text = Text::from("file info placeholder");
+        let info_lines = vec![
+            Line::from(vec![
+                "name: ".into(),
+                file_entry.name.to_string().green(),
+            ]),
+            Line::from(vec![
+                "size: ".into(),
+                file_entry.size.to_string().blue(),
+            ]),
+            Line::from(vec![
+                "created: ".into(),
+                file_entry.created.to_string().red(),
+            ]),
+            Line::from(vec![
+                "modified: ".into(),
+                file_entry.created.to_string().red(),
+            ]),
+            Line::from(vec![
+                "mime: ".into(),
+                file_entry.mime_type.as_ref().unwrap_or(&"none".to_string()).to_string().yellow(),
+            ]),
+            Line::from(vec![
+                "hash: ".into(),
+                file_entry.hash.as_ref().unwrap_or(&"none".to_string()).to_string().yellow(),
+            ]),
+            Line::from(vec![
+                "path: ".into(),
+                file_entry.path.to_string_lossy().to_string().green(),
+            ]),
+        ];
+
+        let file_info_text = Text::from(info_lines);
 
         let summary = Paragraph::new(file_info_text).style(Style::new()).block(
             Block::bordered()
@@ -421,7 +516,7 @@ impl App {
         let duplicate_lines = vec![
             Line::from(vec![
                 "Total duplicate files: ".into(),
-                self.file_index.duplicates_len().to_string().green(),
+                self.file_table_len.to_string().green(),
             ]),
             Line::from(vec!["Search Paths: ".into(), dir_joined.yellow()]),
         ];
