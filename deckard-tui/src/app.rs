@@ -24,26 +24,44 @@ use deckard::index::FileIndex;
 use deckard::*;
 
 #[derive(Debug, Default)]
+enum PopupState {
+    #[default]
+    None,
+    Delete,
+    Exit,
+}
+
+#[derive(Debug, Default)]
 pub struct App {
+    app_state: PopupState,
     counter: u8,
     exit: bool,
     file_index: FileIndex,
     scroll_state: ScrollbarState,
     file_table_state: TableState,
+    file_table_len: usize,
     clone_table_state: TableState,
     selected_file: Option<PathBuf>,
+    selected_clone: Option<PathBuf>,
+    show_file_clones: bool,
+    show_file_info: bool,
 }
 
 impl App {
     pub fn new(target_paths: HashSet<PathBuf>, config: SearchConfig) -> Self {
         Self {
+            app_state: PopupState::None,
             counter: 0,
             exit: false,
             file_index: FileIndex::new(target_paths, config),
             scroll_state: ScrollbarState::new(0),
             file_table_state: TableState::new(),
+            file_table_len: 0,
             clone_table_state: TableState::new(),
             selected_file: None,
+            selected_clone: None,
+            show_file_clones: false,
+            show_file_info: false,
         }
     }
 
@@ -52,10 +70,21 @@ impl App {
         self.file_index.index_dirs();
         self.file_index.process_files();
         self.file_index.find_duplicates();
+        self.file_table_len = self.file_index.duplicates_len();
 
         // update
-        self.scroll_state = ScrollbarState::new(self.file_index.duplicates_len() - 1);
-        // self.file_table_state = TableState::default().with_selected(0);
+        if self.file_table_len > 0 {
+            self.scroll_state = ScrollbarState::new(self.file_table_len - 1);
+            self.file_table_state = TableState::default().with_selected(0);
+
+            self.selected_file = self
+                .file_index
+                .duplicates
+                .keys()
+                .collect::<Vec<&PathBuf>>()
+                .get(0)
+                .map(|&p| p.clone());
+        }
 
         while !self.exit {
             terminal.draw(|frame| self.render_ui(frame.area(), frame.buffer_mut()))?;
@@ -81,6 +110,12 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => self.exit(),
             KeyCode::Char('j') | KeyCode::Down => self.next(),
             KeyCode::Char('k') | KeyCode::Up => self.previous(),
+            KeyCode::Char('i') => self.toggle_info(),
+            KeyCode::Char('o') => self.open_file(),
+            KeyCode::Char('p') => self.open_path(),
+            KeyCode::Char('d') | KeyCode::Backspace | KeyCode::Delete => self.delete(),
+            KeyCode::Enter => self.toggle_file_clones(),
+            KeyCode::Char(' ') => self.select(),
             KeyCode::Char('l') | KeyCode::Right => self.increment_counter()?,
             KeyCode::Char('h') | KeyCode::Left => self.decrement_counter()?,
             _ => {}
@@ -90,6 +125,22 @@ impl App {
 
     fn exit(&mut self) {
         self.exit = true;
+    }
+
+    fn select(&mut self) {}
+
+    fn open_file(&mut self) {}
+
+    fn open_path(&mut self) {}
+
+    fn delete(&mut self) {}
+
+    fn toggle_file_clones(&mut self) {
+        self.show_file_clones = !self.show_file_clones;
+    }
+
+    fn toggle_info(&mut self) {
+        self.show_file_info = !self.show_file_info;
     }
 
     fn decrement_counter(&mut self) -> Result<()> {
@@ -106,9 +157,17 @@ impl App {
     }
 
     pub fn next(&mut self) {
+        self.next_file();
+    }
+
+    pub fn previous(&mut self) {
+        self.previous_file();
+    }
+
+    fn next_file(&mut self) {
         let i = match self.file_table_state.selected() {
             Some(i) => {
-                if i >= self.file_index.duplicates_len() - 1 {
+                if i >= self.file_table_len - 1 {
                     0
                 } else {
                     i + 1
@@ -127,11 +186,11 @@ impl App {
         self.scroll_state = self.scroll_state.position(i);
     }
 
-    pub fn previous(&mut self) {
+    fn previous_file(&mut self) {
         let i = match self.file_table_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.file_index.duplicates_len() - 1
+                    self.file_table_len - 1
                 } else {
                     i - 1
                 }
@@ -153,7 +212,13 @@ impl App {
         let header_style = Style::default().add_modifier(Modifier::BOLD);
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-        let header = ["File", "Duplicates", "Size"]
+        let header = if self.show_file_clones {
+            vec!["File", "Size"]
+        } else {
+            vec!["File", "Size", "Clones"]
+        };
+
+        let header = header
             .into_iter()
             .map(Cell::from)
             .collect::<Row>()
@@ -186,26 +251,36 @@ impl App {
             let size = self.file_index.file_size_string(k).unwrap_or_default();
             let duplicates = duplicates[k].len();
 
-            let cells = vec![
-                Cell::from(Text::from(format!("{path}"))),
-                Cell::from(Text::from(format!("{duplicates}").yellow())),
-                Cell::from(Text::from(format!("{size}").blue())),
-            ];
+            let cells = if self.show_file_clones {
+                vec![
+                    Cell::from(Text::from(format!("{path}"))),
+                    Cell::from(Text::from(format!("{size}").blue())),
+                ]
+            } else {
+                vec![
+                    Cell::from(Text::from(format!("{path}"))),
+                    Cell::from(Text::from(format!("{size}").blue())),
+                    Cell::from(Text::from(format!("{duplicates}").yellow())),
+                ]
+            };
             cells
                 .into_iter()
                 .collect::<Row>()
                 .style(Style::new())
                 .height(1)
         });
-        let bar = " - ";
+        let bar = "->";
         let table = Table::new(
             rows,
-            [
-                // + 1 is for padding.
+            if self.show_file_clones {[
                 Constraint::Min(10),
-                Constraint::Max(10),
                 Constraint::Max(12),
-            ],
+                Constraint::Max(0),
+            ]} else {[
+                Constraint::Min(10),
+                Constraint::Max(12),
+                Constraint::Max(10),
+            ]},
         )
         .header(header)
         .highlight_style(selected_style)
@@ -300,6 +375,22 @@ impl App {
                 .border_style(Style::new()),
         );
         header.render(area, buf)
+    }
+
+    fn render_file_info(&self, buf: &mut Buffer, area: Rect) {
+        let selected_file = self.selected_file.as_ref();
+        if selected_file.is_none() {
+            return ();
+        }
+
+        let file_info_text = Text::from("file info placeholder");
+
+        let summary = Paragraph::new(file_info_text).style(Style::new()).block(
+            Block::bordered()
+                .border_type(BorderType::Double)
+                .border_style(Style::new()),
+        );
+        summary.render(area, buf)
     }
 
     fn render_summary(&self, buf: &mut Buffer, area: Rect) {
@@ -411,24 +502,36 @@ impl App {
 
         // let files_text = Text::from(files);
 
-        let area = area.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
+        let main_sub_area_constrains = if self.show_file_clones {
+            [Constraint::Percentage(50), Constraint::Percentage(50)]
+        } else {
+            [Constraint::Percentage(100), Constraint::Percentage(0)]
+        };
 
-        let sub_area = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(area);
+        let main_sub_area_left_constrains = if self.show_file_info {
+            [Constraint::Percentage(60), Constraint::Percentage(40)]
+        } else {
+            [Constraint::Percentage(100), Constraint::Percentage(0)]
+        };
 
         let main_sub_area = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .constraints(main_sub_area_constrains)
             .split(rects[1]);
 
-        self.render_table(buf, main_sub_area[0]);
+        let main_sub_area_left = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(main_sub_area_left_constrains)
+            .split(main_sub_area[0]);
+
+        self.render_table(buf, main_sub_area_left[0]);
+        self.render_scrollbar(buf, main_sub_area_left[0]);
+
+        if self.show_file_info {
+            self.render_file_info(buf, main_sub_area_left[1]);
+        }
+
         self.render_clones_table(buf, main_sub_area[1]);
-        self.render_scrollbar(buf, main_sub_area[0]);
 
         self.render_summary(buf, rects[2]);
         self.render_footer(buf, rects[3]);
