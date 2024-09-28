@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, env, ops::Index, path::PathBuf};
+use std::{borrow::Cow, collections::HashSet, env, ops::Index, path::PathBuf, usize};
 
 use color_eyre::{
     eyre::{bail, Result, WrapErr},
@@ -36,6 +36,7 @@ enum PopupState {
     None,
     Delete,
     Trash,
+    Help,
 }
 
 #[derive(Debug, Default)]
@@ -48,11 +49,12 @@ pub struct App {
     file_table_state: TableState,
     file_table_len: usize,
     clone_table_state: TableState,
+    clone_table_len: usize,
     clone_scroll_state: ScrollbarState,
     selected_file: Option<PathBuf>,
     selected_clone: Option<PathBuf>,
     marked_files: Vec<PathBuf>,
-    show_file_clones: bool,
+    show_clones_table: bool,
     show_file_info: bool,
 }
 
@@ -66,12 +68,13 @@ impl App {
             scroll_state: ScrollbarState::new(0),
             file_table_state: TableState::new(),
             file_table_len: 0,
+            clone_table_len: 0,
             clone_table_state: TableState::new(),
             clone_scroll_state: ScrollbarState::new(0),
             selected_file: None,
             selected_clone: None,
             marked_files: Vec::new(),
-            show_file_clones: true,
+            show_clones_table: true,
             show_file_info: true,
         }
     }
@@ -126,10 +129,11 @@ impl App {
             KeyCode::Char('p') => self.open_path(),
             KeyCode::Char('D') | KeyCode::Delete => self.delete(),
             KeyCode::Char('t') | KeyCode::Backspace => self.trash(),
-            KeyCode::Char('c') => self.toggle_file_clones(),
+            KeyCode::Char('c') => self.toggle_show_clones_table(),
             KeyCode::Char(' ') => self.mark(),
-            KeyCode::Char('l') | KeyCode::Right => self.select_clones(),
-            KeyCode::Char('h') | KeyCode::Left => self.select_files(),
+            KeyCode::Char('a') => self.mark_all(),
+            KeyCode::Char('l') | KeyCode::Right => self.select_clones_table(),
+            KeyCode::Char('h') | KeyCode::Left => self.select_files_table(),
             _ => {}
         }
         Ok(())
@@ -147,26 +151,24 @@ impl App {
         self.marked_files = Vec::new();
     }
 
-    fn open_file(&mut self) {
-        let selected_file = if matches!(self.input_state, InputState::Clones) {
+    fn active_selected_file(&self) -> Option<&PathBuf> {
+        if matches!(self.input_state, InputState::Clones) {
             self.selected_clone.as_ref()
         } else {
             self.selected_file.as_ref()
-        };
-        if let Some(selected_file) = selected_file {
-            _ = open::that(selected_file);
+        }
+    }
+
+    fn open_file(&mut self) {
+        if let Some(selected_file) = self.active_selected_file() {
+            _ = open::that_detached(selected_file);
         }
     }
 
     fn open_path(&mut self) {
-        let selected_file = if matches!(self.input_state, InputState::Clones) {
-            self.selected_clone.as_ref()
-        } else {
-            self.selected_file.as_ref()
-        };
-        if let Some(selected_file) = selected_file {
+        if let Some(selected_file) = self.active_selected_file() {
             if let Some(path) = selected_file.parent() {
-                _ = open::that(path);
+                _ = open::that_detached(path);
             }
         }
     }
@@ -174,21 +176,18 @@ impl App {
     fn delete(&mut self) {}
     fn trash(&mut self) {}
 
-    fn select_files(&mut self) {
+    fn select_files_table(&mut self) {
         self.input_state = InputState::Files;
-        self.clone_table_state.select(None);
-        self.selected_clone = None
     }
 
-    fn select_clones(&mut self) {
-        if self.show_file_clones {
+    fn select_clones_table(&mut self) {
+        if self.show_clones_table {
             self.input_state = InputState::Clones;
-            self.clone_table_state.select(Some(0));
         }
     }
 
-    fn toggle_file_clones(&mut self) {
-        self.show_file_clones = !self.show_file_clones;
+    fn toggle_show_clones_table(&mut self) {
+        self.show_clones_table = !self.show_clones_table;
     }
 
     fn toggle_info(&mut self) {
@@ -211,7 +210,30 @@ impl App {
         }
     }
 
-    // TODO: refactor to use common select_file()
+    fn select_file(&mut self, index: usize) {
+        self.file_table_state.select(Some(index));
+        self.selected_file = self
+            .file_index
+            .duplicates
+            .keys()
+            .collect::<Vec<&PathBuf>>()
+            .get(index)
+            .map(|&p| p.clone());
+        self.scroll_state = self.scroll_state.position(index);
+
+        let selected_file = self.selected_file.as_ref().unwrap();
+        self.clone_table_len = self
+            .file_index
+            .duplicates
+            .get(selected_file)
+            .map_or(0, |d| d.len());
+
+        self.clone_scroll_state = ScrollbarState::new(self.clone_table_len - 1);
+
+        self.clone_table_state.select(Some(0));
+        self.select_clone(0);
+    }
+
     fn next_file(&mut self) {
         let i = match self.file_table_state.selected() {
             Some(i) => {
@@ -223,18 +245,9 @@ impl App {
             }
             None => 0,
         };
-        self.file_table_state.select(Some(i));
-        self.selected_file = self
-            .file_index
-            .duplicates
-            .keys()
-            .collect::<Vec<&PathBuf>>()
-            .get(i)
-            .map(|&p| p.clone());
-        self.scroll_state = self.scroll_state.position(i);
+        self.select_file(i);
     }
 
-    // TODO: refactor to use common select_file()
     fn previous_file(&mut self) {
         let i = match self.file_table_state.selected() {
             Some(i) => {
@@ -246,34 +259,31 @@ impl App {
             }
             None => 0,
         };
-        self.file_table_state.select(Some(i));
-        self.selected_file = self
-            .file_index
-            .duplicates
-            .keys()
-            .collect::<Vec<&PathBuf>>()
-            .get(i)
-            .map(|&p| p.clone());
-        self.scroll_state = self.scroll_state.position(i);
+        self.select_file(i);
     }
 
-    // TODO: refactor to use common select_file()
+    fn select_clone(&mut self, index: usize) {
+        self.clone_table_state.select(Some(index));
+
+        if let Some(selected_file) = self.selected_file.as_ref() {
+            self.selected_clone = self
+                .file_index
+                .duplicates
+                .get(selected_file)
+                .unwrap()
+                .iter()
+                .collect::<Vec<&PathBuf>>()
+                .get(index)
+                .map(|&p| p.clone());
+        };
+
+        self.clone_scroll_state = self.clone_scroll_state.position(index);
+    }
+
     fn next_clone(&mut self) {
-        if self.selected_file.is_none() {
-            return ();
-        }
-        let selected_file = self.selected_file.as_ref().unwrap();
-        let clones_len = self
-            .file_index
-            .duplicates
-            .get(selected_file)
-            .map_or(0, |d| d.len());
-
-        self.clone_scroll_state = ScrollbarState::new(clones_len - 1);
-
         let i = match self.clone_table_state.selected() {
             Some(i) => {
-                if i >= clones_len - 1 {
+                if i >= self.clone_table_len - 1 {
                     0
                 } else {
                     i + 1
@@ -281,54 +291,21 @@ impl App {
             }
             None => 0,
         };
-        self.clone_table_state.select(Some(i));
-        self.selected_clone = self
-            .file_index
-            .duplicates
-            .get(selected_file)
-            .unwrap()
-            .iter()
-            .collect::<Vec<&PathBuf>>()
-            .get(i)
-            .map(|&p| p.clone());
-        self.clone_scroll_state = self.clone_scroll_state.position(i);
+        self.select_clone(i);
     }
 
-    // TODO: refactor to use common select_file()
     fn previous_clone(&mut self) {
-        if self.selected_file.is_none() {
-            return ();
-        }
-        let selected_file = self.selected_file.as_ref().unwrap();
-        let clones_len = self
-            .file_index
-            .duplicates
-            .get(selected_file)
-            .map_or(0, |d| d.len());
-
-        self.clone_scroll_state = ScrollbarState::new(clones_len - 1);
-
         let i = match self.clone_table_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    clones_len - 1
+                    self.clone_table_len - 1
                 } else {
                     i - 1
                 }
             }
             None => 0,
         };
-        self.clone_table_state.select(Some(i));
-        self.selected_clone = self
-            .file_index
-            .duplicates
-            .get(selected_file)
-            .unwrap()
-            .iter()
-            .collect::<Vec<&PathBuf>>()
-            .get(i)
-            .map(|&p| p.clone());
-        self.clone_scroll_state = self.clone_scroll_state.position(i);
+        self.select_clone(i);
     }
 
     fn render_table(&mut self, buf: &mut Buffer, area: Rect) {
@@ -337,7 +314,7 @@ impl App {
 
         let mut header = vec!["File", "Total"];
 
-        if !self.show_file_clones {
+        if !self.show_clones_table {
             header.push("Clones");
         };
         header.push(" ");
@@ -359,7 +336,7 @@ impl App {
                 humansize::DECIMAL,
             );
 
-            let cells = if self.show_file_clones {
+            let cells = if self.show_clones_table {
                 vec![
                     Cell::from(Text::from(format!("{path}"))),
                     Cell::from(Text::from(format!("{size}"))),
@@ -379,19 +356,24 @@ impl App {
                 .style(Style::new())
                 .height(1)
         });
-        let block = if matches!(self.input_state, InputState::Files) {
-            Block::bordered()
+        let block;
+        let bar;
+        if matches!(self.input_state, InputState::Files) {
+            bar = "->";
+            block = Block::bordered()
+                // .title(" Clones ")
                 .border_type(BorderType::Thick)
-                .border_style(Style::new().green())
+                .border_style(Style::new().green());
         } else {
-            Block::bordered()
+            bar = "  ";
+            block = Block::bordered()
                 .border_type(BorderType::Plain)
-                .border_style(Style::new())
+                .border_style(Style::new());
         };
-        let bar = "->";
+
         let table = Table::new(
             rows,
-            if self.show_file_clones {
+            if self.show_clones_table {
                 vec![Constraint::Min(10), Constraint::Max(12), Constraint::Max(1)]
             } else {
                 vec![
@@ -425,7 +407,7 @@ impl App {
         let header_style = Style::default();
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-        let header = [" ", "Clone", "Date", "Size"]
+        let header = ["Clone", "Date", "Size", " "]
             .into_iter()
             .map(Cell::from)
             .collect::<Row>()
@@ -452,10 +434,10 @@ impl App {
             let date = self.file_index.files[k].created;
 
             let cells = vec![
-                Cell::from(Text::from(format!(" "))),
                 Cell::from(Text::from(format!("{path}"))),
                 Cell::from(Text::from(format!("{date}"))),
                 Cell::from(Text::from(format!("{size}"))),
+                Cell::from(Text::from(format!(" "))),
             ];
             cells
                 .into_iter()
@@ -481,10 +463,10 @@ impl App {
             rows,
             [
                 // + 1 is for padding.
-                Constraint::Max(1),
                 Constraint::Min(10),
                 Constraint::Max(10),
                 Constraint::Max(12),
+                Constraint::Max(1),
             ],
         )
         .header(header)
@@ -520,62 +502,57 @@ impl App {
     }
 
     fn render_file_info(&self, buf: &mut Buffer, area: Rect) {
-        let selected_file = if matches!(self.input_state, InputState::Clones) {
-            self.selected_clone.as_ref()
-        } else {
-            self.selected_file.as_ref()
-        };
-        if selected_file.is_none() {
-            return ();
-        }
-        let selected_file = selected_file.unwrap();
-        let file_entry = &self.file_index.files[selected_file];
+        let info_lines = if let Some(selected_file) = self.active_selected_file() {
+            let file_entry = &self.file_index.files[selected_file];
 
-        let info_lines = vec![
-            Line::from(vec!["name: ".into(), file_entry.name.to_string().yellow()]),
-            Line::from(vec![
-                "size: ".into(),
-                humansize::format_size(file_entry.size, humansize::DECIMAL)
-                    .to_string()
-                    .blue(),
-                " (".into(),
-                file_entry.size.to_string().blue(),
-                ")".into(),
-            ]),
-            Line::from(vec![
-                "created: ".into(),
-                file_entry.created.to_string().red(),
-            ]),
-            Line::from(vec![
-                "modified: ".into(),
-                file_entry.created.to_string().red(),
-            ]),
-            Line::from(vec![
-                "mime: ".into(),
-                file_entry
-                    .mime_type
-                    .as_ref()
-                    .unwrap_or(&"none".to_string())
-                    .to_string()
-                    .cyan(),
-            ]),
-            Line::from(vec![
-                "hash: ".into(),
-                file_entry
-                    .hash
-                    .as_ref()
-                    .unwrap_or(&"none".to_string())
-                    .to_string()
-                    .cyan(),
-            ]),
-            Line::from(vec![
-                "path: ".into(),
-                deckard::to_relative_path(&file_entry.path)
-                    .to_string_lossy()
-                    .to_string()
-                    .yellow(),
-            ]),
-        ];
+            vec![
+                Line::from(vec!["name: ".into(), file_entry.name.to_string().yellow()]),
+                Line::from(vec![
+                    "size: ".into(),
+                    humansize::format_size(file_entry.size, humansize::DECIMAL)
+                        .to_string()
+                        .blue(),
+                    " (".into(),
+                    file_entry.size.to_string().blue(),
+                    ")".into(),
+                ]),
+                Line::from(vec![
+                    "created: ".into(),
+                    file_entry.created.to_string().red(),
+                ]),
+                Line::from(vec![
+                    "modified: ".into(),
+                    file_entry.created.to_string().red(),
+                ]),
+                Line::from(vec![
+                    "mime: ".into(),
+                    file_entry
+                        .mime_type
+                        .as_ref()
+                        .unwrap_or(&"none".to_string())
+                        .to_string()
+                        .cyan(),
+                ]),
+                Line::from(vec![
+                    "hash: ".into(),
+                    file_entry
+                        .hash
+                        .as_ref()
+                        .unwrap_or(&"none".to_string())
+                        .to_string()
+                        .cyan(),
+                ]),
+                Line::from(vec![
+                    "path: ".into(),
+                    deckard::to_relative_path(&file_entry.path)
+                        .to_string_lossy()
+                        .to_string()
+                        .yellow(),
+                ]),
+            ]
+        } else {
+            vec![Line::from(vec!["none".into()])]
+        };
 
         let file_info_text = Text::from(info_lines);
 
@@ -689,7 +666,7 @@ impl App {
 
         // let files_text = Text::from(files);
 
-        let main_sub_area_constrains = if self.show_file_clones || self.show_file_info {
+        let main_sub_area_constrains = if self.show_clones_table || self.show_file_info {
             [Constraint::Percentage(50), Constraint::Percentage(50)]
         } else {
             [Constraint::Percentage(100), Constraint::Percentage(0)]
@@ -718,12 +695,13 @@ impl App {
 
         self.render_table(buf, main_sub_area[0]);
 
-        if self.show_file_clones {
+        if self.show_clones_table {
             self.render_clones_table(buf, main_sub_area_right[0]);
         }
 
         if self.show_file_info {
-            self.render_file_info(buf, main_sub_area_right[1]);
+            let area = if self.show_clones_table { 1 } else { 0 };
+            self.render_file_info(buf, main_sub_area_right[area]);
         }
 
         self.render_summary(buf, rects[2]);
