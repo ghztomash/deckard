@@ -1,4 +1,11 @@
-use std::{borrow::Cow, collections::HashSet, env, ops::Index, path::PathBuf, usize};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    env,
+    ops::Index,
+    path::PathBuf,
+    usize,
+};
 
 use color_eyre::{
     eyre::{bail, Result, WrapErr},
@@ -22,27 +29,29 @@ use ratatui::{
 
 use deckard::index::FileIndex;
 
+use crate::table::FileTable;
+
 #[derive(Debug, Default)]
-enum InputState {
+enum FocusedWindow {
     #[default]
     Files,
     Clones,
-    Popup,
-}
-
-#[derive(Debug, Default)]
-enum PopupState {
-    #[default]
-    None,
-    Delete,
-    Trash,
+    Marked,
     Help,
 }
 
 #[derive(Debug, Default)]
-pub struct App {
-    app_state: PopupState,
-    input_state: InputState,
+enum Sorting {
+    #[default]
+    None,
+    Count,
+    Size,
+    Date,
+}
+
+#[derive(Debug, Default)]
+pub struct App<'a> {
+    focused_window: FocusedWindow,
     exit: bool,
     file_index: FileIndex,
     scroll_state: ScrollbarState,
@@ -53,16 +62,17 @@ pub struct App {
     clone_scroll_state: ScrollbarState,
     selected_file: Option<PathBuf>,
     selected_clone: Option<PathBuf>,
-    marked_files: Vec<PathBuf>,
+    marked_table: FileTable<'a>,
+    marked_files: HashSet<PathBuf>,
     show_clones_table: bool,
+    show_marked_table: bool,
     show_file_info: bool,
 }
 
-impl App {
+impl App<'_> {
     pub fn new(target_paths: HashSet<PathBuf>, config: SearchConfig) -> Self {
         Self {
-            app_state: PopupState::None,
-            input_state: InputState::Files,
+            focused_window: FocusedWindow::Files,
             exit: false,
             file_index: FileIndex::new(target_paths, config),
             scroll_state: ScrollbarState::new(0),
@@ -73,7 +83,9 @@ impl App {
             clone_scroll_state: ScrollbarState::new(0),
             selected_file: None,
             selected_clone: None,
-            marked_files: Vec::new(),
+            marked_table: FileTable::new(),
+            marked_files: HashSet::new(),
+            show_marked_table: true,
             show_clones_table: true,
             show_file_info: true,
         }
@@ -132,8 +144,8 @@ impl App {
             KeyCode::Char('c') => self.toggle_show_clones_table(),
             KeyCode::Char(' ') => self.mark(),
             KeyCode::Char('a') => self.mark_all(),
-            KeyCode::Char('l') | KeyCode::Right => self.select_clones_table(),
-            KeyCode::Char('h') | KeyCode::Left => self.select_files_table(),
+            KeyCode::Char('l') | KeyCode::Right => self.focus_clones_table(),
+            KeyCode::Char('h') | KeyCode::Left => self.focus_files_table(),
             _ => {}
         }
         Ok(())
@@ -143,16 +155,22 @@ impl App {
         self.exit = true;
     }
 
-    fn mark(&mut self) {}
+    fn mark(&mut self) {
+        if let Some(path) = self.active_selected_file() {
+            self.marked_files.insert(path.clone());
+            let v = self.marked_files.clone().into_iter().collect();
+            self.marked_table.update_table(&v);
+        }
+    }
 
     fn mark_all(&mut self) {}
 
     fn clear_mark(&mut self) {
-        self.marked_files = Vec::new();
+        self.marked_files = HashSet::new();
     }
 
     fn active_selected_file(&self) -> Option<&PathBuf> {
-        if matches!(self.input_state, InputState::Clones) {
+        if matches!(self.focused_window, FocusedWindow::Clones) {
             self.selected_clone.as_ref()
         } else {
             self.selected_file.as_ref()
@@ -176,13 +194,13 @@ impl App {
     fn delete(&mut self) {}
     fn trash(&mut self) {}
 
-    fn select_files_table(&mut self) {
-        self.input_state = InputState::Files;
+    fn focus_files_table(&mut self) {
+        self.focused_window = FocusedWindow::Files;
     }
 
-    fn select_clones_table(&mut self) {
+    fn focus_clones_table(&mut self) {
         if self.show_clones_table {
-            self.input_state = InputState::Clones;
+            self.focused_window = FocusedWindow::Clones;
         }
     }
 
@@ -195,7 +213,7 @@ impl App {
     }
 
     pub fn next(&mut self) {
-        if matches!(self.input_state, InputState::Clones) {
+        if matches!(self.focused_window, FocusedWindow::Clones) {
             self.next_clone();
         } else {
             self.next_file();
@@ -203,7 +221,7 @@ impl App {
     }
 
     pub fn previous(&mut self) {
-        if matches!(self.input_state, InputState::Clones) {
+        if matches!(self.focused_window, FocusedWindow::Clones) {
             self.previous_clone();
         } else {
             self.previous_file();
@@ -329,7 +347,7 @@ impl App {
         let duplicates = &self.file_index.duplicates;
 
         let rows = duplicates.keys().into_iter().map(|k| {
-            let path = self.format_path(k);
+            let path = format_path(k, &self.file_index.dirs);
             let duplicates = duplicates[k].len();
             let size = humansize::format_size(
                 self.file_index.file_size(k).unwrap_or_default() * (duplicates + 1) as u64,
@@ -358,7 +376,7 @@ impl App {
         });
         let block;
         let bar;
-        if matches!(self.input_state, InputState::Files) {
+        if matches!(self.focused_window, FocusedWindow::Files) {
             bar = "->";
             block = Block::bordered()
                 // .title(" Clones ")
@@ -407,7 +425,7 @@ impl App {
         let header_style = Style::default();
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-        let header = ["Clone", "Date", "Size", " "]
+        let header = vec!["Clone", "Date", "Size", " "]
             .into_iter()
             .map(Cell::from)
             .collect::<Row>()
@@ -426,7 +444,7 @@ impl App {
             .unwrap();
 
         let rows = duplicates.into_iter().map(|k| {
-            let path = self.format_path(k);
+            let path = format_path(k, &self.file_index.dirs);
             let size = humansize::format_size(
                 self.file_index.file_size(k).unwrap_or_default(),
                 humansize::DECIMAL,
@@ -447,7 +465,7 @@ impl App {
         });
         let block;
         let bar;
-        if matches!(self.input_state, InputState::Clones) {
+        if matches!(self.focused_window, FocusedWindow::Clones) {
             bar = "->";
             block = Block::bordered()
                 // .title(" Clones ")
@@ -559,7 +577,7 @@ impl App {
         let summary = Paragraph::new(file_info_text).style(Style::new()).block(
             Block::bordered()
                 .border_type(BorderType::Plain)
-                .borders(Borders::TOP)
+                .borders(Borders::ALL)
                 .border_style(Style::new()),
         );
         summary.render(area, buf)
@@ -619,7 +637,7 @@ impl App {
     }
 }
 
-impl App {
+impl App<'_> {
     fn render_ui(&mut self, area: Rect, buf: &mut Buffer) {
         let rects = Layout::vertical([
             Constraint::Length(1),
@@ -686,14 +704,19 @@ impl App {
         let main_sub_area_left = Layout::default()
             .direction(Direction::Vertical)
             .constraints(main_sub_area_inner_constrains)
-            .split(main_sub_area[1]);
+            .split(main_sub_area[0]);
 
         let main_sub_area_right = Layout::default()
             .direction(Direction::Vertical)
             .constraints(main_sub_area_inner_constrains)
             .split(main_sub_area[1]);
 
-        self.render_table(buf, main_sub_area[0]);
+        self.render_table(buf, main_sub_area_left[0]);
+
+        if self.show_marked_table {
+            self.marked_table
+                .render(buf, main_sub_area_left[1], false, &self.file_index);
+        }
 
         if self.show_clones_table {
             self.render_clones_table(buf, main_sub_area_right[0]);
@@ -715,17 +738,17 @@ impl App {
         //     .block(Block::new().borders(Borders::all()))
         //     .render(main_sub_area[1], buf);
     }
+}
 
-    /// Make the path relative to the commont search parth
-    fn format_path(&self, path: &PathBuf) -> String {
-        let common_path = deckard::find_common_path(&self.file_index.dirs);
+/// Make the path relative to the commont search parth
+pub fn format_path(path: &PathBuf, target_paths: &HashSet<PathBuf>) -> String {
+    let common_path = deckard::find_common_path(target_paths);
 
-        let relative_path = if let Some(common_path) = &common_path {
-            let path = path.strip_prefix(&common_path).unwrap_or(path);
-            path
-        } else {
-            path
-        };
-        relative_path.to_string_lossy().to_string()
-    }
+    let relative_path = if let Some(common_path) = &common_path {
+        let path = path.strip_prefix(&common_path).unwrap_or(path);
+        path
+    } else {
+        path
+    };
+    relative_path.to_string_lossy().to_string()
 }

@@ -2,6 +2,7 @@ use color_eyre::eyre::Result;
 
 mod app;
 mod cli;
+mod table;
 mod tui;
 
 fn main() -> Result<()> {
