@@ -235,7 +235,14 @@ impl App {
     // }
 
     fn update_file_table(&mut self) {
-        let paths = self.file_index.duplicates.keys().cloned().collect();
+        let mut paths: Vec<PathBuf> = self.file_index.duplicates.keys().cloned().collect();
+
+        paths.sort_by(|a, b| {
+            let a_size = self.file_index.file_size(a).unwrap();
+            let b_size = self.file_index.file_size(b).unwrap();
+            b_size.cmp(&a_size)
+        });
+
         self.file_table.update_table(&paths);
         self.file_table.select_first();
     }
