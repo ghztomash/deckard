@@ -1,8 +1,8 @@
-use std::{borrow::Cow, collections::HashSet, env, ops::Index, path::PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 use crate::app::format_path;
-use color_eyre::eyre::{bail, Result, WrapErr};
-use deckard::config::SearchConfig;
+use color_eyre::eyre::Result;
 use deckard::index::FileIndex;
 use ratatui::{
     buffer::Buffer,
@@ -20,25 +20,25 @@ use ratatui::{
 };
 
 #[derive(Debug, Default)]
-pub struct FileTable<'t> {
+pub struct FileTable {
     pub table_state: TableState,
     pub table_len: usize,
     paths: Vec<PathBuf>,
-    selected_path: Option<&'t PathBuf>,
+    selected_path: Option<PathBuf>,
     scroll_state: ScrollbarState,
-    header: Vec<String>,
+    header: Vec<&'static str>,
     // callback function that populates rows
 }
 
-impl<'t> FileTable<'t> {
-    pub fn new() -> Self {
+impl FileTable {
+    pub fn new(header: Vec<&'static str>) -> Self {
         Self {
             table_state: TableState::new(),
             table_len: 0,
             paths: Vec::new(),
             selected_path: None,
             scroll_state: ScrollbarState::new(0),
-            header: Vec::new(),
+            header: header,
         }
     }
 
@@ -48,16 +48,16 @@ impl<'t> FileTable<'t> {
         self.scroll_state = ScrollbarState::new(self.table_len - 1);
     }
 
-    pub fn select_entry(&'t mut self, index: usize) {
+    pub fn select_entry(&mut self, index: usize) {
         if self.table_len == 0 {
             return;
         }
         self.table_state.select(Some(index));
-        self.selected_path = self.paths.get(index);
+        self.selected_path = self.paths.get(index).map(|p| p.clone());
         self.scroll_state = self.scroll_state.position(index);
     }
 
-    pub fn select_next(&'t mut self) {
+    pub fn select_next(&mut self) {
         if self.table_len == 0 {
             return;
         }
@@ -74,7 +74,7 @@ impl<'t> FileTable<'t> {
         self.select_entry(i);
     }
 
-    pub fn select_previous(&'t mut self) {
+    pub fn select_previous(&mut self) {
         if self.table_len == 0 {
             return;
         }
@@ -91,7 +91,7 @@ impl<'t> FileTable<'t> {
         self.select_entry(i);
     }
 
-    pub fn select_first(&'t mut self) {
+    pub fn select_first(&mut self) {
         self.select_entry(0);
     }
 
@@ -100,8 +100,8 @@ impl<'t> FileTable<'t> {
         self.selected_path = None;
     }
 
-    pub fn selected_path(&self) -> Option<&PathBuf> {
-        self.selected_path
+    pub fn selected_path(&self) -> Option<PathBuf> {
+        self.selected_path.clone()
     }
 
     pub fn render(&mut self, buf: &mut Buffer, area: Rect, focused: bool, file_index: &FileIndex) {
@@ -153,7 +153,7 @@ impl<'t> FileTable<'t> {
                 Constraint::Max(1),
             ],
         )
-        // .header(header)
+        .header(header)
         .highlight_style(selected_style)
         .block(block);
 

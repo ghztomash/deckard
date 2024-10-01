@@ -50,40 +50,28 @@ enum Sorting {
 }
 
 #[derive(Debug, Default)]
-pub struct App<'a> {
+pub struct App {
     focused_window: FocusedWindow,
     exit: bool,
     file_index: FileIndex,
-    scroll_state: ScrollbarState,
-    file_table_state: TableState,
-    file_table_len: usize,
-    clone_table_state: TableState,
-    clone_table_len: usize,
-    clone_scroll_state: ScrollbarState,
-    selected_file: Option<PathBuf>,
-    selected_clone: Option<PathBuf>,
-    marked_table: FileTable<'a>,
+    file_table: FileTable,
+    clone_table: FileTable,
+    marked_table: FileTable,
     marked_files: HashSet<PathBuf>,
     show_clones_table: bool,
     show_marked_table: bool,
     show_file_info: bool,
 }
 
-impl App<'_> {
+impl App {
     pub fn new(target_paths: HashSet<PathBuf>, config: SearchConfig) -> Self {
         Self {
             focused_window: FocusedWindow::Files,
             exit: false,
             file_index: FileIndex::new(target_paths, config),
-            scroll_state: ScrollbarState::new(0),
-            file_table_state: TableState::new(),
-            file_table_len: 0,
-            clone_table_len: 0,
-            clone_table_state: TableState::new(),
-            clone_scroll_state: ScrollbarState::new(0),
-            selected_file: None,
-            selected_clone: None,
-            marked_table: FileTable::new(),
+            file_table: FileTable::new(vec!["File", "Size", "Count", " "]),
+            clone_table: FileTable::new(vec!["Clone", "Date", "Size", " "]),
+            marked_table: FileTable::new(vec![]),
             marked_files: HashSet::new(),
             show_marked_table: true,
             show_clones_table: true,
@@ -96,20 +84,11 @@ impl App<'_> {
         self.file_index.index_dirs();
         self.file_index.process_files();
         self.file_index.find_duplicates();
-        self.file_table_len = self.file_index.duplicates_len();
 
         // update
-        if self.file_table_len > 0 {
-            self.scroll_state = ScrollbarState::new(self.file_table_len - 1);
-            self.file_table_state = TableState::default().with_selected(0);
-
-            self.selected_file = self
-                .file_index
-                .duplicates
-                .keys()
-                .collect::<Vec<&PathBuf>>()
-                .get(0)
-                .map(|&p| p.clone());
+        if self.file_index.duplicates_len() > 0 {
+            self.update_file_table();
+            self.update_clone_table();
         }
 
         while !self.exit {
@@ -169,11 +148,11 @@ impl App<'_> {
         self.marked_files = HashSet::new();
     }
 
-    fn active_selected_file(&self) -> Option<&PathBuf> {
+    fn active_selected_file(&self) -> Option<PathBuf> {
         if matches!(self.focused_window, FocusedWindow::Clones) {
-            self.selected_clone.as_ref()
+            self.clone_table.selected_path()
         } else {
-            self.selected_file.as_ref()
+            self.file_table.selected_path()
         }
     }
 
@@ -214,297 +193,316 @@ impl App<'_> {
 
     pub fn next(&mut self) {
         if matches!(self.focused_window, FocusedWindow::Clones) {
-            self.next_clone();
+            self.clone_table.select_next();
         } else {
-            self.next_file();
+            self.file_table.select_next();
+            self.update_clone_table();
         }
     }
 
     pub fn previous(&mut self) {
         if matches!(self.focused_window, FocusedWindow::Clones) {
-            self.previous_clone();
+            self.clone_table.select_previous();
         } else {
-            self.previous_file();
+            self.file_table.select_previous();
+            self.update_clone_table();
         }
     }
 
-    fn select_file(&mut self, index: usize) {
-        self.file_table_state.select(Some(index));
-        self.selected_file = self
-            .file_index
-            .duplicates
-            .keys()
-            .collect::<Vec<&PathBuf>>()
-            .get(index)
-            .map(|&p| p.clone());
-        self.scroll_state = self.scroll_state.position(index);
+    // fn select_file(&mut self, index: usize) {
+    //     self.file_table_state.select(Some(index));
+    //     self.selected_file = self
+    //         .file_index
+    //         .duplicates
+    //         .keys()
+    //         .collect::<Vec<&PathBuf>>()
+    //         .get(index)
+    //         .map(|&p| p.clone());
+    //     self.scroll_state = self.scroll_state.position(index);
+    //     self.update_clone_table();
+    //
+    //     let selected_file = self.selected_file.as_ref().unwrap();
+    //     // self.clone_table_len = self
+    //     //     .file_index
+    //     //     .duplicates
+    //     //     .get(selected_file)
+    //     //     .map_or(0, |d| d.len());
+    //     //
+    //     // self.clone_scroll_state = ScrollbarState::new(self.clone_table_len - 1);
+    //     //
+    //     // self.clone_table.select(Some(0));
+    //     // self.select_clone(0);
+    // }
 
-        let selected_file = self.selected_file.as_ref().unwrap();
-        self.clone_table_len = self
-            .file_index
-            .duplicates
-            .get(selected_file)
-            .map_or(0, |d| d.len());
-
-        self.clone_scroll_state = ScrollbarState::new(self.clone_table_len - 1);
-
-        self.clone_table_state.select(Some(0));
-        self.select_clone(0);
+    fn update_file_table(&mut self) {
+        let paths = self.file_index.duplicates.keys().cloned().collect();
+        self.file_table.update_table(&paths);
+        self.file_table.select_first();
     }
 
-    fn next_file(&mut self) {
-        let i = match self.file_table_state.selected() {
-            Some(i) => {
-                if i >= self.file_table_len - 1 {
-                    0
-                } else {
-                    i + 1
-                }
+    fn update_clone_table(&mut self) {
+        if let Some(selected_file) = self.file_table.selected_path().as_ref() {
+            if let Some(clone_paths) = self.file_index.duplicates.get(selected_file) {
+                let paths = clone_paths.iter().cloned().collect();
+                self.clone_table.update_table(&paths);
+                self.clone_table.select_first();
             }
-            None => 0,
-        };
-        self.select_file(i);
-    }
-
-    fn previous_file(&mut self) {
-        let i = match self.file_table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.file_table_len - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.select_file(i);
-    }
-
-    fn select_clone(&mut self, index: usize) {
-        self.clone_table_state.select(Some(index));
-
-        if let Some(selected_file) = self.selected_file.as_ref() {
-            self.selected_clone = self
-                .file_index
-                .duplicates
-                .get(selected_file)
-                .unwrap()
-                .iter()
-                .collect::<Vec<&PathBuf>>()
-                .get(index)
-                .map(|&p| p.clone());
-        };
-
-        self.clone_scroll_state = self.clone_scroll_state.position(index);
-    }
-
-    fn next_clone(&mut self) {
-        let i = match self.clone_table_state.selected() {
-            Some(i) => {
-                if i >= self.clone_table_len - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.select_clone(i);
-    }
-
-    fn previous_clone(&mut self) {
-        let i = match self.clone_table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.clone_table_len - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.select_clone(i);
-    }
-
-    fn render_table(&mut self, buf: &mut Buffer, area: Rect) {
-        let header_style = Style::default().add_modifier(Modifier::BOLD);
-        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-
-        let mut header = vec!["File", "Total"];
-
-        if !self.show_clones_table {
-            header.push("Clones");
-        };
-        header.push(" ");
-
-        let header = header
-            .into_iter()
-            .map(Cell::from)
-            .collect::<Row>()
-            .style(header_style)
-            .height(1);
-
-        let duplicates = &self.file_index.duplicates;
-
-        let rows = duplicates.keys().into_iter().map(|k| {
-            let path = format_path(k, &self.file_index.dirs);
-            let duplicates = duplicates[k].len();
-            let size = humansize::format_size(
-                self.file_index.file_size(k).unwrap_or_default() * (duplicates + 1) as u64,
-                humansize::DECIMAL,
-            );
-
-            let cells = if self.show_clones_table {
-                vec![
-                    Cell::from(Text::from(format!("{path}"))),
-                    Cell::from(Text::from(format!("{size}"))),
-                    Cell::from(Text::from(format!(" "))),
-                ]
-            } else {
-                vec![
-                    Cell::from(Text::from(format!("{path}"))),
-                    Cell::from(Text::from(format!("{size}"))),
-                    Cell::from(Text::from(format!("{duplicates}").magenta())),
-                    Cell::from(Text::from(format!(" "))),
-                ]
-            };
-            cells
-                .into_iter()
-                .collect::<Row>()
-                .style(Style::new())
-                .height(1)
-        });
-        let block;
-        let bar;
-        if matches!(self.focused_window, FocusedWindow::Files) {
-            bar = "->";
-            block = Block::bordered()
-                // .title(" Clones ")
-                .border_type(BorderType::Thick)
-                .border_style(Style::new().green());
-        } else {
-            bar = "  ";
-            block = Block::bordered()
-                .border_type(BorderType::Plain)
-                .border_style(Style::new());
-        };
-
-        let table = Table::new(
-            rows,
-            if self.show_clones_table {
-                vec![Constraint::Min(10), Constraint::Max(12), Constraint::Max(1)]
-            } else {
-                vec![
-                    Constraint::Min(10),
-                    Constraint::Max(12),
-                    Constraint::Max(8),
-                    Constraint::Max(1),
-                ]
-            },
-        )
-        .header(header)
-        .highlight_style(selected_style)
-        .highlight_symbol(Text::from(vec![bar.into()]))
-        .highlight_spacing(HighlightSpacing::Always)
-        .block(block);
-
-        StatefulWidget::render(table, area, buf, &mut self.file_table_state);
-
-        let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-        scrollbar.render(
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            buf,
-            &mut self.scroll_state,
-        );
-    }
-
-    fn render_clones_table(&mut self, buf: &mut Buffer, area: Rect) {
-        let header_style = Style::default();
-        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-
-        let header = vec!["Clone", "Date", "Size", " "]
-            .into_iter()
-            .map(Cell::from)
-            .collect::<Row>()
-            .style(header_style)
-            .height(1);
-
-        let selected_file = self.selected_file.as_ref();
-        if selected_file.is_none() {
-            return ();
         }
-
-        let duplicates = &self
-            .file_index
-            .duplicates
-            .get(selected_file.unwrap())
-            .unwrap();
-
-        let rows = duplicates.into_iter().map(|k| {
-            let path = format_path(k, &self.file_index.dirs);
-            let size = humansize::format_size(
-                self.file_index.file_size(k).unwrap_or_default(),
-                humansize::DECIMAL,
-            );
-            let date = self.file_index.files[k].created;
-
-            let cells = vec![
-                Cell::from(Text::from(format!("{path}"))),
-                Cell::from(Text::from(format!("{date}"))),
-                Cell::from(Text::from(format!("{size}"))),
-                Cell::from(Text::from(format!(" "))),
-            ];
-            cells
-                .into_iter()
-                .collect::<Row>()
-                .style(Style::new())
-                .height(1)
-        });
-        let block;
-        let bar;
-        if matches!(self.focused_window, FocusedWindow::Clones) {
-            bar = "->";
-            block = Block::bordered()
-                // .title(" Clones ")
-                .border_type(BorderType::Thick)
-                .border_style(Style::new().green());
-        } else {
-            bar = "  ";
-            block = Block::bordered()
-                .border_type(BorderType::Plain)
-                .border_style(Style::new());
-        };
-        let table = Table::new(
-            rows,
-            [
-                // + 1 is for padding.
-                Constraint::Min(10),
-                Constraint::Max(10),
-                Constraint::Max(12),
-                Constraint::Max(1),
-            ],
-        )
-        .header(header)
-        .highlight_style(selected_style)
-        .highlight_symbol(Text::from(vec![bar.into()]))
-        .highlight_spacing(HighlightSpacing::Always)
-        .block(block);
-
-        StatefulWidget::render(table, area, buf, &mut self.clone_table_state);
-
-        let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-        scrollbar.render(
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            buf,
-            &mut self.clone_scroll_state,
-        );
     }
+
+    // fn next_file(&mut self) {
+    //     let i = match self.file_table_state.selected() {
+    //         Some(i) => {
+    //             if i >= self.file_table_len - 1 {
+    //                 0
+    //             } else {
+    //                 i + 1
+    //             }
+    //         }
+    //         None => 0,
+    //     };
+    //     self.select_file(i);
+    // }
+    //
+    // fn previous_file(&mut self) {
+    //     let i = match self.file_table_state.selected() {
+    //         Some(i) => {
+    //             if i == 0 {
+    //                 self.file_table_len - 1
+    //             } else {
+    //                 i - 1
+    //             }
+    //         }
+    //         None => 0,
+    //     };
+    //     self.select_file(i);
+    // }
+
+    // fn select_clone(&mut self, index: usize) {
+    //     self.clone_table_state.select(Some(index));
+    //
+    //     if let Some(selected_file) = self.selected_file.as_ref() {
+    //         self.selected_clone = self
+    //             .file_index
+    //             .duplicates
+    //             .get(selected_file)
+    //             .unwrap()
+    //             .iter()
+    //             .collect::<Vec<&PathBuf>>()
+    //             .get(index)
+    //             .map(|&p| p.clone());
+    //     };
+    //
+    //     self.clone_scroll_state = self.clone_scroll_state.position(index);
+    // }
+    //
+    // fn next_clone(&mut self) {
+    //     let i = match self.clone_table_state.selected() {
+    //         Some(i) => {
+    //             if i >= self.clone_table_len - 1 {
+    //                 0
+    //             } else {
+    //                 i + 1
+    //             }
+    //         }
+    //         None => 0,
+    //     };
+    //     self.select_clone(i);
+    // }
+    //
+    // fn previous_clone(&mut self) {
+    //     let i = match self.clone_table_state.selected() {
+    //         Some(i) => {
+    //             if i == 0 {
+    //                 self.clone_table_len - 1
+    //             } else {
+    //                 i - 1
+    //             }
+    //         }
+    //         None => 0,
+    //     };
+    //     self.select_clone(i);
+    // }
+
+    // fn render_table(&mut self, buf: &mut Buffer, area: Rect) {
+    //     let header_style = Style::default().add_modifier(Modifier::BOLD);
+    //     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+    //
+    //     let mut header = vec!["File", "Total"];
+    //
+    //     if !self.show_clones_table {
+    //         header.push("Clones");
+    //     };
+    //     header.push(" ");
+    //
+    //     let header = header
+    //         .into_iter()
+    //         .map(Cell::from)
+    //         .collect::<Row>()
+    //         .style(header_style)
+    //         .height(1);
+    //
+    //     let duplicates = &self.file_index.duplicates;
+    //
+    //     let rows = duplicates.keys().into_iter().map(|k| {
+    //         let path = format_path(k, &self.file_index.dirs);
+    //         let duplicates = duplicates[k].len();
+    //         let size = humansize::format_size(
+    //             self.file_index.file_size(k).unwrap_or_default() * (duplicates + 1) as u64,
+    //             humansize::DECIMAL,
+    //         );
+    //
+    //         let cells = if self.show_clones_table {
+    //             vec![
+    //                 Cell::from(Text::from(format!("{path}"))),
+    //                 Cell::from(Text::from(format!("{size}"))),
+    //                 Cell::from(Text::from(format!(" "))),
+    //             ]
+    //         } else {
+    //             vec![
+    //                 Cell::from(Text::from(format!("{path}"))),
+    //                 Cell::from(Text::from(format!("{size}"))),
+    //                 Cell::from(Text::from(format!("{duplicates}").magenta())),
+    //                 Cell::from(Text::from(format!(" "))),
+    //             ]
+    //         };
+    //         cells
+    //             .into_iter()
+    //             .collect::<Row>()
+    //             .style(Style::new())
+    //             .height(1)
+    //     });
+    //     let block;
+    //     let bar;
+    //     if matches!(self.focused_window, FocusedWindow::Files) {
+    //         bar = "->";
+    //         block = Block::bordered()
+    //             // .title(" Clones ")
+    //             .border_type(BorderType::Thick)
+    //             .border_style(Style::new().green());
+    //     } else {
+    //         bar = "  ";
+    //         block = Block::bordered()
+    //             .border_type(BorderType::Plain)
+    //             .border_style(Style::new());
+    //     };
+    //
+    //     let table = Table::new(
+    //         rows,
+    //         if self.show_clones_table {
+    //             vec![Constraint::Min(10), Constraint::Max(12), Constraint::Max(1)]
+    //         } else {
+    //             vec![
+    //                 Constraint::Min(10),
+    //                 Constraint::Max(12),
+    //                 Constraint::Max(8),
+    //                 Constraint::Max(1),
+    //             ]
+    //         },
+    //     )
+    //     .header(header)
+    //     .highlight_style(selected_style)
+    //     .highlight_symbol(Text::from(vec![bar.into()]))
+    //     .highlight_spacing(HighlightSpacing::Always)
+    //     .block(block);
+    //
+    //     StatefulWidget::render(table, area, buf, &mut self.file_table_state);
+    //
+    //     let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
+    //     scrollbar.render(
+    //         area.inner(Margin {
+    //             vertical: 1,
+    //             horizontal: 0,
+    //         }),
+    //         buf,
+    //         &mut self.scroll_state,
+    //     );
+    // }
+
+    // fn render_clones_table(&mut self, buf: &mut Buffer, area: Rect) {
+    //     let header_style = Style::default();
+    //     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+    //
+    //     let header = vec!["Clone", "Date", "Size", " "]
+    //         .into_iter()
+    //         .map(Cell::from)
+    //         .collect::<Row>()
+    //         .style(header_style)
+    //         .height(1);
+    //
+    //     let selected_file = self.selected_file.as_ref();
+    //     if selected_file.is_none() {
+    //         return ();
+    //     }
+    //
+    //     let duplicates = &self
+    //         .file_index
+    //         .duplicates
+    //         .get(selected_file.unwrap())
+    //         .unwrap();
+    //
+    //     let rows = duplicates.into_iter().map(|k| {
+    //         let path = format_path(k, &self.file_index.dirs);
+    //         let size = humansize::format_size(
+    //             self.file_index.file_size(k).unwrap_or_default(),
+    //             humansize::DECIMAL,
+    //         );
+    //         let date = self.file_index.files[k].created;
+    //
+    //         let cells = vec![
+    //             Cell::from(Text::from(format!("{path}"))),
+    //             Cell::from(Text::from(format!("{date}"))),
+    //             Cell::from(Text::from(format!("{size}"))),
+    //             Cell::from(Text::from(format!(" "))),
+    //         ];
+    //         cells
+    //             .into_iter()
+    //             .collect::<Row>()
+    //             .style(Style::new())
+    //             .height(1)
+    //     });
+    //     let block;
+    //     let bar;
+    //     if matches!(self.focused_window, FocusedWindow::Clones) {
+    //         bar = "->";
+    //         block = Block::bordered()
+    //             // .title(" Clones ")
+    //             .border_type(BorderType::Thick)
+    //             .border_style(Style::new().green());
+    //     } else {
+    //         bar = "  ";
+    //         block = Block::bordered()
+    //             .border_type(BorderType::Plain)
+    //             .border_style(Style::new());
+    //     };
+    //     let table = Table::new(
+    //         rows,
+    //         [
+    //             // + 1 is for padding.
+    //             Constraint::Min(10),
+    //             Constraint::Max(10),
+    //             Constraint::Max(12),
+    //             Constraint::Max(1),
+    //         ],
+    //     )
+    //     .header(header)
+    //     .highlight_style(selected_style)
+    //     .highlight_symbol(Text::from(vec![bar.into()]))
+    //     .highlight_spacing(HighlightSpacing::Always)
+    //     .block(block);
+    //
+    //     StatefulWidget::render(table, area, buf, &mut self.clone_table_state);
+    //
+    //     let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
+    //     scrollbar.render(
+    //         area.inner(Margin {
+    //             vertical: 1,
+    //             horizontal: 0,
+    //         }),
+    //         buf,
+    //         &mut self.clone_scroll_state,
+    //     );
+    // }
 
     fn render_header(&self, buf: &mut Buffer, area: Rect) {
         let spans = vec![
@@ -521,7 +519,7 @@ impl App<'_> {
 
     fn render_file_info(&self, buf: &mut Buffer, area: Rect) {
         let info_lines = if let Some(selected_file) = self.active_selected_file() {
-            let file_entry = &self.file_index.files[selected_file];
+            let file_entry = &self.file_index.files[&selected_file];
 
             vec![
                 Line::from(vec!["name: ".into(), file_entry.name.to_string().yellow()]),
@@ -606,7 +604,7 @@ impl App<'_> {
         let duplicate_lines = vec![
             Line::from(vec![
                 "Clones: ".into(),
-                self.file_table_len.to_string().magenta(),
+                self.file_index.files_len().to_string().magenta(),
                 " Total: ".into(),
             ]),
             Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
@@ -637,7 +635,7 @@ impl App<'_> {
     }
 }
 
-impl App<'_> {
+impl App {
     fn render_ui(&mut self, area: Rect, buf: &mut Buffer) {
         let rects = Layout::vertical([
             Constraint::Length(1),
@@ -711,7 +709,12 @@ impl App<'_> {
             .constraints(main_sub_area_inner_constrains)
             .split(main_sub_area[1]);
 
-        self.render_table(buf, main_sub_area_left[0]);
+        self.file_table.render(
+            buf,
+            main_sub_area_left[0],
+            matches!(self.focused_window, FocusedWindow::Files),
+            &self.file_index,
+        );
 
         if self.show_marked_table {
             self.marked_table
@@ -719,7 +722,12 @@ impl App<'_> {
         }
 
         if self.show_clones_table {
-            self.render_clones_table(buf, main_sub_area_right[0]);
+            self.clone_table.render(
+                buf,
+                main_sub_area_right[0],
+                matches!(self.focused_window, FocusedWindow::Clones),
+                &self.file_index,
+            );
         }
 
         if self.show_file_info {
