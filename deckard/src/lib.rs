@@ -18,8 +18,8 @@ pub fn find_duplicates(
 ) -> HashMap<PathBuf, HashSet<PathBuf>> {
     let mut file_index = FileIndex::new(dirs, config);
     file_index.index_dirs();
-    file_index.process_files();
-    file_index.find_duplicates();
+    file_index.process_files(None);
+    file_index.find_duplicates(None);
     file_index.duplicates
 }
 

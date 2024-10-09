@@ -4,6 +4,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
 use rayon::prelude::*;
 use rayon::ThreadPool;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::config::SearchConfig;
@@ -124,15 +125,24 @@ impl FileIndex {
         }
     }
 
-    pub fn process_files(&mut self) {
-        self.files
-            .values_mut()
-            .par_bridge()
-            .for_each(|f| f.process(&self.config));
+    pub fn process_files(&mut self, callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>) {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let total = self.files_len();
+
+        self.files.values_mut().par_bridge().for_each(|f| {
+            f.process(&self.config);
+            if let Some(ref callback) = callback {
+                let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                callback(count, total);
+            }
+        });
     }
 
-    pub fn find_duplicates(&mut self) {
+    pub fn find_duplicates(&mut self, callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>) {
         let vec_files: Vec<&FileEntry> = self.files.values().into_iter().collect();
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let total = vec_files.len() * (vec_files.len() - 1) / 2;
 
         for i in 0..vec_files.len() {
             for j in i + 1..vec_files.len() {
@@ -168,6 +178,12 @@ impl FileIndex {
                             );
                         }
                     };
+                }
+
+                // Update the progress counter
+                if let Some(ref callback) = callback {
+                    let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                    callback(count, total);
                 }
             }
         }

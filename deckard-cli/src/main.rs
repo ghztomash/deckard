@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     );
 
     let now = Instant::now();
-    file_index.process_files();
+    file_index.process_files(None);
     let elapsed = now.elapsed();
     info!(
         "Processed {} files in {}",
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     );
 
     let now = Instant::now();
-    file_index.find_duplicates();
+    file_index.find_duplicates_d(None);
     let elapsed = now.elapsed();
     info!(
         "Found {} matches in {}",
