@@ -27,15 +27,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'deckard'",
+            "name": "Debug executable 'deckard-cli'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=deckard",
-                    "--package=deckard"
+                    "--bin=deckard-cli",
+                    "--package=deckard-cli"
                 ],
                 "filter": {
-                    "name": "deckard",
+                    "name": "deckard-cli",
                     "kind": "bin"
                 }
             },
@@ -45,15 +45,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'deckard' test_files",
+            "name": "Debug executable 'deckard-cli' test_files",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=deckard",
-                    "--package=deckard"
+                    "--bin=deckard-cli",
+                    "--package=deckard-cli"
                 ],
                 "filter": {
-                    "name": "deckard",
+                    "name": "deckard-cli",
                     "kind": "bin"
                 }
             },
@@ -63,16 +63,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'deckard'",
+            "name": "Debug unit tests in executable 'deckard-cli'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=deckard",
-                    "--package=deckard"
+                    "--bin=deckard-cli",
+                    "--package=deckard-cli"
                 ],
                 "filter": {
-                    "name": "deckard",
+                    "name": "deckard-cli",
                     "kind": "bin"
                 }
             },
