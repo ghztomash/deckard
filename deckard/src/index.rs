@@ -141,46 +141,52 @@ impl FileIndex {
 
     pub fn find_duplicates(&mut self, callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>) {
         let vec_files: Vec<&FileEntry> = self.files.values().into_iter().collect();
-    
+
         let counter = Arc::new(AtomicUsize::new(0));
         let total = vec_files.len() * (vec_files.len().saturating_sub(1)) / 2;
-    
+
         // Use DashMap for concurrent access to the duplicates map
         let duplicates = DashMap::new();
-    
+
         let min_len = if self.config.image_config.compare && self.config.audio_config.compare {
             // Each parallel iterator will have at least one item.
             1
         } else {
-            // Make parallel iterator behaves sequentially, it's faster when we don't do long comparisons
+            // Make parallel iterator behave sequentially, it's faster when we do short comparisons
             vec_files.len()
         };
         // Parallelize the outer loop using rayon
-        vec_files.par_iter().with_min_len(min_len).enumerate().for_each(|(i, this_file)| {
-            for j in i + 1..vec_files.len() {
-                let other_file = vec_files[j];
-    
-                // Check if the files are matching
-                if this_file.compare(other_file, &self.config) {
-                    // Insert into the duplicates map
-                    duplicates.entry(this_file.path.clone())
-                        .or_insert_with(|| HashSet::new())
-                        .insert(other_file.path.clone());
-    
-                    // Insert the reverse mapping as well
-                    duplicates.entry(other_file.path.clone())
-                        .or_insert_with(|| HashSet::new())
-                        .insert(this_file.path.clone());
+        vec_files
+            .par_iter()
+            .with_min_len(min_len)
+            .enumerate()
+            .for_each(|(i, this_file)| {
+                for j in i + 1..vec_files.len() {
+                    let other_file = vec_files[j];
+
+                    // Check if the files are matching
+                    if this_file.compare(other_file, &self.config) {
+                        // Insert into the duplicates map
+                        duplicates
+                            .entry(this_file.path.clone())
+                            .or_insert_with(|| HashSet::new())
+                            .insert(other_file.path.clone());
+
+                        // Insert the reverse mapping as well
+                        duplicates
+                            .entry(other_file.path.clone())
+                            .or_insert_with(|| HashSet::new())
+                            .insert(this_file.path.clone());
+                    }
+
+                    // Update the progress counter
+                    if let Some(ref callback) = callback {
+                        let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                        callback(count, total);
+                    }
                 }
-    
-                // Update the progress counter
-                if let Some(ref callback) = callback {
-                    let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
-                    callback(count, total);
-                }
-            }
-        });
-    
+            });
+
         // Collect the results from the DashMap back into the `self.duplicates` HashMap
         self.duplicates = duplicates.into_iter().collect();
     }
