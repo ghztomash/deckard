@@ -14,7 +14,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 SearchConfig::default(),
             ));
             black_box(index.index_dirs());
-            index.process_files();
+            index.process_files(None);
         })
     });
 
@@ -28,7 +28,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 config,
             ));
             black_box(index.index_dirs());
-            index.process_files();
+            index.process_files(None);
         })
     });
 
@@ -43,7 +43,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     config,
                 ));
                 black_box(index.index_dirs());
-                index.process_files();
+                index.process_files(None);
             })
         });
     }
@@ -59,7 +59,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     config,
                 ));
                 black_box(index.index_dirs());
-                index.process_files();
+                index.process_files(None);
             })
         });
     }
@@ -71,7 +71,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 SearchConfig::default(),
             ));
             black_box(index.index_dirs());
-            index.process_files();
+            index.process_files(None);
         })
     });
 

@@ -82,8 +82,8 @@ impl App {
     /// runs the application's main loop until the user quits
     pub fn run(&mut self, terminal: &mut crate::tui::Tui) -> Result<()> {
         self.file_index.index_dirs();
-        self.file_index.process_files();
-        self.file_index.find_duplicates();
+        self.file_index.process_files(None);
+        self.file_index.find_duplicates(None);
 
         // update
         if self.file_index.duplicates_len() > 0 {

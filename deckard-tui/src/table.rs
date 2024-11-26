@@ -38,7 +38,7 @@ impl FileTable {
             paths: Vec::new(),
             selected_path: None,
             scroll_state: ScrollbarState::new(0),
-            header: header,
+            header,
         }
     }
 
