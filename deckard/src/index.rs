@@ -211,5 +211,15 @@ impl FileIndex {
         self.files.get(file).and_then(|f| Some(f.size))
     }
 
+    pub fn remove_from_index(&mut self, file: &PathBuf) -> bool {
+        // get the given file
+        if let Some(clones) = self.duplicates.get_mut(file) {
+            // remove all back links from the duplicate files
+            // TODO: implement
+            for clone in clones.iter() {}
+            //remove current file
+            return true;
+        }
+        false
     }
 }

@@ -69,7 +69,7 @@ impl App {
             focused_window: FocusedWindow::Files,
             exit: false,
             file_index: FileIndex::new(target_paths, config),
-            file_table: FileTable::new(vec!["File", "Size", "Count", " "]),
+            file_table: FileTable::new(vec!["File", "Date", "Size", " "]),
             clone_table: FileTable::new(vec!["Clone", "Date", "Size", " "]),
             marked_table: FileTable::new(vec![]),
             marked_files: HashSet::new(),
@@ -123,6 +123,7 @@ impl App {
             KeyCode::Char('c') => self.toggle_show_clones_table(),
             KeyCode::Char(' ') => self.mark(),
             KeyCode::Char('a') => self.mark_all(),
+            KeyCode::Char('m') => self.toggle_show_marked_table(),
             KeyCode::Char('l') | KeyCode::Right => self.focus_clones_table(),
             KeyCode::Char('h') | KeyCode::Left => self.focus_files_table(),
             _ => {}
@@ -185,6 +186,10 @@ impl App {
 
     fn toggle_show_clones_table(&mut self) {
         self.show_clones_table = !self.show_clones_table;
+    }
+
+    fn toggle_show_marked_table(&mut self) {
+        self.show_marked_table = !self.show_marked_table;
     }
 
     fn toggle_info(&mut self) {
@@ -630,12 +635,28 @@ impl App {
 
     fn render_footer(&self, buf: &mut Buffer, area: Rect) {
         let instructions = Line::from(vec![
-            " Decrement ".into(),
-            "<Left>".blue().bold(),
-            " Increment ".into(),
-            "<Right>".blue().bold(),
+            " File ".into(),
+            "<h/left>".blue().bold(),
+            " Clones ".into(),
+            "<l/right>".blue().bold(),
+            " Mark ".into(),
+            "<space>".blue().bold(),
+            " Mark All ".into(),
+            "<a>".blue().bold(),
+            " Show clones ".into(),
+            "<c>".blue().bold(),
+            " Info ".into(),
+            "<i>".blue().bold(),
+            " Open file ".into(),
+            "<o>".blue().bold(),
+            " Open path ".into(),
+            "<p>".blue().bold(),
+            " Trash ".into(),
+            "<t/backspace>".blue().bold(),
+            " Delete ".into(),
+            "<D/delete>".blue().bold(),
             " Quit ".into(),
-            "<Q> ".blue().bold(),
+            "<q/esc>".blue().bold(),
         ]);
         let info_footer = Paragraph::new(instructions).style(Style::new());
         info_footer.render(area, buf)
@@ -695,7 +716,7 @@ impl App {
             [Constraint::Percentage(100), Constraint::Percentage(0)]
         };
 
-        let main_sub_area_inner_constrains = if self.show_file_info {
+        let main_sub_area_inner_constrains = if self.show_file_info || self.show_marked_table {
             [Constraint::Percentage(60), Constraint::Percentage(40)]
         } else {
             [Constraint::Percentage(100), Constraint::Percentage(0)]
