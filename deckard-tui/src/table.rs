@@ -105,8 +105,9 @@ impl FileTable {
     }
 
     pub fn render(&mut self, buf: &mut Buffer, area: Rect, focused: bool, file_index: &FileIndex) {
-        let header_style = Style::default();
+        let header_style = Style::default().dark_gray();
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+        let footer_style = Style::default().dark_gray();
 
         let header = self
             .header
@@ -116,13 +117,22 @@ impl FileTable {
             .collect::<Row>()
             .style(header_style);
 
+        let count = self.paths.len();
+        let total_size = humansize::format_size(
+            self.paths
+                .iter()
+                .map(|p| file_index.file_size(p).unwrap_or_default())
+                .sum::<u64>(),
+            humansize::DECIMAL,
+        );
+
         let rows = &self.paths.clone().into_iter().map(|p| {
             let path = format_path(&p, &file_index.dirs);
             let size = humansize::format_size(
                 file_index.file_size(&p).unwrap_or_default(),
                 humansize::DECIMAL,
             );
-            let date = file_index.files[&p].modified;
+            let date = file_index.files[&p].modified.format("%d/%m/%Y %H:%M");
 
             let cells = vec![
                 Cell::from(Text::from(format!("{path}"))),
@@ -143,17 +153,26 @@ impl FileTable {
                 .border_type(BorderType::Plain)
                 .border_style(Style::new().dark_gray());
         };
+
+        let footer = Row::new(vec![
+            Cell::from(Text::from(format!("Files: {count}"))),
+            Cell::from(Text::from(format!(""))),
+            Cell::from(Text::from(format!("Total: {total_size}"))),
+        ])
+        .style(footer_style);
+
         let table = Table::new(
             rows.clone(),
             [
                 // + 1 is for padding.
                 Constraint::Min(10),
-                Constraint::Max(10),
-                Constraint::Max(12),
+                Constraint::Max(18),
+                Constraint::Max(14),
                 Constraint::Max(1),
             ],
         )
         .header(header)
+        .footer(footer)
         .highlight_style(selected_style)
         .block(block);
 

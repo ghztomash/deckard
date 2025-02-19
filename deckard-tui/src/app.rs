@@ -71,7 +71,7 @@ impl App {
             file_index: FileIndex::new(target_paths, config),
             file_table: FileTable::new(vec!["File", "Date", "Size", " "]),
             clone_table: FileTable::new(vec!["Clone", "Date", "Size", " "]),
-            marked_table: FileTable::new(vec![]),
+            marked_table: FileTable::new(vec!["Marked"]),
             marked_files: HashSet::new(),
             show_marked_table: true,
             show_clones_table: true,
@@ -612,12 +612,15 @@ impl App {
             .collect();
 
         let dir_joined = dir_lines.join(" ");
+        let total: u64 = self.file_index.files.iter().map(|(_, f)| f.size).sum();
+        let total_size = humansize::format_size(total, humansize::DECIMAL);
 
         let duplicate_lines = vec![
             Line::from(vec![
                 "Clones: ".into(),
                 self.file_index.files_len().to_string().magenta(),
                 " Total: ".into(),
+                total_size.blue(),
             ]),
             Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
         ];
