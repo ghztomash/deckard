@@ -3,6 +3,10 @@ use chksum::{md5, sha2_256};
 use chrono::prelude::*;
 use image_hasher::{FilterType, HashAlg, HasherConfig};
 use infer::Type;
+use lofty::{
+    file::{AudioFile, TaggedFileExt},
+    tag::Accessor,
+};
 use rusty_chromaprint::Configuration;
 use std::{
     ffi::OsString,
@@ -16,7 +20,7 @@ use std::{
 
 use image_hasher::ImageHash;
 
-use log::{debug, error, trace, warn};
+use log::{debug, trace, warn};
 
 use crate::{config::SearchConfig, hasher};
 
@@ -75,7 +79,22 @@ pub struct FileEntry {
     pub full_hash: Option<String>,
     pub image_hash: Option<ImageHash>,
     pub audio_hash: Option<Vec<u32>>,
+    pub audio_tags: Option<AudioTags>,
     pub processed: bool,
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct AudioTags {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    pub duration: Option<f32>,
+    pub bitrate: Option<String>,
+    pub sample_rate: Option<String>,
+    pub bpm: Option<String>,
+    pub rating: Option<String>,
+    pub comment: Option<String>,
 }
 
 impl FileEntry {
@@ -104,6 +123,7 @@ impl FileEntry {
             full_hash: None,
             image_hash: None,
             audio_hash: None,
+            audio_tags: None,
             processed: false,
         }
     }
@@ -136,6 +156,7 @@ impl FileEntry {
             full_hash: None,
             image_hash: None,
             audio_hash: None,
+            audio_tags: None,
             processed: false,
         }
     }
@@ -163,30 +184,31 @@ impl FileEntry {
             ))
         }
 
-        if config.image_config.compare {
-            if let Some(mime) = self.mime_type.as_ref() {
-                if mime.contains("image") {
-                    self.image_hash = hasher::get_image_hash(
-                        &config.image_config.hash_algorithm,
-                        &config.image_config.filter_algorithm,
-                        config.image_config.size,
-                        &self.path,
-                    );
-                }
-            } else {
-                warn!("No MIME type for file {}", self.path.to_string_lossy())
+        if let Some(mime) = self.mime_type.as_ref() {
+            if mime.contains("image") && config.image_config.compare {
+                self.image_hash = hasher::get_image_hash(
+                    &config.image_config.hash_algorithm,
+                    &config.image_config.filter_algorithm,
+                    config.image_config.size,
+                    &self.path,
+                );
             }
+        } else {
+            warn!("No MIME type for file {}", self.path.to_string_lossy())
         }
 
-        if config.audio_config.compare {
-            if let Some(mime) = self.mime_type.as_ref() {
-                if mime.contains("audio") {
+        if let Some(mime) = self.mime_type.as_ref() {
+            if mime.contains("audio") {
+                if config.audio_config.read_tags {
+                    self.audio_tags = get_id3_tags(&self.path);
+                }
+                if config.audio_config.compare {
                     let chroma_config = Configuration::preset_test1();
                     self.audio_hash = hasher::get_audio_hash(&self.path, &chroma_config);
                 }
-            } else {
-                warn!("No MIME type for file {}", self.path.to_string_lossy())
             }
+        } else {
+            warn!("No MIME type for file {}", self.path.to_string_lossy())
         }
 
         self.processed = true;
@@ -311,9 +333,7 @@ impl Display for FileEntry {
 pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> String {
     let mime = mime_guess::from_path(&path).first();
     match mime {
-        Some(mime_type) => {
-            return mime_type.to_string();
-        }
+        Some(mime_type) => mime_type.to_string(),
         None => {
             let mut file = File::open(&path).unwrap();
 
@@ -323,8 +343,41 @@ pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> String {
                     .unwrap_or_else(|e| warn!("read magic: {:?} for {:?}", e, path));
             }
             // Find the MIME type
-            let mime_type = tree_magic::from_u8(&magic);
-            return mime_type;
+            tree_magic::from_u8(&magic)
         }
     }
+}
+#[inline]
+pub fn get_id3_tags<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Option<AudioTags> {
+    let mut tags = AudioTags::default();
+
+    trace!("Reading id3 tags for file {:?}", path);
+
+    let mut file = File::open(&path).ok()?;
+    let tagged_file = lofty::read_from(&mut file).ok()?;
+
+    let file_tag = match tagged_file.primary_tag() {
+        Some(primary_tag) => primary_tag,
+        // If the "primary" tag doesn't exist, just grab the first tag we can find.
+        None => tagged_file.first_tag()?,
+    };
+
+    tags.title = file_tag.title().map(|b| b.to_string());
+    tags.artist = file_tag.artist().map(|b| b.to_string());
+    tags.album = file_tag.album().map(|b| b.to_string());
+    tags.genre = file_tag.genre().map(|b| b.to_string());
+    tags.comment = file_tag.comment().map(|b| b.to_string());
+
+    tags.bpm = file_tag
+        .get_string(&lofty::tag::ItemKey::Bpm)
+        .map(|b| b.to_string());
+
+    let properties = tagged_file.properties();
+    tags.bitrate = properties.overall_bitrate().map(|b| b.to_string());
+    tags.sample_rate = properties.sample_rate().map(|b| b.to_string());
+    tags.duration = Some(properties.duration().as_secs_f32());
+
+    trace!("{:?}", tags);
+
+    Some(tags)
 }

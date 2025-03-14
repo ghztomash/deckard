@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     env,
+    hash::{DefaultHasher, Hash, Hasher},
     ops::Index,
     path::PathBuf,
     usize,
@@ -533,7 +534,7 @@ impl App {
         let info_lines = if let Some(selected_file) = self.active_selected_file() {
             let file_entry = &self.file_index.files[&selected_file];
 
-            vec![
+            let mut lines = vec![
                 Line::from(vec!["name: ".into(), file_entry.name.to_string().yellow()]),
                 Line::from(vec![
                     "size: ".into(),
@@ -577,7 +578,63 @@ impl App {
                         .to_string()
                         .yellow(),
                 ]),
-            ]
+            ];
+
+            if let Some(audio_hash) = &file_entry.audio_hash {
+                let mut hasher = DefaultHasher::new();
+                audio_hash.hash(&mut hasher);
+                lines.push(Line::from(vec![
+                    "audio_hash: ".into(),
+                    format!("{:x}", hasher.finish()).to_string().cyan(),
+                ]));
+            }
+
+            if let Some(audio_tags) = &file_entry.audio_tags {
+                let mut tag_lines = vec![];
+                if let Some(v) = &audio_tags.title {
+                    tag_lines.push(Line::from(vec!["title: ".into(), v.clone().yellow()]));
+                }
+                if let Some(v) = &audio_tags.artist {
+                    tag_lines.push(Line::from(vec!["artist: ".into(), v.clone().yellow()]));
+                }
+                if let Some(v) = &audio_tags.album {
+                    tag_lines.push(Line::from(vec!["album: ".into(), v.clone().yellow()]));
+                }
+                if let Some(v) = &audio_tags.genre {
+                    tag_lines.push(Line::from(vec!["genre: ".into(), v.clone().yellow()]));
+                }
+                if let Some(v) = &audio_tags.rating {
+                    tag_lines.push(Line::from(vec!["rating: ".into(), v.clone().yellow()]));
+                }
+                if let Some(v) = &audio_tags.bpm {
+                    tag_lines.push(Line::from(vec!["bpm: ".into(), v.clone().yellow()]));
+                }
+                if let Some(v) = &audio_tags.duration {
+                    tag_lines.push(Line::from(vec![
+                        "duration: ".into(),
+                        v.to_string().yellow(),
+                    ]));
+                }
+                if let Some(v) = &audio_tags.bitrate {
+                    tag_lines.push(Line::from(vec!["bitrate: ".into(), v.clone().yellow()]));
+                }
+                if let Some(v) = &audio_tags.sample_rate {
+                    tag_lines.push(Line::from(vec!["sample_rate: ".into(), v.clone().yellow()]));
+                }
+                if let Some(v) = &audio_tags.comment {
+                    tag_lines.push(Line::from(vec![
+                        "comment: ".into(),
+                        v.clone()
+                            .chars()
+                            .filter(|c| !c.is_whitespace() || *c == ' ')
+                            .collect::<String>()
+                            .yellow(),
+                    ]));
+                }
+                lines.extend(tag_lines);
+            }
+
+            lines
         } else {
             vec![Line::from(vec!["none".into()])]
         };

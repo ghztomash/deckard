@@ -101,6 +101,7 @@ impl Default for ImageConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct AudioConfig {
     pub compare: bool,
+    pub read_tags: bool,
     pub segments_limit: u64,
     pub threshold: f64,
 }
@@ -109,6 +110,7 @@ impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             compare: false,
+            read_tags: false,
             segments_limit: 2,
             threshold: 5.0,
         }
