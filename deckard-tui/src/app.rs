@@ -1,23 +1,21 @@
 use std::{
-    borrow::Cow,
     collections::{HashMap, HashSet},
-    env,
+    env, fmt,
     hash::{DefaultHasher, Hash, Hasher},
-    ops::Index,
     path::PathBuf,
-    usize,
+    time::Duration,
 };
 
-use color_eyre::{
-    eyre::{bail, Result, WrapErr},
-    owo_colors::OwoColorize,
-};
+use std::sync::{Arc, RwLock};
+
+use color_eyre::eyre::{bail, Result, WrapErr};
 use deckard::config::SearchConfig;
+use futures::StreamExt;
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind},
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
-    style::{Modifier, Style, Stylize},
+    style::{Color, Modifier, Style, Styled, Stylize},
     symbols::border,
     text::{Line, Text},
     widgets::{
@@ -27,6 +25,8 @@ use ratatui::{
     },
     Frame,
 };
+
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 use deckard::index::FileIndex;
 
@@ -54,7 +54,7 @@ enum Sorting {
 pub struct App {
     focused_window: FocusedWindow,
     exit: bool,
-    file_index: FileIndex,
+    file_index: Arc<RwLock<FileIndex>>,
     file_table: FileTable,
     clone_table: FileTable,
     marked_table: FileTable,
@@ -62,14 +62,58 @@ pub struct App {
     show_clones_table: bool,
     show_marked_table: bool,
     show_file_info: bool,
+    current_state: State,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum State {
+    #[default]
+    Idle,
+    Indexing,
+    Processing {
+        done: usize,
+        total: usize,
+    },
+    Comparing {
+        done: usize,
+        total: usize,
+    },
+    Done,
+    Error(String),
+}
+
+impl State {
+    fn get_color(&self) -> Color {
+        match self {
+            Self::Done => Color::Green,
+            Self::Error(_) => Color::Red,
+            _ => Color::Yellow,
+        }
+    }
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let result = match self {
+            Self::Idle => "Idle",
+            Self::Indexing => "Indexing",
+            Self::Processing { done, total } => &format!("Processing {} / {}", done, total),
+            Self::Comparing { done, total } => &format!("Comparing {} / {}", done, total),
+            Self::Done => "Done",
+            Self::Error(e) => &format!("Error: {}", e),
+        };
+        write!(f, "{}", result)
+    }
 }
 
 impl App {
+    const FRAMES_PER_SECOND: f32 = 30.0;
+
     pub fn new(target_paths: HashSet<PathBuf>, config: SearchConfig) -> Self {
         Self {
             focused_window: FocusedWindow::Files,
             exit: false,
-            file_index: FileIndex::new(target_paths, config),
+            file_index: Arc::new(RwLock::new(FileIndex::new(target_paths, config))),
             file_table: FileTable::new(vec!["File", "Date", "Size", " "]),
             clone_table: FileTable::new(vec!["Clone", "Date", "Size", " "]),
             marked_table: FileTable::new(vec!["Marked"]),
@@ -77,31 +121,66 @@ impl App {
             show_marked_table: true,
             show_clones_table: true,
             show_file_info: true,
+            current_state: State::Idle,
         }
     }
 
     /// runs the application's main loop until the user quits
-    pub fn run(&mut self, terminal: &mut crate::tui::Tui) -> Result<()> {
-        self.file_index.index_dirs();
-        self.file_index.process_files(None);
-        self.file_index.find_duplicates(None);
+    pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> Result<()> {
+        self.handle_state(State::Indexing);
+        self.file_index.write().unwrap().index_dirs();
 
-        // update
-        if self.file_index.duplicates_len() > 0 {
-            self.update_file_table();
-            self.update_clone_table();
-        }
+        let period = Duration::from_secs_f32(1.0 / Self::FRAMES_PER_SECOND);
+        let mut interval = tokio::time::interval(period);
+        let mut events = EventStream::new();
+
+        // TODO: Handle quitting
+        let (tx, mut rx) = unbounded_channel::<State>();
+        let file_index = self.file_index.clone();
+        tokio::spawn(async move {
+            if let Err(e) = process_files(file_index.clone(), tx.clone()).await {
+                let _ = tx.send(State::Error(format!("process_files error: {e}")));
+            }
+            if let Err(e) = find_duplicates(file_index.clone(), tx.clone()).await {
+                let _ = tx.send(State::Error(format!("find_duplicates error: {e}")));
+            }
+            let _ = tx.send(State::Done);
+        });
 
         while !self.exit {
-            terminal.draw(|frame| self.render_ui(frame.area(), frame.buffer_mut()))?;
-            self.handle_events().wrap_err("handle events failed")?;
+            tokio::select! {
+                _ = interval.tick() => {
+                    terminal.draw(|frame| self.render_ui(frame.area(), frame.buffer_mut()))?;
+                },
+                Some(Ok(event)) = events.next() => self.handle_events(event)?,
+                Some(state) = rx.recv() => {
+                    self.handle_state(state);
+                },
+                else => break,
+            }
         }
         Ok(())
     }
 
+    fn is_done(&self) -> bool {
+        self.current_state == State::Done
+    }
+
+    fn duplicates_exist(&self) -> bool {
+        self.file_index.read().unwrap().duplicates_len() > 0
+    }
+
+    fn update_tables(&mut self) {
+        // update
+        if self.duplicates_exist() {
+            self.update_file_table();
+            self.update_clone_table();
+        }
+    }
+
     /// updates the application's state based on user input
-    fn handle_events(&mut self) -> Result<()> {
-        match event::read()? {
+    fn handle_events(&mut self, event: Event) -> Result<()> {
+        match event {
             // it's important to check that the event is a key press event as
             // crossterm also emits key release and repeat events on Windows.
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => self
@@ -215,37 +294,19 @@ impl App {
         }
     }
 
-    // fn select_file(&mut self, index: usize) {
-    //     self.file_table_state.select(Some(index));
-    //     self.selected_file = self
-    //         .file_index
-    //         .duplicates
-    //         .keys()
-    //         .collect::<Vec<&PathBuf>>()
-    //         .get(index)
-    //         .map(|&p| p.clone());
-    //     self.scroll_state = self.scroll_state.position(index);
-    //     self.update_clone_table();
-    //
-    //     let selected_file = self.selected_file.as_ref().unwrap();
-    //     // self.clone_table_len = self
-    //     //     .file_index
-    //     //     .duplicates
-    //     //     .get(selected_file)
-    //     //     .map_or(0, |d| d.len());
-    //     //
-    //     // self.clone_scroll_state = ScrollbarState::new(self.clone_table_len - 1);
-    //     //
-    //     // self.clone_table.select(Some(0));
-    //     // self.select_clone(0);
-    // }
-
     fn update_file_table(&mut self) {
-        let mut paths: Vec<PathBuf> = self.file_index.duplicates.keys().cloned().collect();
+        let mut paths: Vec<PathBuf> = self
+            .file_index
+            .read()
+            .unwrap()
+            .duplicates
+            .keys()
+            .cloned()
+            .collect();
 
         paths.sort_by(|a, b| {
-            let a_size = self.file_index.file_size(a).unwrap();
-            let b_size = self.file_index.file_size(b).unwrap();
+            let a_size = self.file_index.read().unwrap().file_size(a).unwrap();
+            let b_size = self.file_index.read().unwrap().file_size(b).unwrap();
             b_size.cmp(&a_size)
         });
 
@@ -255,7 +316,13 @@ impl App {
 
     fn update_clone_table(&mut self) {
         if let Some(selected_file) = self.file_table.selected_path().as_ref() {
-            if let Some(clone_paths) = self.file_index.duplicates.get(selected_file) {
+            if let Some(clone_paths) = self
+                .file_index
+                .read()
+                .unwrap()
+                .duplicates
+                .get(selected_file)
+            {
                 let paths = clone_paths.iter().cloned().collect();
                 self.clone_table.update_table(&paths);
                 self.clone_table.select_first();
@@ -263,265 +330,11 @@ impl App {
         }
     }
 
-    // fn next_file(&mut self) {
-    //     let i = match self.file_table_state.selected() {
-    //         Some(i) => {
-    //             if i >= self.file_table_len - 1 {
-    //                 0
-    //             } else {
-    //                 i + 1
-    //             }
-    //         }
-    //         None => 0,
-    //     };
-    //     self.select_file(i);
-    // }
-    //
-    // fn previous_file(&mut self) {
-    //     let i = match self.file_table_state.selected() {
-    //         Some(i) => {
-    //             if i == 0 {
-    //                 self.file_table_len - 1
-    //             } else {
-    //                 i - 1
-    //             }
-    //         }
-    //         None => 0,
-    //     };
-    //     self.select_file(i);
-    // }
-
-    // fn select_clone(&mut self, index: usize) {
-    //     self.clone_table_state.select(Some(index));
-    //
-    //     if let Some(selected_file) = self.selected_file.as_ref() {
-    //         self.selected_clone = self
-    //             .file_index
-    //             .duplicates
-    //             .get(selected_file)
-    //             .unwrap()
-    //             .iter()
-    //             .collect::<Vec<&PathBuf>>()
-    //             .get(index)
-    //             .map(|&p| p.clone());
-    //     };
-    //
-    //     self.clone_scroll_state = self.clone_scroll_state.position(index);
-    // }
-    //
-    // fn next_clone(&mut self) {
-    //     let i = match self.clone_table_state.selected() {
-    //         Some(i) => {
-    //             if i >= self.clone_table_len - 1 {
-    //                 0
-    //             } else {
-    //                 i + 1
-    //             }
-    //         }
-    //         None => 0,
-    //     };
-    //     self.select_clone(i);
-    // }
-    //
-    // fn previous_clone(&mut self) {
-    //     let i = match self.clone_table_state.selected() {
-    //         Some(i) => {
-    //             if i == 0 {
-    //                 self.clone_table_len - 1
-    //             } else {
-    //                 i - 1
-    //             }
-    //         }
-    //         None => 0,
-    //     };
-    //     self.select_clone(i);
-    // }
-
-    // fn render_table(&mut self, buf: &mut Buffer, area: Rect) {
-    //     let header_style = Style::default().add_modifier(Modifier::BOLD);
-    //     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-    //
-    //     let mut header = vec!["File", "Total"];
-    //
-    //     if !self.show_clones_table {
-    //         header.push("Clones");
-    //     };
-    //     header.push(" ");
-    //
-    //     let header = header
-    //         .into_iter()
-    //         .map(Cell::from)
-    //         .collect::<Row>()
-    //         .style(header_style)
-    //         .height(1);
-    //
-    //     let duplicates = &self.file_index.duplicates;
-    //
-    //     let rows = duplicates.keys().into_iter().map(|k| {
-    //         let path = format_path(k, &self.file_index.dirs);
-    //         let duplicates = duplicates[k].len();
-    //         let size = humansize::format_size(
-    //             self.file_index.file_size(k).unwrap_or_default() * (duplicates + 1) as u64,
-    //             humansize::DECIMAL,
-    //         );
-    //
-    //         let cells = if self.show_clones_table {
-    //             vec![
-    //                 Cell::from(Text::from(format!("{path}"))),
-    //                 Cell::from(Text::from(format!("{size}"))),
-    //                 Cell::from(Text::from(format!(" "))),
-    //             ]
-    //         } else {
-    //             vec![
-    //                 Cell::from(Text::from(format!("{path}"))),
-    //                 Cell::from(Text::from(format!("{size}"))),
-    //                 Cell::from(Text::from(format!("{duplicates}").magenta())),
-    //                 Cell::from(Text::from(format!(" "))),
-    //             ]
-    //         };
-    //         cells
-    //             .into_iter()
-    //             .collect::<Row>()
-    //             .style(Style::new())
-    //             .height(1)
-    //     });
-    //     let block;
-    //     let bar;
-    //     if matches!(self.focused_window, FocusedWindow::Files) {
-    //         bar = "->";
-    //         block = Block::bordered()
-    //             // .title(" Clones ")
-    //             .border_type(BorderType::Thick)
-    //             .border_style(Style::new().green());
-    //     } else {
-    //         bar = "  ";
-    //         block = Block::bordered()
-    //             .border_type(BorderType::Plain)
-    //             .border_style(Style::new());
-    //     };
-    //
-    //     let table = Table::new(
-    //         rows,
-    //         if self.show_clones_table {
-    //             vec![Constraint::Min(10), Constraint::Max(12), Constraint::Max(1)]
-    //         } else {
-    //             vec![
-    //                 Constraint::Min(10),
-    //                 Constraint::Max(12),
-    //                 Constraint::Max(8),
-    //                 Constraint::Max(1),
-    //             ]
-    //         },
-    //     )
-    //     .header(header)
-    //     .highlight_style(selected_style)
-    //     .highlight_symbol(Text::from(vec![bar.into()]))
-    //     .highlight_spacing(HighlightSpacing::Always)
-    //     .block(block);
-    //
-    //     StatefulWidget::render(table, area, buf, &mut self.file_table_state);
-    //
-    //     let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-    //     scrollbar.render(
-    //         area.inner(Margin {
-    //             vertical: 1,
-    //             horizontal: 0,
-    //         }),
-    //         buf,
-    //         &mut self.scroll_state,
-    //     );
-    // }
-
-    // fn render_clones_table(&mut self, buf: &mut Buffer, area: Rect) {
-    //     let header_style = Style::default();
-    //     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-    //
-    //     let header = vec!["Clone", "Date", "Size", " "]
-    //         .into_iter()
-    //         .map(Cell::from)
-    //         .collect::<Row>()
-    //         .style(header_style)
-    //         .height(1);
-    //
-    //     let selected_file = self.selected_file.as_ref();
-    //     if selected_file.is_none() {
-    //         return ();
-    //     }
-    //
-    //     let duplicates = &self
-    //         .file_index
-    //         .duplicates
-    //         .get(selected_file.unwrap())
-    //         .unwrap();
-    //
-    //     let rows = duplicates.into_iter().map(|k| {
-    //         let path = format_path(k, &self.file_index.dirs);
-    //         let size = humansize::format_size(
-    //             self.file_index.file_size(k).unwrap_or_default(),
-    //             humansize::DECIMAL,
-    //         );
-    //         let date = self.file_index.files[k].created;
-    //
-    //         let cells = vec![
-    //             Cell::from(Text::from(format!("{path}"))),
-    //             Cell::from(Text::from(format!("{date}"))),
-    //             Cell::from(Text::from(format!("{size}"))),
-    //             Cell::from(Text::from(format!(" "))),
-    //         ];
-    //         cells
-    //             .into_iter()
-    //             .collect::<Row>()
-    //             .style(Style::new())
-    //             .height(1)
-    //     });
-    //     let block;
-    //     let bar;
-    //     if matches!(self.focused_window, FocusedWindow::Clones) {
-    //         bar = "->";
-    //         block = Block::bordered()
-    //             // .title(" Clones ")
-    //             .border_type(BorderType::Thick)
-    //             .border_style(Style::new().green());
-    //     } else {
-    //         bar = "  ";
-    //         block = Block::bordered()
-    //             .border_type(BorderType::Plain)
-    //             .border_style(Style::new());
-    //     };
-    //     let table = Table::new(
-    //         rows,
-    //         [
-    //             // + 1 is for padding.
-    //             Constraint::Min(10),
-    //             Constraint::Max(10),
-    //             Constraint::Max(12),
-    //             Constraint::Max(1),
-    //         ],
-    //     )
-    //     .header(header)
-    //     .highlight_style(selected_style)
-    //     .highlight_symbol(Text::from(vec![bar.into()]))
-    //     .highlight_spacing(HighlightSpacing::Always)
-    //     .block(block);
-    //
-    //     StatefulWidget::render(table, area, buf, &mut self.clone_table_state);
-    //
-    //     let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-    //     scrollbar.render(
-    //         area.inner(Margin {
-    //             vertical: 1,
-    //             horizontal: 0,
-    //         }),
-    //         buf,
-    //         &mut self.clone_scroll_state,
-    //     );
-    // }
-
     fn render_header(&self, buf: &mut Buffer, area: Rect) {
         let spans = vec![
             "Deckard".bold(),
             " v".into(),
-            format!("{}", env!("CARGO_PKG_VERSION")).into(),
+            env!("CARGO_PKG_VERSION").into(),
         ];
         let title = Line::from(spans);
         let header = Paragraph::new(title)
@@ -531,9 +344,17 @@ impl App {
     }
 
     fn render_file_info(&self, buf: &mut Buffer, area: Rect) {
-        let info_lines = if let Some(selected_file) = self.active_selected_file() {
-            let file_entry = &self.file_index.files[&selected_file];
+        let selected_file = self.active_selected_file();
+        let maybe_entry = {
+            if let Some(ref path) = selected_file {
+                let fi = self.file_index.read().unwrap();
+                fi.files.get(path).cloned()
+            } else {
+                None
+            }
+        };
 
+        let info_lines = if let Some(file_entry) = maybe_entry {
             let mut lines = vec![
                 Line::from(vec!["name: ".into(), file_entry.name.to_string().yellow()]),
                 Line::from(vec![
@@ -651,41 +472,61 @@ impl App {
     }
 
     fn render_summary(&self, buf: &mut Buffer, area: Rect) {
-        let dirs: Vec<PathBuf> = self.file_index.dirs.clone().into_iter().collect();
+        let summary_text = if self.is_done() {
+            // Acquire the lock to pull needed data, then drop it.
+            let (dirs, total, files_len) = {
+                let file_index = self.file_index.read().unwrap();
 
-        let dir_lines: Vec<String> = dirs
-            .iter()
-            .map(|d| {
-                format!(
-                    "{}",
-                    deckard::to_relative_path(d)
-                        // d.strip_prefix(&common_path)
-                        // .unwrap_or(d)
-                        .to_string_lossy()
-                        .to_string()
-                        .yellow(),
-                )
-            })
-            .collect();
+                // Copy out what you need into local variables.
+                let dirs: Vec<PathBuf> = file_index.dirs.clone().into_iter().collect();
+                let total: u64 = file_index.files.values().map(|f| f.size).sum();
+                let files_len = file_index.files_len();
+                (dirs, total, files_len)
+            };
 
-        let dir_joined = dir_lines.join(" ");
-        let total: u64 = self.file_index.files.iter().map(|(_, f)| f.size).sum();
-        let total_size = humansize::format_size(total, humansize::DECIMAL);
+            let dir_lines: Vec<String> = dirs
+                .iter()
+                .map(|d| {
+                    format!(
+                        "{}",
+                        deckard::to_relative_path(d)
+                            .to_string_lossy()
+                            .to_string()
+                            .yellow(),
+                    )
+                })
+                .collect();
 
-        let duplicate_lines = vec![
-            Line::from(vec![
-                "Clones: ".into(),
-                self.file_index.files_len().to_string().magenta(),
-                " Total: ".into(),
-                total_size.blue(),
-            ]),
-            Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
-        ];
-        // duplicate_lines.extend(dir_lines);
+            let dir_joined = dir_lines.join(" ");
+            let total_size = humansize::format_size(total, humansize::DECIMAL);
 
-        let duplicates_text = Text::from(duplicate_lines);
+            let duplicate_lines = vec![
+                Line::from(vec![
+                    "Clones: ".into(),
+                    files_len.to_string().magenta(),
+                    " Total: ".into(),
+                    total_size.blue(),
+                ]),
+                Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
+                Line::from(vec![
+                    "State: ".into(),
+                    format!("{}", self.current_state)
+                        .set_style(Style::default().fg(self.current_state.get_color())),
+                ]),
+            ];
 
-        let summary = Paragraph::new(duplicates_text).style(Style::new()).block(
+            Text::from(duplicate_lines)
+        } else {
+            let summary_lines = vec![Line::from(vec![
+                "State: ".into(),
+                format!("{}", self.current_state)
+                    .set_style(Style::default().fg(self.current_state.get_color())),
+            ])];
+
+            Text::from(summary_lines)
+        };
+
+        let summary = Paragraph::new(summary_text).style(Style::new()).block(
             Block::bordered()
                 .border_type(BorderType::Plain)
                 .border_style(Style::new()),
@@ -733,42 +574,7 @@ impl App {
         ])
         .split(area);
 
-        // let title = Title::from(" Deckard ".bold());
-        // let instructions = Title::from(Line::from(vec![
-        //     " Decrement ".into(),
-        //     "<Left>".blue().bold(),
-        //     " Increment ".into(),
-        //     "<Right>".blue().bold(),
-        //     " Quit ".into(),
-        //     "<Q> ".blue().bold(),
-        // ]));
-        // let block = Block::default()
-        //     .title(title.alignment(Alignment::Center))
-        //     .title(
-        //         instructions
-        //             .alignment(Alignment::Center)
-        //             .position(Position::Bottom),
-        //     )
-        //     .borders(Borders::ALL)
-        //     .border_set(border::THICK);
-        // block.render(area, buf);
         self.render_header(buf, rects[0]);
-
-        // let duplicates = &self.file_index.duplicates;
-
-        // convert paths to lines of text
-        // let files: Vec<Line> = duplicates
-        //     .keys()
-        //     .map(|k| {
-        //         if let Some(common_path) = &common_path {
-        //             let k = k.strip_prefix(&common_path).unwrap_or(k);
-        //             return Line::from(k.to_string_lossy().to_string());
-        //         }
-        //         Line::from(k.to_string_lossy().to_string())
-        //     })
-        //     .collect();
-
-        // let files_text = Text::from(files);
 
         let main_sub_area_constrains = if self.show_clones_table || self.show_file_info {
             [Constraint::Percentage(50), Constraint::Percentage(50)]
@@ -797,43 +603,85 @@ impl App {
             .constraints(main_sub_area_inner_constrains)
             .split(main_sub_area[1]);
 
-        self.file_table.render(
-            buf,
-            main_sub_area_left[0],
-            matches!(self.focused_window, FocusedWindow::Files),
-            &self.file_index,
-        );
-
-        if self.show_marked_table {
-            self.marked_table
-                .render(buf, main_sub_area_left[1], false, &self.file_index);
-        }
-
-        if self.show_clones_table {
-            self.clone_table.render(
+        if self.is_done() {
+            self.file_table.render(
                 buf,
-                main_sub_area_right[0],
-                matches!(self.focused_window, FocusedWindow::Clones),
+                main_sub_area_left[0],
+                matches!(self.focused_window, FocusedWindow::Files),
                 &self.file_index,
             );
-        }
 
-        if self.show_file_info {
-            let area = if self.show_clones_table { 1 } else { 0 };
-            self.render_file_info(buf, main_sub_area_right[area]);
+            if self.show_marked_table {
+                self.marked_table
+                    .render(buf, main_sub_area_left[1], false, &self.file_index);
+            }
+
+            if self.show_clones_table {
+                self.clone_table.render(
+                    buf,
+                    main_sub_area_right[0],
+                    matches!(self.focused_window, FocusedWindow::Clones),
+                    &self.file_index,
+                );
+            }
+
+            if self.show_file_info {
+                let area = if self.show_clones_table { 1 } else { 0 };
+                self.render_file_info(buf, main_sub_area_right[area]);
+            }
+        } else {
         }
 
         self.render_summary(buf, rects[2]);
         self.render_footer(buf, rects[3]);
-
-        // Paragraph::new(files_text)
-        //     .block(Block::new().borders(Borders::all()))
-        //     .render(main_sub_area[0], buf);
-
-        // Paragraph::new(duplicates_text)
-        //     .block(Block::new().borders(Borders::all()))
-        //     .render(main_sub_area[1], buf);
     }
+
+    fn handle_state(&mut self, state: State) {
+        self.current_state = state;
+
+        if self.current_state == State::Done {
+            self.update_tables();
+        }
+    }
+}
+
+async fn process_files(
+    file_index: Arc<RwLock<FileIndex>>,
+    tx: UnboundedSender<State>,
+) -> Result<()> {
+    // If the I/O or hashing is heavy, prefer spawn_blocking:
+    tokio::task::spawn_blocking(move || {
+        let mut fi = file_index.write().unwrap();
+
+        // Provide a callback to `process_files` that sends progress:
+        let progress_callback = Arc::new(move |done: usize, total: usize| {
+            // Because we’re in spawn_blocking, we can do .blocking_send:
+            let _ = tx.send(State::Processing { done, total });
+        });
+
+        fi.process_files(Some(progress_callback));
+    })
+    .await?;
+    Ok(())
+}
+
+async fn find_duplicates(
+    file_index: Arc<RwLock<FileIndex>>,
+    tx: UnboundedSender<State>,
+) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut fi = file_index.write().unwrap();
+
+        // Provide a callback to `process_files` that sends progress:
+        let progress_callback = Arc::new(move |done: usize, total: usize| {
+            // Because we’re in spawn_blocking, we can do .blocking_send:
+            let _ = tx.send(State::Comparing { done, total });
+        });
+
+        fi.find_duplicates(Some(progress_callback));
+    })
+    .await?;
+    Ok(())
 }
 
 /// Make the path relative to the commont search parth
@@ -841,7 +689,7 @@ pub fn format_path(path: &PathBuf, target_paths: &HashSet<PathBuf>) -> String {
     let common_path = deckard::find_common_path(target_paths);
 
     let relative_path = if let Some(common_path) = &common_path {
-        let path = path.strip_prefix(&common_path).unwrap_or(path);
+        let path = path.strip_prefix(common_path).unwrap_or(path);
         path
     } else {
         path

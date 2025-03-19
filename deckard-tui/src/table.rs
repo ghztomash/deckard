@@ -1,5 +1,7 @@
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use crate::app::format_path;
 use color_eyre::eyre::Result;
@@ -53,7 +55,7 @@ impl FileTable {
             return;
         }
         self.table_state.select(Some(index));
-        self.selected_path = self.paths.get(index).map(|p| p.clone());
+        self.selected_path = self.paths.get(index).cloned();
         self.scroll_state = self.scroll_state.position(index);
     }
 
@@ -104,7 +106,13 @@ impl FileTable {
         self.selected_path.clone()
     }
 
-    pub fn render(&mut self, buf: &mut Buffer, area: Rect, focused: bool, file_index: &FileIndex) {
+    pub fn render(
+        &mut self,
+        buf: &mut Buffer,
+        area: Rect,
+        focused: bool,
+        file_index: &Arc<RwLock<FileIndex>>,
+    ) {
         let header_style = Style::default().dark_gray();
         let selected_style = Style::default().add_modifier(Modifier::REVERSED);
         let footer_style = Style::default().dark_gray();
@@ -118,45 +126,59 @@ impl FileTable {
             .style(header_style);
 
         let count = self.paths.len();
-        let total_size = humansize::format_size(
-            self.paths
-                .iter()
-                .map(|p| file_index.file_size(p).unwrap_or_default())
-                .sum::<u64>(),
-            humansize::DECIMAL,
-        );
 
-        let rows = &self.paths.clone().into_iter().map(|p| {
-            let path = format_path(&p, &file_index.dirs);
-            let size = humansize::format_size(
-                file_index.file_size(&p).unwrap_or_default(),
-                humansize::DECIMAL,
-            );
-            let date = file_index.files[&p].modified.format("%d/%m/%Y %H:%M");
+        // Lock the FileIndex only once, then copy out the data we need:
+        let (dirs, meta_for_paths, total_size_raw) = {
+            let fi = file_index.read().unwrap();
+
+            // Copy out the set of directories:
+            let dirs = fi.dirs.clone();
+
+            // Pre-calculate file metadata for each path we display,
+            // including size & date. Also track a sum to show total size.
+            let mut total_size_acc = 0u64;
+            let mut meta_vec = Vec::with_capacity(count);
+            for path in &self.paths {
+                let size = fi.file_size(path).unwrap_or_default();
+                let date = fi.files[path].modified; // or created if you prefer
+                total_size_acc += size;
+
+                meta_vec.push((path.clone(), size, date));
+            }
+
+            (dirs, meta_vec, total_size_acc)
+            // RwLock is dropped here once this block ends
+        };
+
+        let total_size = humansize::format_size(total_size_raw, humansize::DECIMAL);
+
+        let rows = meta_for_paths.into_iter().map(|(p, size, date)| {
+            let path = format_path(&p, &dirs);
+            let size = humansize::format_size(size, humansize::DECIMAL);
+            let date = date.format("%d/%m/%Y %H:%M");
 
             let cells = vec![
-                Cell::from(Text::from(format!("{path}"))),
+                Cell::from(Text::from(path)),
                 Cell::from(Text::from(format!("{date}"))),
-                Cell::from(Text::from(format!("{size}"))),
-                Cell::from(Text::from(format!(" "))),
+                Cell::from(Text::from(size)),
+                Cell::from(Text::from(" ")),
             ];
             cells.into_iter().collect::<Row>().style(Style::new())
         });
-        let block;
-        if focused {
-            block = Block::bordered()
+        let block = if focused {
+            Block::bordered()
                 // .title(" Clones ")
                 .border_type(BorderType::Thick)
-                .border_style(Style::new().green());
+                .border_style(Style::new().green())
         } else {
-            block = Block::bordered()
+            Block::bordered()
                 .border_type(BorderType::Plain)
-                .border_style(Style::new().dark_gray());
+                .border_style(Style::new().dark_gray())
         };
 
         let footer = Row::new(vec![
             Cell::from(Text::from(format!("Files: {count}"))),
-            Cell::from(Text::from(format!(""))),
+            Cell::from(Text::from("")),
             Cell::from(Text::from(format!("Total: {total_size}"))),
         ])
         .style(footer_style);

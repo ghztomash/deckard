@@ -5,7 +5,8 @@ mod cli;
 mod table;
 mod tui;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     color_eyre::install()?;
     env_logger::init();
 
@@ -21,7 +22,7 @@ fn main() -> Result<()> {
 
     let target_paths = deckard::collect_paths(target_dirs);
 
-    let app_result = app::App::new(target_paths, config).run(&mut terminal);
+    let app_result = app::App::new(target_paths, config).run(&mut terminal).await;
 
     tui::restore()?;
     terminal.clear()?;
