@@ -4,11 +4,10 @@ mod hasher;
 pub mod index;
 
 use config::SearchConfig;
-use file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::{env, fs, path::Path, path::PathBuf};
 
-use log::{debug, warn};
+use log::debug;
 
 use index::FileIndex;
 
@@ -17,7 +16,7 @@ pub fn find_duplicates(
     config: SearchConfig,
 ) -> HashMap<PathBuf, HashSet<PathBuf>> {
     let mut file_index = FileIndex::new(dirs, config);
-    file_index.index_dirs();
+    file_index.index_dirs(None);
     file_index.process_files(None);
     file_index.find_duplicates(None);
     file_index.duplicates
@@ -55,20 +54,12 @@ pub fn find_common_path(target_paths: &HashSet<PathBuf>) -> Option<PathBuf> {
 
 pub fn to_relative_path(path: &PathBuf) -> PathBuf {
     let current_dir = env::current_dir().expect("failed getting current directory");
-    let relative_path =
-        pathdiff::diff_paths(path, current_dir).expect("failed getting relative path");
-    relative_path
+    pathdiff::diff_paths(path, current_dir).expect("failed getting relative path")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn it_works() {
-        // visit_dir(Path::new("."));
-        assert!(true);
-    }
 
     #[test]
     fn collect_common_path() {}

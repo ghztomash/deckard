@@ -17,11 +17,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Styled, Stylize},
     symbols::border,
-    text::{Line, Text},
+    text::{Line, Span, Text},
     widgets::{
         block::{title, Position, Title},
-        Block, BorderType, Borders, Cell, HighlightSpacing, Paragraph, Row, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, TableState, Widget,
+        Block, BorderType, Borders, Cell, Gauge, HighlightSpacing, Padding, Paragraph, Row,
+        Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, TableState, Widget,
+        Wrap,
     },
     Frame,
 };
@@ -69,7 +70,9 @@ pub struct App {
 pub enum State {
     #[default]
     Idle,
-    Indexing,
+    Indexing {
+        done: usize,
+    },
     Processing {
         done: usize,
         total: usize,
@@ -96,9 +99,9 @@ impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let result = match self {
             Self::Idle => "Idle",
-            Self::Indexing => "Indexing",
-            Self::Processing { done, total } => &format!("Processing {} / {}", done, total),
-            Self::Comparing { done, total } => &format!("Comparing {} / {}", done, total),
+            Self::Indexing { done } => &format!("Indexing {}", done),
+            Self::Processing { done, total } => &format!("Processing {}/{}", done, total),
+            Self::Comparing { done, total } => &format!("Comparing {}/{}", done, total),
             Self::Done => "Done",
             Self::Error(e) => &format!("Error: {}", e),
         };
@@ -127,17 +130,17 @@ impl App {
 
     /// runs the application's main loop until the user quits
     pub async fn run(&mut self, terminal: &mut crate::tui::Tui) -> Result<()> {
-        self.handle_state(State::Indexing);
-        self.file_index.write().unwrap().index_dirs();
-
         let period = Duration::from_secs_f32(1.0 / Self::FRAMES_PER_SECOND);
         let mut interval = tokio::time::interval(period);
         let mut events = EventStream::new();
 
-        // TODO: Handle quitting
+        // TODO: Handle graceful shutdown
         let (tx, mut rx) = unbounded_channel::<State>();
         let file_index = self.file_index.clone();
         tokio::spawn(async move {
+            if let Err(e) = index_files(file_index.clone(), tx.clone()).await {
+                let _ = tx.send(State::Error(format!("index_files error: {e}")));
+            }
             if let Err(e) = process_files(file_index.clone(), tx.clone()).await {
                 let _ = tx.send(State::Error(format!("process_files error: {e}")));
             }
@@ -471,60 +474,87 @@ impl App {
         summary.render(area, buf)
     }
 
+    fn render_progress_bar(&self, buf: &mut Buffer, area: Rect) {
+        // take up a third of the screen vertically and half horizontally
+        let popup_area = Rect {
+            x: area.width / 4,
+            y: area.height / 3,
+            width: area.width / 2,
+            height: area.height / 6,
+        };
+
+        let title = Line::from(" Working ").centered();
+        let label = Span::styled(format!("{} files", self.current_state), Style::new().bold());
+
+        let ratio = match self.current_state {
+            State::Processing { done, total } | State::Comparing { done, total } => {
+                done as f64 / total as f64
+            }
+            _ => 0.0,
+        };
+
+        let title_block = Block::new()
+            .title(title)
+            .title_style(Style::new().bold().white())
+            .title_bottom(
+                Line::from(vec![" Quit ".into(), "<q/esc> ".blue().bold()]).right_aligned(),
+            )
+            .borders(Borders::ALL)
+            .border_type(BorderType::Thick)
+            .border_style(Color::Green);
+
+        let gauge = Gauge::default()
+            .block(title_block)
+            .ratio(ratio)
+            .label(label);
+
+        gauge.render(popup_area, buf);
+    }
+
     fn render_summary(&self, buf: &mut Buffer, area: Rect) {
-        let summary_text = if self.is_done() {
-            // Acquire the lock to pull needed data, then drop it.
-            let (dirs, total, files_len) = {
-                let file_index = self.file_index.read().unwrap();
+        // Acquire the lock to pull needed data, then drop it.
+        let (dirs, total, files_len) = {
+            let file_index = self.file_index.read().unwrap();
 
-                // Copy out what you need into local variables.
-                let dirs: Vec<PathBuf> = file_index.dirs.clone().into_iter().collect();
-                let total: u64 = file_index.files.values().map(|f| f.size).sum();
-                let files_len = file_index.files_len();
-                (dirs, total, files_len)
-            };
+            // Copy out what you need into local variables.
+            let dirs: Vec<PathBuf> = file_index.dirs.clone().into_iter().collect();
+            let total: u64 = file_index.files.values().map(|f| f.size).sum();
+            let files_len = file_index.files_len();
+            (dirs, total, files_len)
+        };
 
-            let dir_lines: Vec<String> = dirs
-                .iter()
-                .map(|d| {
-                    format!(
-                        "{}",
-                        deckard::to_relative_path(d)
-                            .to_string_lossy()
-                            .to_string()
-                            .yellow(),
-                    )
-                })
-                .collect();
+        let dir_lines: Vec<String> = dirs
+            .iter()
+            .map(|d| {
+                format!(
+                    "{}",
+                    deckard::to_relative_path(d)
+                        .to_string_lossy()
+                        .to_string()
+                        .yellow(),
+                )
+            })
+            .collect();
 
-            let dir_joined = dir_lines.join(" ");
-            let total_size = humansize::format_size(total, humansize::DECIMAL);
+        let dir_joined = dir_lines.join(" ");
+        let total_size = humansize::format_size(total, humansize::DECIMAL);
 
-            let duplicate_lines = vec![
-                Line::from(vec![
-                    "Clones: ".into(),
-                    files_len.to_string().magenta(),
-                    " Total: ".into(),
-                    total_size.blue(),
-                ]),
-                Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
-                Line::from(vec![
-                    "State: ".into(),
-                    format!("{}", self.current_state)
-                        .set_style(Style::default().fg(self.current_state.get_color())),
-                ]),
-            ];
-
-            Text::from(duplicate_lines)
-        } else {
-            let summary_lines = vec![Line::from(vec![
+        let duplicate_lines = vec![
+            Line::from(vec![
+                "Clones: ".into(),
+                files_len.to_string().magenta(),
+                " Total: ".into(),
+                total_size.blue(),
+            ]),
+            Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
+            Line::from(vec![
                 "State: ".into(),
                 format!("{}", self.current_state)
                     .set_style(Style::default().fg(self.current_state.get_color())),
-            ])];
+            ]),
+        ];
 
-            Text::from(summary_lines)
-        };
+        let summary_text = Text::from(duplicate_lines);
 
         let summary = Paragraph::new(summary_text).style(Style::new()).block(
             Block::bordered()
@@ -629,11 +659,12 @@ impl App {
                 let area = if self.show_clones_table { 1 } else { 0 };
                 self.render_file_info(buf, main_sub_area_right[area]);
             }
-        } else {
-        }
 
-        self.render_summary(buf, rects[2]);
-        self.render_footer(buf, rects[3]);
+            self.render_summary(buf, rects[2]);
+            self.render_footer(buf, rects[3]);
+        } else {
+            self.render_progress_bar(buf, area);
+        }
     }
 
     fn handle_state(&mut self, state: State) {
@@ -643,6 +674,21 @@ impl App {
             self.update_tables();
         }
     }
+}
+
+async fn index_files(file_index: Arc<RwLock<FileIndex>>, tx: UnboundedSender<State>) -> Result<()> {
+    // If the I/O or hashing is heavy, prefer spawn_blocking:
+    tokio::task::spawn_blocking(move || {
+        let mut fi = file_index.write().unwrap();
+
+        let progress_callback = Arc::new(move |done: usize| {
+            let _ = tx.send(State::Indexing { done });
+        });
+
+        fi.index_dirs(Some(progress_callback));
+    })
+    .await?;
+    Ok(())
 }
 
 async fn process_files(
@@ -672,9 +718,7 @@ async fn find_duplicates(
     tokio::task::spawn_blocking(move || {
         let mut fi = file_index.write().unwrap();
 
-        // Provide a callback to `process_files` that sends progress:
         let progress_callback = Arc::new(move |done: usize, total: usize| {
-            // Because we’re in spawn_blocking, we can do .blocking_send:
             let _ = tx.send(State::Comparing { done, total });
         });
 

@@ -46,7 +46,8 @@ impl FileIndex {
         }
     }
 
-    pub fn index_dirs(&mut self) {
+    pub fn index_dirs(&mut self, callback: Option<Arc<dyn Fn(usize) + Send + Sync>>) {
+        let counter = Arc::new(AtomicUsize::new(0));
         for dir in &self.dirs {
             let index: HashMap<PathBuf, FileEntry> = jwalk::WalkDir::new(dir)
                 .parallelism(Parallelism::RayonNewPool(self.config.threads))
@@ -110,6 +111,11 @@ impl FileIndex {
                                             entry.path().to_string_lossy()
                                         );
                                         return None;
+                                    }
+                                    // Update the progress counter
+                                    if let Some(ref callback) = callback {
+                                        let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                                        callback(count);
                                     }
                                     return Some((path, file));
                                 }
