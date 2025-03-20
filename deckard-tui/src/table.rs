@@ -44,10 +44,14 @@ impl FileTable {
         }
     }
 
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.paths.clone()
+    }
+
     pub fn update_table(&mut self, paths: &Vec<PathBuf>) {
         self.paths = paths.clone();
         self.table_len = self.paths.len();
-        self.scroll_state = ScrollbarState::new(self.table_len - 1);
+        self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
     }
 
     pub fn select_entry(&mut self, index: usize) {

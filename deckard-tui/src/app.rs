@@ -209,6 +209,7 @@ impl App {
             KeyCode::Char('m') => self.toggle_show_marked_table(),
             KeyCode::Char('l') | KeyCode::Right => self.focus_clones_table(),
             KeyCode::Char('h') | KeyCode::Left => self.focus_files_table(),
+            KeyCode::Char('M') => self.clear_marked(),
             _ => {}
         }
         Ok(())
@@ -226,10 +227,25 @@ impl App {
         }
     }
 
-    fn mark_all(&mut self) {}
+    fn mark_all(&mut self) {
+        let active_table = match self.focused_window {
+            FocusedWindow::Files => &self.file_table,
+            FocusedWindow::Clones => &self.clone_table,
+            FocusedWindow::Marked => &self.marked_table,
+            _ => return,
+        };
+        let active_paths = active_table.paths();
+        for p in active_paths {
+            self.marked_files.insert(p);
+            let v = self.marked_files.clone().into_iter().collect();
+            self.marked_table.update_table(&v);
+        }
+    }
 
-    fn clear_mark(&mut self) {
+    fn clear_marked(&mut self) {
         self.marked_files = HashSet::new();
+        let v = self.marked_files.clone().into_iter().collect();
+        self.marked_table.update_table(&v);
     }
 
     fn active_selected_file(&self) -> Option<PathBuf> {
