@@ -30,7 +30,7 @@ fn main() -> Result<()> {
 
     let now = Instant::now();
     let mut file_index = FileIndex::new(target_paths, config);
-    file_index.index_dirs();
+    file_index.index_dirs(None);
     let elapsed = now.elapsed();
     info!(
         "Indexed {} files in {}",
@@ -41,7 +41,7 @@ fn main() -> Result<()> {
     let now = Instant::now();
     file_index.process_files(None);
     // file_index.process_files(Some(Arc::new(|count, total| {
-    //     info!("processing file {} / {}", count, total);
+    //     info!("processing file {}/{}", count, total);
     // })));
     let elapsed = now.elapsed();
     info!(
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
     let now = Instant::now();
     file_index.find_duplicates(None);
     // file_index.find_duplicates(Some(Arc::new(|count, total| {
-    //     info!("comparing file {} / {}", count, total);
+    //     info!("comparing file {}/{}", count, total);
     // })));
     let elapsed = now.elapsed();
     info!(
