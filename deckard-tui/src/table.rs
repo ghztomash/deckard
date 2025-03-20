@@ -6,6 +6,7 @@ use std::sync::RwLock;
 use crate::app::format_path;
 use color_eyre::eyre::Result;
 use deckard::index::FileIndex;
+use ratatui::style::Color;
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
@@ -118,7 +119,11 @@ impl FileTable {
         file_index: &Arc<RwLock<FileIndex>>,
     ) {
         let header_style = Style::default().dark_gray();
-        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+        let selected_style = if focused {
+            Style::default().fg(Color::Black).bg(Color::White)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::DarkGray)
+        };
         let footer_style = Style::default().dark_gray();
 
         let header = self

@@ -110,7 +110,7 @@ impl fmt::Display for State {
 }
 
 impl App {
-    const FRAMES_PER_SECOND: f32 = 30.0;
+    const FRAMES_PER_SECOND: f32 = 60.0;
 
     pub fn new(target_paths: HashSet<PathBuf>, config: SearchConfig) -> Self {
         Self {
