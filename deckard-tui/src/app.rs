@@ -196,8 +196,8 @@ impl App {
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
         match key_event.code {
             KeyCode::Char('q') | KeyCode::Esc => self.exit(),
-            KeyCode::Char('j') | KeyCode::Down => self.next(),
-            KeyCode::Char('k') | KeyCode::Up => self.previous(),
+            KeyCode::Char('j') | KeyCode::Down => self.next_file(),
+            KeyCode::Char('k') | KeyCode::Up => self.previous_file(),
             KeyCode::Char('i') => self.toggle_info(),
             KeyCode::Char('o') => self.open_file(),
             KeyCode::Char('p') => self.open_path(),
@@ -207,9 +207,9 @@ impl App {
             KeyCode::Char(' ') => self.mark(),
             KeyCode::Char('a') => self.mark_all(),
             KeyCode::Char('m') => self.toggle_show_marked_table(),
-            KeyCode::Char('l') | KeyCode::Right => self.focus_clones_table(),
-            KeyCode::Char('h') | KeyCode::Left => self.focus_files_table(),
             KeyCode::Char('M') => self.clear_marked(),
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
+            KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.focus_previus_table(),
             _ => {}
         }
         Ok(())
@@ -249,11 +249,13 @@ impl App {
     }
 
     fn active_selected_file(&self) -> Option<PathBuf> {
-        if matches!(self.focused_window, FocusedWindow::Clones) {
-            self.clone_table.selected_path()
-        } else {
-            self.file_table.selected_path()
-        }
+        let active_table = match self.focused_window {
+            FocusedWindow::Files => &self.file_table,
+            FocusedWindow::Clones => &self.clone_table,
+            FocusedWindow::Marked => &self.marked_table,
+            _ => return None,
+        };
+        active_table.selected_path()
     }
 
     fn open_file(&mut self) {
@@ -273,6 +275,61 @@ impl App {
     fn delete(&mut self) {}
     fn trash(&mut self) {}
 
+    fn focus_next_table(&mut self) {
+        match self.focused_window {
+            FocusedWindow::Files => {
+                if self.show_clones_table {
+                    self.focus_clones_table();
+                } else {
+                    self.focus_marked_table();
+                }
+            }
+            FocusedWindow::Clones => {
+                if self.show_marked_table {
+                    self.focus_marked_table();
+                } else {
+                    self.focus_files_table();
+                }
+            }
+            FocusedWindow::Marked => {
+                self.focus_files_table();
+                self.marked_table.select_none();
+            }
+            _ => {}
+        }
+    }
+
+    fn focus_previus_table(&mut self) {
+        match self.focused_window {
+            FocusedWindow::Files => {
+                if self.show_marked_table {
+                    self.focus_marked_table();
+                } else {
+                    self.focus_clones_table();
+                }
+            }
+            FocusedWindow::Clones => self.focus_files_table(),
+            FocusedWindow::Marked => {
+                if self.show_clones_table {
+                    self.focus_clones_table();
+                } else {
+                    self.focus_files_table();
+                }
+                self.marked_table.select_none();
+            }
+            _ => {}
+        }
+    }
+
+    fn focus_marked_table(&mut self) {
+        if self.show_marked_table {
+            self.focused_window = FocusedWindow::Marked;
+            if self.marked_table.selected_path().is_none() {
+                self.marked_table.select_first();
+            }
+        }
+    }
+
     fn focus_files_table(&mut self) {
         self.focused_window = FocusedWindow::Files;
     }
@@ -280,36 +337,59 @@ impl App {
     fn focus_clones_table(&mut self) {
         if self.show_clones_table {
             self.focused_window = FocusedWindow::Clones;
+            if self.clone_table.selected_path().is_none() {
+                self.clone_table.select_first();
+            }
         }
     }
 
     fn toggle_show_clones_table(&mut self) {
         self.show_clones_table = !self.show_clones_table;
+        if !self.show_clones_table && matches!(self.focused_window, FocusedWindow::Clones) {
+            self.focus_files_table();
+        }
     }
 
     fn toggle_show_marked_table(&mut self) {
         self.show_marked_table = !self.show_marked_table;
+        if !self.show_marked_table && matches!(self.focused_window, FocusedWindow::Marked) {
+            self.focus_files_table();
+        }
     }
 
     fn toggle_info(&mut self) {
         self.show_file_info = !self.show_file_info;
     }
 
-    pub fn next(&mut self) {
-        if matches!(self.focused_window, FocusedWindow::Clones) {
-            self.clone_table.select_next();
-        } else {
-            self.file_table.select_next();
-            self.update_clone_table();
+    pub fn next_file(&mut self) {
+        match self.focused_window {
+            FocusedWindow::Files => {
+                self.file_table.select_next();
+                self.update_clone_table();
+            }
+            FocusedWindow::Clones => {
+                self.clone_table.select_next();
+            }
+            FocusedWindow::Marked => {
+                self.marked_table.select_next();
+            }
+            _ => {}
         }
     }
 
-    pub fn previous(&mut self) {
-        if matches!(self.focused_window, FocusedWindow::Clones) {
-            self.clone_table.select_previous();
-        } else {
-            self.file_table.select_previous();
-            self.update_clone_table();
+    pub fn previous_file(&mut self) {
+        match self.focused_window {
+            FocusedWindow::Files => {
+                self.file_table.select_previous();
+                self.update_clone_table();
+            }
+            FocusedWindow::Clones => {
+                self.clone_table.select_previous();
+            }
+            FocusedWindow::Marked => {
+                self.marked_table.select_previous();
+            }
+            _ => {}
         }
     }
 
@@ -344,7 +424,7 @@ impl App {
             {
                 let paths = clone_paths.iter().cloned().collect();
                 self.clone_table.update_table(&paths);
-                self.clone_table.select_first();
+                self.clone_table.select_none();
             }
         }
     }
@@ -658,8 +738,12 @@ impl App {
             );
 
             if self.show_marked_table {
-                self.marked_table
-                    .render(buf, main_sub_area_left[1], false, &self.file_index);
+                self.marked_table.render(
+                    buf,
+                    main_sub_area_left[1],
+                    matches!(self.focused_window, FocusedWindow::Marked),
+                    &self.file_index,
+                );
             }
 
             if self.show_clones_table {
