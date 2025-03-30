@@ -11,7 +11,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     black_box(collect_paths(vec!["../test_files/"])),
                     SearchConfig::default(),
                 )
-                .index_dirs(),
+                .index_dirs(None, None),
             )
         })
     });
@@ -23,7 +23,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     black_box(collect_paths(vec!["../does_not_exist/"])),
                     SearchConfig::default(),
                 )
-                .index_dirs(),
+                .index_dirs(None, None),
             )
         })
     });

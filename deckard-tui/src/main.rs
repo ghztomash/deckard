@@ -26,5 +26,12 @@ async fn main() -> Result<()> {
 
     tui::restore()?;
     terminal.clear()?;
+
+    if let Err(_e) = &app_result {
+        // eprintln!("Error: {:?}", e);
+        // kills the process without waiting for all of the threads to finish
+        std::process::exit(1);
+    }
+
     app_result
 }

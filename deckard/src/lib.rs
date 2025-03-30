@@ -4,10 +4,9 @@ mod hasher;
 pub mod index;
 
 use config::SearchConfig;
+use log::debug;
 use std::collections::{HashMap, HashSet};
 use std::{env, fs, path::Path, path::PathBuf};
-
-use log::debug;
 
 use index::FileIndex;
 
@@ -16,9 +15,9 @@ pub fn find_duplicates(
     config: SearchConfig,
 ) -> HashMap<PathBuf, HashSet<PathBuf>> {
     let mut file_index = FileIndex::new(dirs, config);
-    file_index.index_dirs(None);
-    file_index.process_files(None);
-    file_index.find_duplicates(None);
+    file_index.index_dirs(None, None);
+    file_index.process_files(None, None);
+    file_index.find_duplicates(None, None);
     file_index.duplicates
 }
 

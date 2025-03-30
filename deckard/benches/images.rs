@@ -20,8 +20,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     black_box(collect_paths(vec!["../test_files/images"])),
                     config,
                 ));
-                black_box(index.index_dirs());
-                index.process_files(None);
+                black_box(index.index_dirs(None, None));
+                index.process_files(None, None);
             })
         });
     }
@@ -46,8 +46,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     black_box(collect_paths(vec!["../test_files/images"])),
                     config,
                 ));
-                black_box(index.index_dirs());
-                index.process_files(None);
+                black_box(index.index_dirs(None, None));
+                index.process_files(None, None);
             })
         });
     }
@@ -74,8 +74,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                         black_box(collect_paths(vec!["../test_files/images"])),
                         config,
                     ));
-                    black_box(index.index_dirs());
-                    index.process_files(None);
+                    black_box(index.index_dirs(None, None));
+                    index.process_files(None, None);
                 })
             },
         );

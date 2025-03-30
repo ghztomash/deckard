@@ -347,6 +347,7 @@ pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> String {
         }
     }
 }
+
 #[inline]
 pub fn get_id3_tags<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Option<AudioTags> {
     let mut tags = AudioTags::default();

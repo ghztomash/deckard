@@ -5,7 +5,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
 use rayon::prelude::*;
 use rayon::ThreadPool;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::config::SearchConfig;
@@ -46,7 +46,11 @@ impl FileIndex {
         }
     }
 
-    pub fn index_dirs(&mut self, callback: Option<Arc<dyn Fn(usize) + Send + Sync>>) {
+    pub fn index_dirs(
+        &mut self,
+        callback: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        cancel: Option<Arc<AtomicBool>>,
+    ) {
         let counter = Arc::new(AtomicUsize::new(0));
         for dir in &self.dirs {
             let index: HashMap<PathBuf, FileEntry> = jwalk::WalkDir::new(dir)
@@ -55,6 +59,12 @@ impl FileIndex {
                 .skip_hidden(self.config.skip_hidden)
                 .into_iter()
                 .filter_map(|entry| {
+                    if let Some(cancel) = cancel.clone() {
+                        if cancel.load(Ordering::Relaxed) {
+                            // TODO: this doesn't really short circuit the parallel iterator
+                            return None;
+                        }
+                    }
                     match entry {
                         Ok(entry) => {
                             let path = entry.path();
@@ -132,21 +142,37 @@ impl FileIndex {
         }
     }
 
-    pub fn process_files(&mut self, callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>) {
+    pub fn process_files(
+        &mut self,
+        callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+        cancel: Option<Arc<AtomicBool>>,
+    ) {
         let counter = Arc::new(AtomicUsize::new(0));
         let total = self.files_len();
 
-        self.files.values_mut().par_bridge().for_each(|f| {
+        let _ = self.files.values_mut().par_bridge().try_for_each(|f| {
+            if let Some(cancel) = cancel.clone() {
+                if cancel.load(Ordering::Relaxed) {
+                    // short circit the parallel iterator
+                    // TODO: this still doesn't cancel ongoing processing
+                    return Err(());
+                }
+            }
             f.process(&self.config);
             if let Some(ref callback) = callback {
                 let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
                 callback(count, total);
             }
+            Ok(())
         });
     }
 
-    pub fn find_duplicates(&mut self, callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>) {
-        let vec_files: Vec<&FileEntry> = self.files.values().into_iter().collect();
+    pub fn find_duplicates(
+        &mut self,
+        callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+        cancel: Option<Arc<AtomicBool>>,
+    ) {
+        let vec_files: Vec<&FileEntry> = self.files.values().collect();
 
         let counter = Arc::new(AtomicUsize::new(0));
         let total = vec_files.len() * (vec_files.len().saturating_sub(1)) / 2;
@@ -162,12 +188,18 @@ impl FileIndex {
             vec_files.len()
         };
         // Parallelize the outer loop using rayon
-        vec_files
+        let _ = vec_files
             .par_iter()
             .with_min_len(min_len)
             .enumerate()
-            .for_each(|(i, this_file)| {
+            .try_for_each(|(i, this_file)| {
                 for j in i + 1..vec_files.len() {
+                    if let Some(cancel) = cancel.clone() {
+                        if cancel.load(Ordering::Relaxed) {
+                            // short circit the parallel iterator
+                            return Err(());
+                        }
+                    }
                     let other_file = vec_files[j];
 
                     // Check if the files are matching
@@ -191,6 +223,7 @@ impl FileIndex {
                         callback(count, total);
                     }
                 }
+                Ok(())
             });
 
         // Collect the results from the DashMap back into the `self.duplicates` HashMap

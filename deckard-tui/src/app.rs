@@ -813,7 +813,7 @@ async fn index_files(
             let _ = tx.send(State::Indexing { done });
         });
 
-        fi.index_dirs(Some(progress_callback));
+        fi.index_dirs(Some(progress_callback), Some(cancel_flag));
     })
     .await?;
     Ok(())
@@ -833,7 +833,7 @@ async fn process_files(
             let _ = tx.send(State::Processing { done, total });
         });
 
-        fi.process_files(Some(progress_callback));
+        fi.process_files(Some(progress_callback), Some(cancel_flag));
     })
     .await?;
     Ok(())
@@ -851,7 +851,7 @@ async fn find_duplicates(
             let _ = tx.send(State::Comparing { done, total });
         });
 
-        fi.find_duplicates(Some(progress_callback));
+        fi.find_duplicates(Some(progress_callback), Some(cancel_flag));
     })
     .await?;
     Ok(())
