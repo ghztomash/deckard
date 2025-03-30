@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "cargo"] }
-colored = "2"
+colored = "3.0"
 log = "0.4"
 env_logger = "0.11"
-color-eyre = "0.6.3"
+color-eyre = "0.6"
 deckard = {path = "../deckard"}
