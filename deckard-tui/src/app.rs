@@ -117,9 +117,9 @@ impl App {
             focused_window: FocusedWindow::Files,
             exit: false,
             file_index: Arc::new(RwLock::new(FileIndex::new(target_paths, config))),
-            file_table: FileTable::new(vec!["File", "Date", "Size", " "]),
-            clone_table: FileTable::new(vec!["Clone", "Date", "Size", " "]),
-            marked_table: FileTable::new(vec!["Marked"]),
+            file_table: FileTable::new(vec!["File", "Date", "Size", " "], true),
+            clone_table: FileTable::new(vec!["Clone", "Date", "Size", " "], true),
+            marked_table: FileTable::new(vec!["Marked"], false),
             marked_files: HashSet::new(),
             show_marked_table: true,
             show_clones_table: true,
@@ -206,8 +206,8 @@ impl App {
             KeyCode::Char('c') => self.toggle_show_clones_table(),
             KeyCode::Char(' ') => self.mark(),
             KeyCode::Char('a') => self.mark_all(),
+            KeyCode::Char('A') => self.clear_marked(),
             KeyCode::Char('m') => self.toggle_show_marked_table(),
-            KeyCode::Char('M') => self.clear_marked(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.focus_previus_table(),
             _ => {}
@@ -735,6 +735,7 @@ impl App {
                 main_sub_area_left[0],
                 matches!(self.focused_window, FocusedWindow::Files),
                 &self.file_index,
+                &self.marked_files,
             );
 
             if self.show_marked_table {
@@ -743,6 +744,7 @@ impl App {
                     main_sub_area_left[1],
                     matches!(self.focused_window, FocusedWindow::Marked),
                     &self.file_index,
+                    &self.marked_files,
                 );
             }
 
@@ -752,6 +754,7 @@ impl App {
                     main_sub_area_right[0],
                     matches!(self.focused_window, FocusedWindow::Clones),
                     &self.file_index,
+                    &self.marked_files,
                 );
             }
 

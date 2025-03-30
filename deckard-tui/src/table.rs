@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,11 +31,12 @@ pub struct FileTable {
     selected_path: Option<PathBuf>,
     scroll_state: ScrollbarState,
     header: Vec<&'static str>,
+    mark_marked: bool,
     // callback function that populates rows
 }
 
 impl FileTable {
-    pub fn new(header: Vec<&'static str>) -> Self {
+    pub fn new(header: Vec<&'static str>, mark_marked: bool) -> Self {
         Self {
             table_state: TableState::new(),
             table_len: 0,
@@ -42,6 +44,7 @@ impl FileTable {
             selected_path: None,
             scroll_state: ScrollbarState::new(0),
             header,
+            mark_marked,
         }
     }
 
@@ -117,6 +120,7 @@ impl FileTable {
         area: Rect,
         focused: bool,
         file_index: &Arc<RwLock<FileIndex>>,
+        marked_files: &HashSet<PathBuf>,
     ) {
         let header_style = Style::default().dark_gray();
         let selected_style = if focused {
@@ -140,11 +144,9 @@ impl FileTable {
         let (dirs, meta_for_paths, total_size_raw) = {
             let fi = file_index.read().unwrap();
 
-            // Copy out the set of directories:
-            let dirs = fi.dirs.clone();
-
             // Pre-calculate file metadata for each path we display,
             // including size & date. Also track a sum to show total size.
+            let dirs = fi.dirs.clone();
             let mut total_size_acc = 0u64;
             let mut meta_vec = Vec::with_capacity(count);
             for path in &self.paths {
@@ -154,9 +156,7 @@ impl FileTable {
 
                 meta_vec.push((path.clone(), size, date));
             }
-
             (dirs, meta_vec, total_size_acc)
-            // RwLock is dropped here once this block ends
         };
 
         let total_size = humansize::format_size(total_size_raw, humansize::DECIMAL);
@@ -165,12 +165,17 @@ impl FileTable {
             let path = format_path(&p, &dirs);
             let size = humansize::format_size(size, humansize::DECIMAL);
             let date = date.format("%d/%m/%Y %H:%M");
+            let is_marked = marked_files.contains(&p);
 
             let cells = vec![
                 Cell::from(Text::from(path)),
                 Cell::from(Text::from(format!("{date}"))),
                 Cell::from(Text::from(size)),
-                Cell::from(Text::from(" ")),
+                Cell::from(Text::from(if self.mark_marked && is_marked {
+                    "*"
+                } else {
+                    " "
+                })),
             ];
             cells.into_iter().collect::<Row>().style(Style::new())
         });
