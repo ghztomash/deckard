@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+log.workspace = true
+
 chrono = "0.4"
 chksum = "0.4"
 base64 = "0.22"
@@ -11,7 +13,6 @@ infer = "0.19"
 tree_magic_mini = "3.1"
 tree_magic = "0.2"
 mime_guess = "2.0"
-log = "0.4"
 thiserror = "2.0"
 
 confy = "0.6"
@@ -31,8 +32,8 @@ dashmap = "6.1"
 lofty = "0.22"
 
 [dev-dependencies]
+env_logger.workspace = true
 criterion = "0.5"
-env_logger = "0.11"
 
 [[bench]]
 name = "process"

@@ -5,12 +5,13 @@ edition = "2021"
 
 [dependencies]
 deckard = { path = "../deckard" }
-clap = { version = "4", features = ["derive", "cargo"] }
-log = "0.4"
-env_logger = "0.11"
+color-eyre.workspace = true
+clap.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
 crossterm = { version = "0.28", features = ["event-stream"] }
 ratatui = "0.29"
-color-eyre = "0.6"
 trash = "5.2"
 open = "5.3"
 humansize = "2.1"
