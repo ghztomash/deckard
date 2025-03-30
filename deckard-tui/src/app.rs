@@ -3,6 +3,7 @@ use std::{
     env, fmt,
     hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -27,7 +28,10 @@ use ratatui::{
     Frame,
 };
 
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::{
+    sync::mpsc::{unbounded_channel, UnboundedSender},
+    task::AbortHandle,
+};
 
 use deckard::index::FileIndex;
 
@@ -54,7 +58,7 @@ enum Sorting {
 #[derive(Debug, Default)]
 pub struct App {
     focused_window: FocusedWindow,
-    exit: bool,
+    should_exit: bool,
     file_index: Arc<RwLock<FileIndex>>,
     file_table: FileTable,
     clone_table: FileTable,
@@ -64,6 +68,8 @@ pub struct App {
     show_marked_table: bool,
     show_file_info: bool,
     current_state: State,
+    cancel_flag: Arc<AtomicBool>,
+    abort_handle: Option<AbortHandle>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -115,7 +121,7 @@ impl App {
     pub fn new(target_paths: HashSet<PathBuf>, config: SearchConfig) -> Self {
         Self {
             focused_window: FocusedWindow::Files,
-            exit: false,
+            should_exit: false,
             file_index: Arc::new(RwLock::new(FileIndex::new(target_paths, config))),
             file_table: FileTable::new(vec!["File", "Date", "Size", " "], true),
             clone_table: FileTable::new(vec!["Clone", "Date", "Size", " "], true),
@@ -125,6 +131,8 @@ impl App {
             show_clones_table: true,
             show_file_info: true,
             current_state: State::Idle,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            abort_handle: None,
         }
     }
 
@@ -137,20 +145,28 @@ impl App {
         // TODO: Handle graceful shutdown
         let (tx, mut rx) = unbounded_channel::<State>();
         let file_index = self.file_index.clone();
-        tokio::spawn(async move {
-            if let Err(e) = index_files(file_index.clone(), tx.clone()).await {
+        let task_cancel_flag = self.cancel_flag.clone();
+        let task_handle = tokio::spawn(async move {
+            if let Err(e) =
+                index_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
+            {
                 let _ = tx.send(State::Error(format!("index_files error: {e}")));
             }
-            if let Err(e) = process_files(file_index.clone(), tx.clone()).await {
+            if let Err(e) =
+                process_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
+            {
                 let _ = tx.send(State::Error(format!("process_files error: {e}")));
             }
-            if let Err(e) = find_duplicates(file_index.clone(), tx.clone()).await {
+            if let Err(e) =
+                find_duplicates(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
+            {
                 let _ = tx.send(State::Error(format!("find_duplicates error: {e}")));
             }
             let _ = tx.send(State::Done);
         });
+        self.abort_handle = Some(task_handle.abort_handle());
 
-        while !self.exit {
+        while !self.should_exit {
             tokio::select! {
                 _ = interval.tick() => {
                     terminal.draw(|frame| self.render_ui(frame.area(), frame.buffer_mut()))?;
@@ -162,6 +178,7 @@ impl App {
                 else => break,
             }
         }
+        task_handle.await?;
         Ok(())
     }
 
@@ -216,7 +233,11 @@ impl App {
     }
 
     fn exit(&mut self) {
-        self.exit = true;
+        self.cancel_flag.store(true, Ordering::Relaxed);
+        if let Some(abort_handle) = &self.abort_handle {
+            abort_handle.abort();
+        }
+        self.should_exit = true;
     }
 
     fn mark(&mut self) {
@@ -779,7 +800,11 @@ impl App {
     }
 }
 
-async fn index_files(file_index: Arc<RwLock<FileIndex>>, tx: UnboundedSender<State>) -> Result<()> {
+async fn index_files(
+    file_index: Arc<RwLock<FileIndex>>,
+    tx: UnboundedSender<State>,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<()> {
     // If the I/O or hashing is heavy, prefer spawn_blocking:
     tokio::task::spawn_blocking(move || {
         let mut fi = file_index.write().unwrap();
@@ -797,6 +822,7 @@ async fn index_files(file_index: Arc<RwLock<FileIndex>>, tx: UnboundedSender<Sta
 async fn process_files(
     file_index: Arc<RwLock<FileIndex>>,
     tx: UnboundedSender<State>,
+    cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
     // If the I/O or hashing is heavy, prefer spawn_blocking:
     tokio::task::spawn_blocking(move || {
@@ -804,7 +830,6 @@ async fn process_files(
 
         // Provide a callback to `process_files` that sends progress:
         let progress_callback = Arc::new(move |done: usize, total: usize| {
-            // Because we’re in spawn_blocking, we can do .blocking_send:
             let _ = tx.send(State::Processing { done, total });
         });
 
@@ -817,6 +842,7 @@ async fn process_files(
 async fn find_duplicates(
     file_index: Arc<RwLock<FileIndex>>,
     tx: UnboundedSender<State>,
+    cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
         let mut fi = file_index.write().unwrap();
