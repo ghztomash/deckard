@@ -250,21 +250,29 @@ impl FileIndex {
         self.files.get(file).map(|f| f.size)
     }
 
-    pub fn remove_from_index(&mut self, file: &PathBuf) -> bool {
     pub fn file_date_modified(&self, file: &PathBuf) -> Option<DateTime<Local>> {
         self.files.get(file).map(|f| f.modified)
     }
+
     pub fn file_date_created(&self, file: &PathBuf) -> Option<DateTime<Local>> {
         self.files.get(file).map(|f| f.created)
     }
+
+    pub fn remove_from_index(&mut self, file: &PathBuf) {
         // get the given file
-        if let Some(clones) = self.duplicates.get_mut(file) {
-            // remove all back links from the duplicate files
-            // TODO: implement
-            for _clone in clones.iter() {}
-            //remove current file
-            return true;
+        if let Some(clones) = self.duplicates.remove(file) {
+            // check the clones of the file
+            for clone in &clones {
+                if let Some(set) = self.duplicates.get_mut(clone) {
+                    // remove all the backlinks
+                    set.remove(file);
+                    if set.is_empty() {
+                        self.duplicates.remove(clone);
+                        self.files.remove(clone);
+                    }
+                }
+            }
+            self.files.remove(file);
         }
-        false
     }
 }

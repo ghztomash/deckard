@@ -48,6 +48,14 @@ impl FileTable {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.table_state = TableState::new();
+        self.table_len = 0;
+        self.paths = Vec::new();
+        self.selected_path = None;
+        self.scroll_state = ScrollbarState::new(0);
+    }
+
     pub fn paths(&self) -> Vec<PathBuf> {
         self.paths.clone()
     }
@@ -60,6 +68,7 @@ impl FileTable {
 
     pub fn select_entry(&mut self, index: usize) {
         if self.table_len == 0 {
+            self.select_none();
             return;
         }
         self.table_state.select(Some(index));
@@ -69,6 +78,7 @@ impl FileTable {
 
     pub fn select_next(&mut self) {
         if self.table_len == 0 {
+            self.select_none();
             return;
         }
         let i = match self.table_state.selected() {
@@ -86,6 +96,7 @@ impl FileTable {
 
     pub fn select_previous(&mut self) {
         if self.table_len == 0 {
+            self.select_none();
             return;
         }
         let i = match self.table_state.selected() {

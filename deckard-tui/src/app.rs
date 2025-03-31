@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    env, fmt,
+    env, fmt, fs,
     hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
@@ -186,16 +186,10 @@ impl App {
         self.current_state == State::Done
     }
 
-    fn duplicates_exist(&self) -> bool {
-        self.file_index.read().unwrap().duplicates_len() > 0
-    }
-
     fn update_tables(&mut self) {
         // update
-        if self.duplicates_exist() {
-            self.update_file_table();
-            self.update_clone_table();
-        }
+        self.update_file_table();
+        self.update_clone_table();
     }
 
     /// updates the application's state based on user input
@@ -264,6 +258,18 @@ impl App {
         self.marked_table.update_table(&v);
     }
 
+    fn remove_marked(&mut self, remove_callback: fn(&PathBuf)) {
+        {
+            let mut index = self.file_index.write().unwrap();
+            for file in &self.marked_files {
+                remove_callback(file);
+                index.remove_from_index(file);
+            }
+        }
+        self.clear_marked();
+        self.update_tables();
+    }
+
     fn active_selected_file(&self) -> Option<PathBuf> {
         let active_table = match self.focused_window {
             FocusedWindow::Files => &self.file_table,
@@ -288,8 +294,17 @@ impl App {
         }
     }
 
-    fn delete(&mut self) {}
-    fn trash(&mut self) {}
+    fn delete(&mut self) {
+        self.remove_marked(|f| {
+            fs::remove_file(f).unwrap();
+        });
+    }
+
+    fn trash(&mut self) {
+        self.remove_marked(|f| {
+            trash::delete(f).unwrap();
+        });
+    }
 
     fn focus_next_table(&mut self) {
         match self.focused_window {
@@ -425,8 +440,12 @@ impl App {
             b_size.cmp(&a_size)
         });
 
-        self.file_table.update_table(&paths);
-        self.file_table.select_first();
+        if !paths.is_empty() {
+            self.file_table.update_table(&paths);
+            self.file_table.select_first();
+        } else {
+            self.file_table.clear();
+        }
     }
 
     fn update_clone_table(&mut self) {
@@ -442,6 +461,9 @@ impl App {
                 self.clone_table.update_table(&paths);
                 self.clone_table.select_none();
             }
+        } else {
+            // Empty the table
+            self.clone_table.clear();
         }
     }
 
