@@ -219,7 +219,7 @@ impl App {
             KeyCode::Char('o') => self.open_file(),
             KeyCode::Char('p') => self.open_path(),
             KeyCode::Char('D') | KeyCode::Delete => self.delete(),
-            KeyCode::Char('t') | KeyCode::Backspace => self.trash(),
+            KeyCode::Char('T') | KeyCode::Backspace => self.trash(),
             KeyCode::Char('c') => self.toggle_show_clones_table(),
             KeyCode::Char(' ') => self.mark(),
             KeyCode::Char('a') => self.mark_all(),
@@ -242,7 +242,9 @@ impl App {
 
     fn mark(&mut self) {
         if let Some(path) = self.active_selected_file() {
-            self.marked_files.insert(path.clone());
+            if !self.marked_files.insert(path.clone()) {
+                self.marked_files.remove(&path);
+            }
             let v = self.marked_files.clone().into_iter().collect();
             self.marked_table.update_table(&v);
         }
@@ -798,7 +800,6 @@ async fn index_files(
     tx: UnboundedSender<State>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
-    // If the I/O or hashing is heavy, prefer spawn_blocking:
     tokio::task::spawn_blocking(move || {
         let mut fi = file_index.write().unwrap();
 
