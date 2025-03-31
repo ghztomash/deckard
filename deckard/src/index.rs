@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local};
 use dashmap::DashMap;
 use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
@@ -250,6 +251,12 @@ impl FileIndex {
     }
 
     pub fn remove_from_index(&mut self, file: &PathBuf) -> bool {
+    pub fn file_date_modified(&self, file: &PathBuf) -> Option<DateTime<Local>> {
+        self.files.get(file).map(|f| f.modified)
+    }
+    pub fn file_date_created(&self, file: &PathBuf) -> Option<DateTime<Local>> {
+        self.files.get(file).map(|f| f.created)
+    }
         // get the given file
         if let Some(clones) = self.duplicates.get_mut(file) {
             // remove all back links from the duplicate files

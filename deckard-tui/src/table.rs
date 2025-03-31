@@ -151,7 +151,7 @@ impl FileTable {
             let mut meta_vec = Vec::with_capacity(count);
             for path in &self.paths {
                 let size = fi.file_size(path).unwrap_or_default();
-                let date = fi.files[path].modified; // or created if you prefer
+                let date = fi.file_date_modified(path).unwrap_or_default(); // or created
                 total_size_acc += size;
 
                 meta_vec.push((path.clone(), size, date));
@@ -209,7 +209,7 @@ impl FileTable {
         )
         .header(header)
         .footer(footer)
-        .highlight_style(selected_style)
+        .row_highlight_style(selected_style)
         .block(block);
 
         StatefulWidget::render(table, area, buf, &mut self.table_state);
