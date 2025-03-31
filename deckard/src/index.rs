@@ -176,7 +176,7 @@ impl FileIndex {
         let vec_files: Vec<&FileEntry> = self.files.values().collect();
 
         let counter = Arc::new(AtomicUsize::new(0));
-        let total = vec_files.len() * (vec_files.len().saturating_sub(1)) / 2;
+        let total = vec_files.len();
 
         // Use DashMap for concurrent access to the duplicates map
         let duplicates = DashMap::new();
@@ -194,14 +194,13 @@ impl FileIndex {
             .with_min_len(min_len)
             .enumerate()
             .try_for_each(|(i, this_file)| {
-                for other_file in vec_files.iter().skip(i + 1) {
-                    if let Some(cancel) = cancel.as_ref() {
-                        if cancel.load(Ordering::Relaxed) {
-                            // short circit the parallel iterator
-                            return Err(());
-                        }
+                if let Some(cancel) = cancel.as_ref() {
+                    if cancel.load(Ordering::Relaxed) {
+                        // short circit the parallel iterator
+                        return Err(());
                     }
-
+                }
+                for other_file in vec_files.iter().skip(i + 1) {
                     // Check if the files are matching
                     if this_file.compare(other_file, &self.config) {
                         // Insert into the duplicates map
@@ -216,12 +215,11 @@ impl FileIndex {
                             .or_insert(HashSet::new())
                             .insert(this_file.path.clone());
                     }
-
-                    // Update the progress counter
-                    if let Some(ref callback) = callback {
-                        let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                        callback(count, total);
-                    }
+                }
+                // Update the progress counter
+                if let Some(ref callback) = callback {
+                    let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                    callback(count, total);
                 }
                 Ok(())
             });
