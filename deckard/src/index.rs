@@ -73,7 +73,7 @@ impl FileIndex {
                                 let file = FileEntry::new(
                                     path.to_owned(),
                                     entry.file_name.to_owned(),
-                                    entry.metadata().unwrap(),
+                                    entry.metadata().ok()?,
                                 );
                                 if file.file_type == EntryType::File {
                                     // Check filename filter
@@ -112,16 +112,19 @@ impl FileIndex {
                                             );
                                         }
                                     }
-                                    // Skip empty files
-                                    if self.config.skip_empty
-                                        && entry.metadata().unwrap().len() == 0
-                                    {
+
+                                    // Skip files that are smaller in size
+                                    let file_size = entry.metadata().ok()?.len();
+                                    if file_size < self.config.min_size {
                                         trace!(
-                                            "Skipping empty file {}",
-                                            entry.path().to_string_lossy()
+                                            "Skipping file {}, size {} smaller than {}",
+                                            entry.path().to_string_lossy(),
+                                            file_size,
+                                            self.config.min_size,
                                         );
                                         return None;
                                     }
+
                                     // Update the progress counter
                                     if let Some(ref callback) = callback {
                                         let count = counter.fetch_add(1, Ordering::SeqCst) + 1;

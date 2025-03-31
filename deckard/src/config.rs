@@ -119,11 +119,11 @@ impl Default for AudioConfig {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SearchConfig {
-    pub skip_empty: bool,
     pub skip_hidden: bool,
     pub threads: usize,
     pub include_filter: Option<String>,
     pub exclude_filter: Option<String>,
+    pub min_size: u64,
     pub hasher_config: HasherConfig,
     pub image_config: ImageConfig,
     pub audio_config: AudioConfig,
@@ -132,11 +132,11 @@ pub struct SearchConfig {
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            skip_empty: false,
             skip_hidden: false,
             threads: 0,
             include_filter: None,
             exclude_filter: None,
+            min_size: 0,
             hasher_config: HasherConfig::default(),
             image_config: ImageConfig::default(),
             audio_config: AudioConfig::default(),
@@ -173,7 +173,7 @@ impl SearchConfig {
             "save config path {:?}",
             confy::get_configuration_file_path("deckard", config_name).unwrap()
         );
-        confy::store("deckard", config_name, &self).unwrap();
+        confy::store("deckard", config_name, self).unwrap();
     }
 
     pub fn get_config_path(config_name: &str) -> PathBuf {

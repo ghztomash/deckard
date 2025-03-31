@@ -84,6 +84,13 @@ pub fn cli() -> Command {
                 .action(clap::ArgAction::SetTrue)
                 .help("Output in JSON format"),
         )
+        .arg(
+            Arg::new("min_size")
+                .short('m')
+                .long("min_size")
+                .value_parser(value_parser!(u64))
+                .help("Filter out files that smaller in size"),
+        )
 }
 
 pub fn get_config() -> SearchConfig {
@@ -106,14 +113,14 @@ pub fn get_config() -> SearchConfig {
         config.exclude_filter = exclude_filter
     }
 
-    let skip_hidden = args.get_flag("skip_hidden");
-    if skip_hidden {
-        config.skip_hidden = skip_hidden
+    if args.get_flag("skip_hidden") {
+        config.skip_hidden = true
     }
-
-    let skip_empty = args.get_flag("skip_empty");
-    if skip_empty {
-        config.skip_empty = skip_empty
+    if args.get_flag("skip_empty") {
+        config.min_size = 1;
+    }
+    if let Some(s) = args.get_one::<u64>("min_size") {
+        config.min_size = *s;
     }
 
     let check_image = args.get_flag("check_image");
