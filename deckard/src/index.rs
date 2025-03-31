@@ -58,7 +58,7 @@ impl FileIndex {
                 .skip_hidden(self.config.skip_hidden)
                 .into_iter()
                 .filter_map(|entry| {
-                    if let Some(cancel) = cancel.clone() {
+                    if let Some(cancel) = cancel.as_ref() {
                         if cancel.load(Ordering::Relaxed) {
                             // TODO: this doesn't really short circuit the parallel iterator
                             return None;
@@ -69,25 +69,25 @@ impl FileIndex {
                             let path = entry.path();
 
                             if path.is_file() && !path.is_symlink() {
+                                let metadata = entry.metadata().ok()?;
                                 let file = FileEntry::new(
                                     path.to_owned(),
                                     entry.file_name.to_owned(),
-                                    entry.metadata().ok()?,
+                                    metadata.to_owned(),
                                 );
                                 if file.file_type == EntryType::File {
                                     // Check filename filter
+                                    let file_name = entry.file_name().to_string_lossy();
                                     if let Some(exclude_filter) =
                                         self.config.exclude_filter.as_ref()
                                     {
-                                        if entry
-                                            .file_name()
-                                            .to_string_lossy()
+                                        if file_name
                                             .to_lowercase()
                                             .contains(&exclude_filter.to_lowercase())
                                         {
                                             trace!(
                                                 "File '{}' matches exclude filter pattern '{}'",
-                                                entry.file_name().to_string_lossy(),
+                                                file_name,
                                                 exclude_filter
                                             );
                                             return None;
@@ -96,9 +96,7 @@ impl FileIndex {
                                     if let Some(include_filter) =
                                         self.config.include_filter.as_ref()
                                     {
-                                        if !entry
-                                            .file_name()
-                                            .to_string_lossy()
+                                        if !file_name
                                             .to_lowercase()
                                             .contains(&include_filter.to_lowercase())
                                         {
@@ -106,18 +104,18 @@ impl FileIndex {
                                         } else {
                                             trace!(
                                                 "File '{}' matches include filter pattern '{}'",
-                                                entry.file_name().to_string_lossy(),
+                                                file_name,
                                                 include_filter
                                             );
                                         }
                                     }
 
                                     // Skip files that are smaller in size
-                                    let file_size = entry.metadata().ok()?.len();
+                                    let file_size = metadata.len();
                                     if file_size < self.config.min_size {
                                         trace!(
                                             "Skipping file {}, size {} smaller than {}",
-                                            entry.path().to_string_lossy(),
+                                            file_name,
                                             file_size,
                                             self.config.min_size,
                                         );
@@ -126,7 +124,7 @@ impl FileIndex {
 
                                     // Update the progress counter
                                     if let Some(ref callback) = callback {
-                                        let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                                        let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
                                         callback(count);
                                     }
                                     return Some((path, file));
@@ -153,7 +151,7 @@ impl FileIndex {
         let total = self.files_len();
 
         let _ = self.files.values_mut().par_bridge().try_for_each(|f| {
-            if let Some(cancel) = cancel.clone() {
+            if let Some(cancel) = cancel.as_ref() {
                 if cancel.load(Ordering::Relaxed) {
                     // short circit the parallel iterator
                     // TODO: this still doesn't cancel ongoing processing
@@ -162,7 +160,7 @@ impl FileIndex {
             }
             f.process(&self.config);
             if let Some(ref callback) = callback {
-                let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
                 callback(count, total);
             }
             Ok(())
@@ -196,7 +194,7 @@ impl FileIndex {
             .enumerate()
             .try_for_each(|(i, this_file)| {
                 for other_file in vec_files.iter().skip(i + 1) {
-                    if let Some(cancel) = cancel.clone() {
+                    if let Some(cancel) = cancel.as_ref() {
                         if cancel.load(Ordering::Relaxed) {
                             // short circit the parallel iterator
                             return Err(());
@@ -220,7 +218,7 @@ impl FileIndex {
 
                     // Update the progress counter
                     if let Some(ref callback) = callback {
-                        let count = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                        let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
                         callback(count, total);
                     }
                 }
