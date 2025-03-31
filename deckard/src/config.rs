@@ -129,6 +129,7 @@ pub struct SearchConfig {
     pub audio_config: AudioConfig,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
@@ -153,14 +154,11 @@ impl SearchConfig {
         match confy::load("deckard", config_name) {
             Ok(c) => c,
             Err(e) => {
-                match &e {
-                    confy::ConfyError::BadTomlData(_) => {
-                        std::fs::remove_file(
-                            confy::get_configuration_file_path("deckard", config_name).unwrap(),
-                        )
-                        .unwrap();
-                    }
-                    _ => {}
+                if let confy::ConfyError::BadTomlData(_) = &e {
+                    std::fs::remove_file(
+                        confy::get_configuration_file_path("deckard", config_name).unwrap(),
+                    )
+                    .unwrap();
                 }
                 error!("failed loading config {:?}", e);
                 Self::default()

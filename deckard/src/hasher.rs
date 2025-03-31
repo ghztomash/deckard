@@ -2,7 +2,7 @@ use crate::config::{HashAlgorithm, ImageFilterAlgorithm, ImageHashAlgorithm};
 use chksum::{md5, sha1, sha2_256, sha2_512};
 use image::io::Reader as ImageReader;
 use image_hasher::{HasherConfig, ImageHash};
-use log::{debug, error, trace, warn};
+use log::{trace, warn};
 use rusty_chromaprint::{Configuration, Fingerprinter};
 use std::{
     fs::File,
@@ -13,22 +13,19 @@ use symphonia::core::{
     audio::SampleBuffer,
     codecs::{DecoderOptions, CODEC_TYPE_NULL},
     errors::Error,
-    formats::FormatOptions,
     io::MediaSourceStream,
-    meta::MetadataOptions,
     probe::Hint,
 };
 
 #[inline]
 pub fn get_full_hash<P: AsRef<Path>>(hash: &HashAlgorithm, path: P) -> String {
     let file = File::open(path).unwrap();
-    let digest = match hash {
+    match hash {
         HashAlgorithm::MD5 => md5::chksum(file).unwrap().to_hex_lowercase(),
         HashAlgorithm::SHA1 => sha1::chksum(file).unwrap().to_hex_lowercase(),
         HashAlgorithm::SHA256 => sha2_256::chksum(file).unwrap().to_hex_lowercase(),
         HashAlgorithm::SHA512 => sha2_512::chksum(file).unwrap().to_hex_lowercase(),
-    };
-    digest
+    }
 }
 
 #[inline]
@@ -43,13 +40,10 @@ pub fn get_quick_hash<P: AsRef<Path>>(
     let mut total_buffer = vec![0; 0];
 
     let file_len = file.metadata().unwrap().len();
-    let mut read_whole_file = false;
 
-    if file_len == 0 || size == 0 || splits == 0 {
-        read_whole_file = true;
-    } else if splits >= file_len || file_len / splits < size {
-        read_whole_file = true;
-    }
+    // Decide if we need to read the whole file
+    let read_whole_file =
+        file_len == 0 || size == 0 || splits == 0 || splits >= file_len || file_len / splits < size;
 
     if read_whole_file {
         file.read_to_end(&mut total_buffer).unwrap();
@@ -71,7 +65,7 @@ pub fn get_quick_hash<P: AsRef<Path>>(
 
         for i in 0..splits {
             let mut buffer = vec![0; size as usize];
-            let index = i as u64 * index_step;
+            let index = i * index_step;
             // println!("reading {} bytes at {} of {}", size, index, file_len);
 
             file.seek(std::io::SeekFrom::Start(index)).unwrap();
@@ -82,13 +76,12 @@ pub fn get_quick_hash<P: AsRef<Path>>(
         total_buffer.append(&mut file_len.to_le_bytes().to_vec());
     }
 
-    let digest = match hash {
+    match hash {
         HashAlgorithm::MD5 => md5::chksum(&total_buffer).unwrap().to_hex_lowercase(),
         HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).unwrap().to_hex_lowercase(),
         HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).unwrap().to_hex_lowercase(),
         HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-    };
-    digest
+    }
 }
 
 #[inline]
@@ -126,7 +119,7 @@ pub fn get_audio_hash(
     path: impl AsRef<Path> + std::fmt::Debug,
     config: &Configuration,
 ) -> Option<Vec<u32>> {
-    let file = std::fs::File::open(path.as_ref()).expect("failed to open media");
+    let file = std::fs::File::open(path.as_ref()).ok()?;
 
     let mut hint = Hint::new();
     // Provide the file extension as a hint.
@@ -164,19 +157,14 @@ pub fn get_audio_hash(
         .expect("missing audio channels")
         .count() as u32;
 
-    let mut printer = Fingerprinter::new(&config);
+    let mut printer = Fingerprinter::new(config);
     printer
         .start(sample_rate, channels)
         .expect("initializing audio fingerprinter");
 
     let mut sample_buf = None;
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(_) => break,
-        };
-
+    while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
             continue;
         }

@@ -1,8 +1,4 @@
-use base64::prelude::*;
-use chksum::{md5, sha2_256};
 use chrono::prelude::*;
-use image_hasher::{FilterType, HashAlg, HasherConfig};
-use infer::Type;
 use lofty::{
     file::{AudioFile, TaggedFileExt},
     tag::Accessor,
@@ -11,11 +7,10 @@ use rusty_chromaprint::Configuration;
 use std::{
     ffi::OsString,
     fmt::{self, Display},
-    fs::{self, read, DirEntry, File, FileType, Metadata},
-    io::{Read, Seek},
+    fs::{DirEntry, File, FileType, Metadata},
+    io::Read,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    u32, u8, usize,
 };
 
 use image_hasher::ImageHash;
@@ -256,7 +251,7 @@ impl FileEntry {
                 let this_image = self.image_hash.as_ref().unwrap();
                 let other_image = other.image_hash.as_ref().unwrap();
 
-                let distance = this_image.dist(&other_image);
+                let distance = this_image.dist(other_image);
                 debug!(
                     "{} and {} hamming distance: {}",
                     self.name, other.name, distance
@@ -316,13 +311,10 @@ impl Display for FileEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} {} {} : {}",
-            if self.file_type == EntryType::Dir {
-                format!("{}  {}", self.file_type, self.name)
-            } else {
-                format!("{}  {}", self.file_type, self.name)
-            },
-            format!("{} B", self.size),
+            "{}  {} {} {} B : {}",
+            self.file_type,
+            self.name,
+            self.size,
             self.created.format("%Y-%m-%d %H:%M:%S"),
             self.path.to_string_lossy(),
         )

@@ -3,15 +3,14 @@ use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
 use rayon::prelude::*;
-use rayon::ThreadPool;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::config::SearchConfig;
 use crate::file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
-use std::{fs, path::Path, path::PathBuf};
+use std::path::PathBuf;
 
 use log::{debug, error, trace, warn};
 
@@ -196,27 +195,26 @@ impl FileIndex {
             .with_min_len(min_len)
             .enumerate()
             .try_for_each(|(i, this_file)| {
-                for j in i + 1..vec_files.len() {
+                for other_file in vec_files.iter().skip(i + 1) {
                     if let Some(cancel) = cancel.clone() {
                         if cancel.load(Ordering::Relaxed) {
                             // short circit the parallel iterator
                             return Err(());
                         }
                     }
-                    let other_file = vec_files[j];
 
                     // Check if the files are matching
                     if this_file.compare(other_file, &self.config) {
                         // Insert into the duplicates map
                         duplicates
                             .entry(this_file.path.clone())
-                            .or_insert_with(|| HashSet::new())
+                            .or_insert(HashSet::new())
                             .insert(other_file.path.clone());
 
                         // Insert the reverse mapping as well
                         duplicates
                             .entry(other_file.path.clone())
-                            .or_insert_with(|| HashSet::new())
+                            .or_insert(HashSet::new())
                             .insert(this_file.path.clone());
                     }
 
@@ -242,15 +240,15 @@ impl FileIndex {
     }
 
     pub fn file_name(&self, file: &PathBuf) -> Option<String> {
-        self.files.get(file).and_then(|f| Some(f.name.clone()))
+        self.files.get(file).map(|f| f.name.clone())
     }
 
     pub fn file_entry(&self, file: &PathBuf) -> Option<FileEntry> {
-        self.files.get(file).and_then(|f| Some(f.clone()))
+        self.files.get(file).cloned()
     }
 
     pub fn file_size(&self, file: &PathBuf) -> Option<u64> {
-        self.files.get(file).and_then(|f| Some(f.size))
+        self.files.get(file).map(|f| f.size)
     }
 
     pub fn remove_from_index(&mut self, file: &PathBuf) -> bool {
@@ -258,7 +256,7 @@ impl FileIndex {
         if let Some(clones) = self.duplicates.get_mut(file) {
             // remove all back links from the duplicate files
             // TODO: implement
-            for clone in clones.iter() {}
+            for _clone in clones.iter() {}
             //remove current file
             return true;
         }
