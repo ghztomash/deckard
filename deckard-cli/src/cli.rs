@@ -77,6 +77,13 @@ pub fn cli() -> Command {
                 .help("Number of worker threads to use")
                 .num_args(1),
         )
+        .arg(
+            Arg::new("json")
+                .short('j')
+                .long("json")
+                .action(clap::ArgAction::SetTrue)
+                .help("Output in JSON format"),
+        )
 }
 
 pub fn get_config() -> SearchConfig {

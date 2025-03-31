@@ -18,6 +18,7 @@ fn main() -> Result<()> {
         open_config();
         return Ok(());
     }
+    let json = args.get_flag("json");
 
     let target_dirs = match args.get_many::<String>("params") {
         Some(values) => values.map(|v| v.as_str()).collect::<Vec<&str>>(),
@@ -25,7 +26,9 @@ fn main() -> Result<()> {
     };
 
     let target_paths = collect_paths(target_dirs.clone());
-    println!("Paths: {}", format!("{:?}", target_paths).yellow());
+    if !json {
+        println!("Paths: {}", format!("{:?}", target_paths).yellow());
+    }
 
     let now = Instant::now();
     let mut file_index = FileIndex::new(target_paths, config);
@@ -61,20 +64,25 @@ fn main() -> Result<()> {
         format!("{:.2?}", elapsed).blue()
     );
 
-    println!("\nMatches:");
-    for (file, file_copies) in &file_index.duplicates {
-        let name = file_index.file_name(file).unwrap();
-        let mut match_names = Vec::new();
+    if json {
+        let serialized = serde_json::to_string_pretty(&file_index.duplicates)?;
+        println!("{}", serialized);
+    } else {
+        println!("\n{}", "Matches:".bold());
+        for (file, file_copies) in &file_index.duplicates {
+            let name = file_index.file_name(file).unwrap();
+            let mut match_names = Vec::new();
 
-        for file_copy in file_copies {
-            match_names.push(file_copy.to_string_lossy());
+            for file_copy in file_copies {
+                match_names.push(file_copy.to_string_lossy());
+            }
+
+            println!(
+                "{} matches {}",
+                name.green(),
+                format!("{:#?}", match_names).yellow()
+            );
         }
-
-        println!(
-            "{} matches {}",
-            name.green(),
-            format!("{:#?}", match_names).yellow()
-        );
     }
 
     Ok(())
