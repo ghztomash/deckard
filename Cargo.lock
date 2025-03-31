@@ -860,7 +860,6 @@ dependencies = [
  "confy",
  "criterion",
  "dashmap",
- "env_logger",
  "image",
  "image_hasher",
  "infer",
