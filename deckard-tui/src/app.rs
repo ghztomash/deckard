@@ -249,14 +249,7 @@ impl App {
     }
 
     fn mark_all(&mut self) {
-        let active_table = match self.focused_window {
-            FocusedWindow::Files => &self.file_table,
-            FocusedWindow::Clones => &self.clone_table,
-            FocusedWindow::Marked => &self.marked_table,
-            _ => return,
-        };
-        let active_paths = active_table.paths();
-        for p in active_paths {
+        for p in self.clone_table.paths() {
             self.marked_files.insert(p);
             let v = self.marked_files.clone().into_iter().collect();
             self.marked_table.update_table(&v);
@@ -658,7 +651,7 @@ impl App {
 
         let duplicate_lines = vec![
             Line::from(vec![
-                "Clones: ".into(),
+                "Files: ".into(),
                 files_len.to_string().magenta(),
                 " Total: ".into(),
                 total_size.blue(),
