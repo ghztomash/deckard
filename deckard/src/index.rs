@@ -31,7 +31,7 @@ impl FileIndex {
         // Build a local thread pool
         debug!(
             "Building local Rayon thread pool with {} threads",
-            config.threads
+            rayon::current_num_threads()
         );
         let pool = ThreadPoolBuilder::new()
             .num_threads(config.threads)

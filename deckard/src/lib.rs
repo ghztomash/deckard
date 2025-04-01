@@ -1,4 +1,5 @@
 pub mod config;
+pub mod error;
 pub mod file;
 mod hasher;
 pub mod index;
