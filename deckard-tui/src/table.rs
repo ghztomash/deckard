@@ -1,26 +1,20 @@
 use std::collections::HashSet;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
 use crate::app::format_path;
-use color_eyre::eyre::Result;
 use deckard::index::FileIndex;
 use ratatui::style::Color;
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect, Rows},
-    style::{Modifier, Style, Stylize},
-    symbols::border,
-    text::{Line, Text},
+    layout::{Constraint, Margin, Rect},
+    style::{Style, Stylize},
+    text::Text,
     widgets::{
-        block::{Position, Title},
-        Block, BorderType, Borders, Cell, HighlightSpacing, Paragraph, Row, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, TableState, Widget,
+        Block, BorderType, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        StatefulWidget, Table, TableState,
     },
-    Frame,
 };
 
 #[derive(Debug, Default)]
@@ -61,7 +55,7 @@ impl FileTable {
     }
 
     pub fn update_table(&mut self, paths: &Vec<PathBuf>) {
-        self.paths = paths.clone();
+        self.paths = paths.to_owned();
         self.table_len = self.paths.len();
         self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
     }

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     env, fmt, fs,
     hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
@@ -9,23 +9,16 @@ use std::{
 
 use std::sync::{Arc, RwLock};
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr};
 use deckard::config::SearchConfig;
 use futures::StreamExt;
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
-    style::{Color, Modifier, Style, Styled, Stylize},
-    symbols::border,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Style, Styled, Stylize},
     text::{Line, Span, Text},
-    widgets::{
-        block::{title, Position, Title},
-        Block, BorderType, Borders, Cell, Gauge, HighlightSpacing, Padding, Paragraph, Row,
-        Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, TableState, Widget,
-        Wrap,
-    },
-    Frame,
+    widgets::{Block, BorderType, Borders, Gauge, Paragraph, Widget},
 };
 
 use tokio::{
@@ -43,16 +36,16 @@ enum FocusedWindow {
     Files,
     Clones,
     Marked,
-    Help,
+    _Help,
 }
 
 #[derive(Debug, Default)]
 enum Sorting {
     #[default]
     None,
-    Count,
-    Size,
-    Date,
+    _Count,
+    _Size,
+    _Date,
 }
 
 #[derive(Debug, Default)]

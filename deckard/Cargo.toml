@@ -45,3 +45,7 @@ harness = false
 [[bench]]
 name = "images"
 harness = false
+
+[[bench]]
+name = "compare"
+harness = false
