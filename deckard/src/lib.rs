@@ -4,7 +4,7 @@ mod hasher;
 pub mod index;
 
 use config::SearchConfig;
-use log::debug;
+use log::{error, warn};
 use std::collections::{HashMap, HashSet};
 use std::{env, fs, path::Path, path::PathBuf};
 
@@ -34,7 +34,7 @@ pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
         // path/ path/sub_path
         for p in &paths {
             if path.starts_with(p) {
-                debug!("{:?} is part of {:?}", path, p);
+                warn!("{:?} is part of {:?}", path, p);
                 to_insert = false;
             }
         }
@@ -52,8 +52,14 @@ pub fn find_common_path(target_paths: &HashSet<PathBuf>) -> Option<PathBuf> {
 }
 
 pub fn to_relative_path(path: &PathBuf) -> PathBuf {
-    let current_dir = env::current_dir().expect("failed getting current directory");
-    pathdiff::diff_paths(path, current_dir).expect("failed getting relative path")
+    env::current_dir()
+        .map_err(|e| {
+            error!("failed getting current_dir: {e}");
+            e
+        })
+        .ok()
+        .and_then(|current_dir| pathdiff::diff_paths(path, current_dir))
+        .unwrap_or_else(|| path.to_owned())
 }
 
 #[cfg(test)]
