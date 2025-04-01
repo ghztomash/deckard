@@ -7,6 +7,7 @@ use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::config::SearchConfig;
 use crate::file::{EntryType, FileEntry};
@@ -15,51 +16,41 @@ use std::path::PathBuf;
 
 use log::{debug, error, trace, warn};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
     // TODO: Try BTreeMap
     pub files: HashMap<PathBuf, FileEntry>,
     pub duplicates: HashMap<PathBuf, HashSet<PathBuf>>,
     pub config: SearchConfig,
-    pub pool: Arc<ThreadPool>,
-}
-
-impl Default for FileIndex {
-    fn default() -> Self {
-        FileIndex {
-            dirs: HashSet::new(),
-            files: HashMap::new(),
-            duplicates: HashMap::new(),
-            config: SearchConfig::default(),
-            pool: Arc::new(ThreadPoolBuilder::default().build().unwrap()),
-        }
-    }
+    pub pool: Option<Arc<ThreadPool>>,
 }
 
 impl FileIndex {
     pub fn new(dirs: HashSet<PathBuf>, config: SearchConfig) -> Self {
         // Build a local thread pool
+        debug!(
+            "Building local Rayon thread pool with {} threads",
+            config.threads
+        );
         let pool = ThreadPoolBuilder::new()
             .num_threads(config.threads)
             .thread_name(|i| format!("deckard-pool-{i}"))
             .build()
-            .unwrap_or_else(|e| {
+            .or_else(|e| {
                 error!("Error building local thread pool: {:?}", e);
                 // fallback to default
-                ThreadPoolBuilder::default().build().unwrap()
-            });
-        debug!(
-            "Using local Rayon thread pool with {} threads",
-            pool.current_num_threads()
-        );
+                ThreadPoolBuilder::default().build()
+            })
+            .map(Arc::new)
+            .ok();
 
         FileIndex {
             dirs,
             files: HashMap::new(),
             duplicates: HashMap::new(),
             config,
-            pool: Arc::new(pool),
+            pool,
         }
     }
 
@@ -69,13 +60,19 @@ impl FileIndex {
         cancel: Option<Arc<AtomicBool>>,
     ) {
         let counter = Arc::new(AtomicUsize::new(0));
+        let parallelism = if let Some(pool) = self.pool.as_ref() {
+            Parallelism::RayonExistingPool {
+                pool: pool.clone(),
+                busy_timeout: Some(Duration::from_secs(1)),
+            }
+        } else {
+            Parallelism::RayonDefaultPool {
+                busy_timeout: Duration::from_secs(1),
+            }
+        };
         for dir in &self.dirs {
             let index: HashMap<PathBuf, FileEntry> = jwalk::WalkDir::new(dir)
-                // .parallelism(Parallelism::RayonNewPool(self.config.threads))
-                .parallelism(Parallelism::RayonExistingPool {
-                    pool: self.pool.clone(),
-                    busy_timeout: None,
-                })
+                .parallelism(parallelism.to_owned())
                 .sort(false)
                 .skip_hidden(self.config.skip_hidden)
                 .into_iter()
@@ -154,7 +151,7 @@ impl FileIndex {
                             }
                         }
                         Err(e) => {
-                            warn!("failed reading file {}", e);
+                            warn!("failed indexing file {}", e);
                         }
                     }
                     None
@@ -172,7 +169,7 @@ impl FileIndex {
         let counter = Arc::new(AtomicUsize::new(0));
         let total = self.files_len();
 
-        self.pool.install(|| {
+        let mut process_op = || {
             let _ = self.files.values_mut().par_bridge().try_for_each(|f| {
                 if let Some(cancel) = cancel.as_ref() {
                     if cancel.load(Ordering::Relaxed) {
@@ -188,7 +185,13 @@ impl FileIndex {
                 }
                 Ok(())
             });
-        });
+        };
+
+        if let Some(pool) = self.pool.as_ref() {
+            pool.install(process_op);
+        } else {
+            process_op();
+        }
     }
 
     pub fn find_duplicates(
@@ -215,7 +218,7 @@ impl FileIndex {
             vec_files.len()
         };
         // Parallelize the outer loop using rayon
-        self.pool.install(|| {
+        let compare_op = || {
             let _ = vec_files
                 .par_iter()
                 .with_min_len(min_len)
@@ -250,7 +253,13 @@ impl FileIndex {
                     }
                     Ok(())
                 });
-        });
+        };
+
+        if let Some(pool) = self.pool.as_ref() {
+            pool.install(compare_op);
+        } else {
+            compare_op();
+        }
 
         // Collect the results from the DashMap back into the `self.duplicates` HashMap
         self.duplicates = duplicates.into_iter().collect();
@@ -265,7 +274,7 @@ impl FileIndex {
     }
 
     pub fn file_name(&self, file: &PathBuf) -> Option<String> {
-        self.files.get(file).map(|f| f.name.clone())
+        self.files.get(file).map(|f| f.name.to_owned())
     }
 
     pub fn file_entry(&self, file: &PathBuf) -> Option<FileEntry> {
