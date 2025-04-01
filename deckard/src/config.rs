@@ -1,7 +1,9 @@
 use image_hasher::{FilterType, HashAlg};
-use log::{debug, error};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use crate::error::DeckardError;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct HasherConfig {
@@ -147,34 +149,54 @@ impl Default for SearchConfig {
 
 impl SearchConfig {
     pub fn load(config_name: &str) -> Self {
-        debug!(
-            "load config path {:?}",
-            confy::get_configuration_file_path("deckard", config_name).unwrap()
-        );
+        let config_path = match Self::get_config_path(config_name) {
+            Ok(p) => p,
+            Err(e) => {
+                error!("failed getting config file path: {e}");
+                return Self::default();
+            }
+        };
+
+        debug!("load config path {:?}", config_path);
         match confy::load("deckard", config_name) {
             Ok(c) => c,
             Err(e) => {
-                if let confy::ConfyError::BadTomlData(_) = &e {
-                    std::fs::remove_file(
-                        confy::get_configuration_file_path("deckard", config_name).unwrap(),
-                    )
-                    .unwrap();
+                error!("failed loading config {e}");
+                if let confy::ConfyError::BadTomlData(ee) = &e {
+                    error!("{ee}");
+                    warn!("deleting bad config");
+                    if let Err(eee) = std::fs::remove_file(config_path) {
+                        error!("failed deleting bad config {eee}");
+                    }
                 }
-                error!("failed loading config {:?}", e);
                 Self::default()
             }
         }
     }
 
-    pub fn save(&self, config_name: &str) {
-        debug!(
-            "save config path {:?}",
-            confy::get_configuration_file_path("deckard", config_name).unwrap()
-        );
-        confy::store("deckard", config_name, self).unwrap();
+    pub fn save(&self, config_name: &str) -> Result<(), DeckardError> {
+        debug!("save config path {:?}", Self::get_config_path(config_name)?);
+        confy::store("deckard", config_name, self)?;
+        Ok(())
     }
 
-    pub fn get_config_path(config_name: &str) -> PathBuf {
-        confy::get_configuration_file_path("deckard", config_name).unwrap()
+    pub fn get_config_path(config_name: &str) -> Result<PathBuf, DeckardError> {
+        Ok(confy::get_configuration_file_path("deckard", config_name)?)
+    }
+
+    pub fn edit_config(config_name: &str) -> Result<(), DeckardError> {
+        let config_path = Self::get_config_path(config_name)?;
+        // Check if the file actually exists
+        if !config_path.is_file() {
+            // You might return a custom error variant or a generic IO error, etc.
+            warn!("config file didn't exist");
+            Self::default().save(config_name)?;
+        }
+
+        info!("Opening configuration file: {:?}", config_path);
+        std::process::Command::new("open")
+            .arg(config_path)
+            .output()?;
+        Ok(())
     }
 }

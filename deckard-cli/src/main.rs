@@ -1,31 +1,41 @@
+use clap::Arg;
 use color_eyre::eyre::Result;
 use colored::*;
+use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
-use deckard::*;
 use log::info;
 use std::time::Instant;
 
-mod cli;
+const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 
 fn main() -> Result<()> {
     color_eyre::install()?;
     env_logger::init();
 
-    let args = cli::cli().get_matches();
-    let config = cli::get_config();
+    let cli = deckard::cli::commands().arg(
+        Arg::new("json")
+            .short('j')
+            .long("json")
+            .action(clap::ArgAction::SetTrue)
+            .help("Output in JSON format"),
+    );
+    let args = cli.get_matches();
 
     if args.get_flag("open_config") {
-        open_config();
+        SearchConfig::edit_config(CONFIG_NAME)?;
         return Ok(());
     }
+
     let json = args.get_flag("json");
 
     let target_dirs = match args.get_many::<String>("params") {
         Some(values) => values.map(|v| v.as_str()).collect::<Vec<&str>>(),
         None => vec!["."],
     };
+    let target_paths = deckard::collect_paths(target_dirs);
 
-    let target_paths = collect_paths(target_dirs.clone());
+    let config = deckard::cli::augment_config(CONFIG_NAME, args);
+
     if !json {
         println!("Paths: {}", format!("{:?}", target_paths).yellow());
     }
@@ -70,7 +80,7 @@ fn main() -> Result<()> {
     } else {
         println!("\n{}", "Matches:".bold());
         for (file, file_copies) in &file_index.duplicates {
-            let name = file_index.file_name(file).unwrap();
+            let name = file_index.file_name(file).unwrap_or_default();
             let mut match_names = Vec::new();
 
             for file_copy in file_copies {
@@ -86,11 +96,4 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Open the default configuration file in the default editor
-fn open_config() {
-    let config_path = config::SearchConfig::get_config_path("deckard-cli");
-    println!("Opening default configuration file: {:?}", config_path);
-    let _ = std::process::Command::new("open").arg(config_path).output();
 }

@@ -1,8 +1,8 @@
-use clap::{command, value_parser, Arg, Command};
-use deckard::config::SearchConfig;
-use log::debug;
+use crate::SearchConfig;
+use clap::{command, value_parser, Arg, ArgMatches, Command};
+use log::{debug, trace};
 
-pub fn cli() -> Command {
+pub fn commands() -> Command {
     command!()
         .about("Find file duplicates")
         .version(env!("CARGO_PKG_VERSION"))
@@ -78,13 +78,6 @@ pub fn cli() -> Command {
                 .num_args(1),
         )
         .arg(
-            Arg::new("json")
-                .short('j')
-                .long("json")
-                .action(clap::ArgAction::SetTrue)
-                .help("Output in JSON format"),
-        )
-        .arg(
             Arg::new("min_size")
                 .short('m')
                 .long("min_size")
@@ -93,11 +86,10 @@ pub fn cli() -> Command {
         )
 }
 
-pub fn get_config() -> SearchConfig {
-    let args = cli().get_matches();
-    let mut config = deckard::config::SearchConfig::load("deckard-cli");
+pub fn augment_config(config_name: &str, args: ArgMatches) -> SearchConfig {
+    let mut config = SearchConfig::load(config_name);
 
-    debug!("loaded {:#?}", config);
+    trace!("loaded {:#?}", config);
 
     let include_filter = args
         .get_one::<String>("include_filter")

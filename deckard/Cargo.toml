@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 log.workspace = true
+clap.workspace = true
 
 chrono = "0.4"
 chksum = "0.4"
