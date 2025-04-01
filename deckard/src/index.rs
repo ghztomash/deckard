@@ -3,7 +3,7 @@ use dashmap::DashMap;
 use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
-use rayon::prelude::*;
+use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -15,27 +15,43 @@ use std::path::PathBuf;
 
 use log::{debug, error, trace, warn};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
     // TODO: Try BTreeMap
     pub files: HashMap<PathBuf, FileEntry>,
     pub duplicates: HashMap<PathBuf, HashSet<PathBuf>>,
     pub config: SearchConfig,
+    pub pool: Arc<ThreadPool>,
+}
+
+impl Default for FileIndex {
+    fn default() -> Self {
+        FileIndex {
+            dirs: HashSet::new(),
+            files: HashMap::new(),
+            duplicates: HashMap::new(),
+            config: SearchConfig::default(),
+            pool: Arc::new(ThreadPoolBuilder::default().build().unwrap()),
+        }
+    }
 }
 
 impl FileIndex {
     pub fn new(dirs: HashSet<PathBuf>, config: SearchConfig) -> Self {
-        // Define number of threads to use
-        if let Err(e) = rayon::ThreadPoolBuilder::new()
+        // Build a local thread pool
+        let pool = ThreadPoolBuilder::new()
             .num_threads(config.threads)
-            .build_global()
-        {
-            error!("error building thread pool: {:?}", e);
-        }
+            .thread_name(|i| format!("deckard-pool-{i}"))
+            .build()
+            .unwrap_or_else(|e| {
+                error!("Error building local thread pool: {:?}", e);
+                // fallback to default
+                ThreadPoolBuilder::default().build().unwrap()
+            });
         debug!(
-            "Using thread pool with with {} threads",
-            rayon::current_num_threads()
+            "Using local Rayon thread pool with {} threads",
+            pool.current_num_threads()
         );
 
         FileIndex {
@@ -43,6 +59,7 @@ impl FileIndex {
             files: HashMap::new(),
             duplicates: HashMap::new(),
             config,
+            pool: Arc::new(pool),
         }
     }
 
@@ -54,7 +71,11 @@ impl FileIndex {
         let counter = Arc::new(AtomicUsize::new(0));
         for dir in &self.dirs {
             let index: HashMap<PathBuf, FileEntry> = jwalk::WalkDir::new(dir)
-                .parallelism(Parallelism::RayonNewPool(self.config.threads))
+                // .parallelism(Parallelism::RayonNewPool(self.config.threads))
+                .parallelism(Parallelism::RayonExistingPool {
+                    pool: self.pool.clone(),
+                    busy_timeout: None,
+                })
                 .sort(false)
                 .skip_hidden(self.config.skip_hidden)
                 .into_iter()
@@ -151,20 +172,22 @@ impl FileIndex {
         let counter = Arc::new(AtomicUsize::new(0));
         let total = self.files_len();
 
-        let _ = self.files.values_mut().par_bridge().try_for_each(|f| {
-            if let Some(cancel) = cancel.as_ref() {
-                if cancel.load(Ordering::Relaxed) {
-                    // short circit the parallel iterator
-                    // TODO: this still doesn't cancel ongoing processing
-                    return Err(());
+        self.pool.install(|| {
+            let _ = self.files.values_mut().par_bridge().try_for_each(|f| {
+                if let Some(cancel) = cancel.as_ref() {
+                    if cancel.load(Ordering::Relaxed) {
+                        // short circit the parallel iterator
+                        // TODO: this still doesn't cancel ongoing processing
+                        return Err(());
+                    }
                 }
-            }
-            f.process(&self.config);
-            if let Some(ref callback) = callback {
-                let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                callback(count, total);
-            }
-            Ok(())
+                f.process(&self.config);
+                if let Some(ref callback) = callback {
+                    let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                    callback(count, total);
+                }
+                Ok(())
+            });
         });
     }
 
@@ -181,7 +204,10 @@ impl FileIndex {
         // Use DashMap for concurrent access to the duplicates map
         let duplicates = DashMap::new();
 
-        let min_len = if self.config.image_config.compare && self.config.audio_config.compare {
+        let min_len = if self.config.image_config.compare
+            || self.config.audio_config.compare
+            || total > 10000
+        {
             // Each parallel iterator will have at least one item.
             1
         } else {
@@ -189,40 +215,42 @@ impl FileIndex {
             vec_files.len()
         };
         // Parallelize the outer loop using rayon
-        let _ = vec_files
-            .par_iter()
-            .with_min_len(min_len)
-            .enumerate()
-            .try_for_each(|(i, this_file)| {
-                if let Some(cancel) = cancel.as_ref() {
-                    if cancel.load(Ordering::Relaxed) {
-                        // short circit the parallel iterator
-                        return Err(());
+        self.pool.install(|| {
+            let _ = vec_files
+                .par_iter()
+                .with_min_len(min_len)
+                .enumerate()
+                .try_for_each(|(i, this_file)| {
+                    if let Some(cancel) = cancel.as_ref() {
+                        if cancel.load(Ordering::Relaxed) {
+                            // short circit the parallel iterator
+                            return Err(());
+                        }
                     }
-                }
-                for other_file in vec_files.iter().skip(i + 1) {
-                    // Check if the files are matching
-                    if this_file.compare(other_file, &self.config) {
-                        // Insert into the duplicates map
-                        duplicates
-                            .entry(this_file.path.clone())
-                            .or_insert(HashSet::new())
-                            .insert(other_file.path.clone());
+                    for other_file in vec_files.iter().skip(i + 1) {
+                        // Check if the files are matching
+                        if this_file.compare(other_file, &self.config) {
+                            // Insert into the duplicates map
+                            duplicates
+                                .entry(this_file.path.clone())
+                                .or_insert(HashSet::new())
+                                .insert(other_file.path.clone());
 
-                        // Insert the reverse mapping as well
-                        duplicates
-                            .entry(other_file.path.clone())
-                            .or_insert(HashSet::new())
-                            .insert(this_file.path.clone());
+                            // Insert the reverse mapping as well
+                            duplicates
+                                .entry(other_file.path.clone())
+                                .or_insert(HashSet::new())
+                                .insert(this_file.path.clone());
+                        }
                     }
-                }
-                // Update the progress counter
-                if let Some(ref callback) = callback {
-                    let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    callback(count, total);
-                }
-                Ok(())
-            });
+                    // Update the progress counter
+                    if let Some(ref callback) = callback {
+                        let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                        callback(count, total);
+                    }
+                    Ok(())
+                });
+        });
 
         // Collect the results from the DashMap back into the `self.duplicates` HashMap
         self.duplicates = duplicates.into_iter().collect();
