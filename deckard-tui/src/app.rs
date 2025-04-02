@@ -18,7 +18,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Styled, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Gauge, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Gauge, Paragraph, Widget, Wrap},
 };
 
 use tokio::{
@@ -592,12 +592,15 @@ impl App {
 
         let file_info_text = Text::from(info_lines);
 
-        let summary = Paragraph::new(file_info_text).style(Style::new()).block(
-            Block::bordered()
-                .border_type(BorderType::Plain)
-                .borders(Borders::ALL)
-                .border_style(Style::new()),
-        );
+        let summary = Paragraph::new(file_info_text)
+            .wrap(Wrap { trim: true })
+            .style(Style::new())
+            .block(
+                Block::bordered()
+                    .border_type(BorderType::Plain)
+                    .borders(Borders::ALL)
+                    .border_style(Style::new()),
+            );
         summary.render(area, buf)
     }
 
