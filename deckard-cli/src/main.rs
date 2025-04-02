@@ -12,13 +12,30 @@ fn main() -> Result<()> {
     color_eyre::install()?;
     env_logger::init();
 
-    let cli = deckard::cli::commands().arg(
-        Arg::new("json")
-            .short('j')
-            .long("json")
-            .action(clap::ArgAction::SetTrue)
-            .help("Output in JSON format"),
-    );
+    let cli = deckard::cli::commands()
+        .arg(
+            Arg::new("json")
+                .short('j')
+                .long("json")
+                .action(clap::ArgAction::SetTrue)
+                .help("Output in JSON format"),
+        )
+        .arg(
+            Arg::new("delete")
+                .long("DELETE")
+                .action(clap::ArgAction::SetTrue)
+                .help(format!(
+                    "{} {}",
+                    "Delete duplicate files",
+                    "(No way to undo!)".bold()
+                )),
+        )
+        .arg(
+            Arg::new("trash")
+                .long("trash")
+                .action(clap::ArgAction::SetTrue)
+                .help("Move duplicate files to trash"),
+        );
     let args = cli.get_matches();
 
     if args.get_flag("open_config") {
