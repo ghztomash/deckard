@@ -17,7 +17,7 @@ use image_hasher::ImageHash;
 
 use log::{debug, trace, warn};
 
-use crate::{config::SearchConfig, hasher};
+use crate::{config::SearchConfig, error::DeckardError, hasher};
 
 const MAGIC_SIZE: usize = 8;
 
@@ -162,7 +162,7 @@ impl FileEntry {
             return;
         }
 
-        self.mime_type = Some(get_mime_type(&self.path));
+        self.mime_type = get_mime_type(&self.path).ok();
         trace!("{} found mime type {:?}", self.name, self.mime_type);
 
         self.hash = Some(hasher::get_quick_hash(
@@ -322,20 +322,20 @@ impl Display for FileEntry {
 }
 
 #[inline]
-pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> String {
+pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<String, DeckardError> {
     let mime = mime_guess::from_path(&path).first();
     match mime {
-        Some(mime_type) => mime_type.to_string(),
+        Some(mime_type) => Ok(mime_type.to_string()),
         None => {
-            let mut file = File::open(&path).unwrap();
+            let mut file = File::open(&path)?;
 
             let mut magic = [0; MAGIC_SIZE];
-            if file.metadata().unwrap().size() >= MAGIC_SIZE as u64 {
+            if file.metadata()?.size() >= MAGIC_SIZE as u64 {
                 file.read_exact(&mut magic)
                     .unwrap_or_else(|e| warn!("read magic: {:?} for {:?}", e, path));
             }
             // Find the MIME type
-            tree_magic::from_u8(&magic)
+            Ok(tree_magic::from_u8(&magic))
         }
     }
 }
