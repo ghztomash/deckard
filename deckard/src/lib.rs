@@ -7,21 +7,8 @@ pub mod index;
 
 use config::SearchConfig;
 use log::{error, warn};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::{env, fs, path::Path, path::PathBuf};
-
-use index::FileIndex;
-
-pub fn find_duplicates(
-    dirs: HashSet<PathBuf>,
-    config: SearchConfig,
-) -> HashMap<PathBuf, HashSet<PathBuf>> {
-    let mut file_index = FileIndex::new(dirs, config);
-    file_index.index_dirs(None, None);
-    file_index.process_files(None, None);
-    file_index.find_duplicates(None, None);
-    file_index.duplicates
-}
 
 pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
     let mut paths: HashSet<PathBuf> = HashSet::with_capacity(target_paths.len());
