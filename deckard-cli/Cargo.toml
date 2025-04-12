@@ -7,8 +7,8 @@ edition = "2021"
 deckard = { path = "../deckard" }
 color-eyre.workspace = true
 clap.workspace = true
-log.workspace = true
-env_logger.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 colored = "3.0"
 serde_json = "1.0"

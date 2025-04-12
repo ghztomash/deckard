@@ -3,14 +3,20 @@ use color_eyre::eyre::Result;
 use colored::*;
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
-use log::info;
-use std::time::Instant;
+use std::{io::stderr, time::Instant};
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
 
 const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 
 fn main() -> Result<()> {
     color_eyre::install()?;
-    env_logger::init();
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .with_writer(stderr)
+        .without_time()
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
 
     let cli = deckard::cli::commands()
         .arg(
