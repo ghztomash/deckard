@@ -1,5 +1,5 @@
-use crate::SearchConfig;
-use clap::{command, value_parser, Arg, ArgMatches, Command};
+use crate::{config::LogLevel, SearchConfig};
+use clap::{command, value_parser, Arg, ArgAction, ArgMatches, Command};
 use log::{debug, trace};
 
 pub fn commands() -> Command {
@@ -18,28 +18,28 @@ pub fn commands() -> Command {
             Arg::new("open_config")
                 .short('O')
                 .long("open_config")
-                .action(clap::ArgAction::SetTrue)
+                .action(ArgAction::SetTrue)
                 .help("Open config file"),
         )
         .arg(
             Arg::new("skip_hidden")
                 .short('H')
                 .long("skip_hidden")
-                .action(clap::ArgAction::SetTrue)
+                .action(ArgAction::SetTrue)
                 .help("Do not check hidden files"),
         )
         .arg(
             Arg::new("skip_empty")
                 .short('e')
                 .long("skip_empty")
-                .action(clap::ArgAction::SetTrue)
+                .action(ArgAction::SetTrue)
                 .help("Do not check empty files"),
         )
         .arg(
             Arg::new("check_image")
                 .short('i')
                 .long("check_image")
-                .action(clap::ArgAction::SetTrue)
+                .action(ArgAction::SetTrue)
                 .help("Compare image files similarities"),
         )
         .arg(
@@ -52,7 +52,7 @@ pub fn commands() -> Command {
         .arg(
             Arg::new("full_hash")
                 .long("full_hash")
-                .action(clap::ArgAction::SetTrue)
+                .action(ArgAction::SetTrue)
                 .help("Compare every byte of the file"),
         )
         .arg(
@@ -83,6 +83,13 @@ pub fn commands() -> Command {
                 .long("min_size")
                 .value_parser(value_parser!(u64))
                 .help("Filter out files that smaller in size"),
+        )
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .long("verbose")
+                .action(ArgAction::Count)
+                .help("Increase the log level verbosity"),
         )
 }
 
@@ -132,6 +139,11 @@ pub fn augment_config(config_name: &str, args: ArgMatches) -> SearchConfig {
 
     if let Some(t) = args.get_one::<usize>("threads") {
         config.threads = *t;
+    }
+
+    let verbose = args.get_count("verbose");
+    if verbose > 0 {
+        config.log_level = LogLevel::from_count(verbose);
     }
 
     debug!("with arguments {:#?}", config);

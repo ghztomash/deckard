@@ -1,7 +1,7 @@
 use image_hasher::{FilterType, HashAlg};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{fmt::Debug, path::PathBuf};
 
 use crate::error::DeckardError;
 
@@ -119,8 +119,30 @@ impl Default for AudioConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    #[default]
+    Off,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    pub fn from_count(count: u8) -> Self {
+        match count {
+            0 => LogLevel::Off,
+            1 => LogLevel::Info,
+            2 => LogLevel::Debug,
+            _ => LogLevel::Trace,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SearchConfig {
+    pub log_level: LogLevel,
     pub skip_hidden: bool,
     pub threads: usize,
     pub include_filter: Option<String>,
@@ -135,6 +157,7 @@ pub struct SearchConfig {
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
+            log_level: LogLevel::default(),
             skip_hidden: false,
             threads: 0,
             include_filter: None,
