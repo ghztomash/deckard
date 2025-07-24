@@ -98,13 +98,13 @@ impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let result = match self {
             Self::Idle => "Idle",
-            Self::Indexing { done } => &format!("Indexing {}", done),
-            Self::Processing { done, total } => &format!("Processing {}/{}", done, total),
-            Self::Comparing { done, total } => &format!("Comparing {}/{}", done, total),
+            Self::Indexing { done } => &format!("Indexing {done}"),
+            Self::Processing { done, total } => &format!("Processing {done}/{total}"),
+            Self::Comparing { done, total } => &format!("Comparing {done}/{total}"),
             Self::Done => "Done",
-            Self::Error(e) => &format!("Error: {}", e),
+            Self::Error(e) => &format!("Error: {e}"),
         };
-        write!(f, "{}", result)
+        write!(f, "{result}")
     }
 }
 
@@ -874,8 +874,7 @@ pub fn format_path(path: &PathBuf, target_paths: &HashSet<PathBuf>) -> String {
     let common_path = deckard::find_common_path(target_paths);
 
     let relative_path = if let Some(common_path) = &common_path {
-        let path = path.strip_prefix(common_path).unwrap_or(path);
-        path
+        path.strip_prefix(common_path).unwrap_or(path)
     } else {
         path
     };

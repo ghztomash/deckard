@@ -99,7 +99,7 @@ fn main() -> Result<()> {
 
     if json {
         let serialized = serde_json::to_string_pretty(&file_index.duplicates)?;
-        println!("{}", serialized);
+        println!("{serialized}");
     } else {
         println!("\n{}", "Matches:".bold());
         for (file, file_copies) in &file_index.duplicates {
