@@ -10,11 +10,11 @@ use std::{
 use std::sync::{Arc, RwLock};
 
 use color_eyre::eyre::{Result, WrapErr};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
 use deckard::config::SearchConfig;
 use futures::StreamExt;
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Styled, Stylize},
     text::{Line, Span, Text},
@@ -22,7 +22,7 @@ use ratatui::{
 };
 
 use tokio::{
-    sync::mpsc::{unbounded_channel, UnboundedSender},
+    sync::mpsc::{UnboundedSender, unbounded_channel},
     task::AbortHandle,
 };
 

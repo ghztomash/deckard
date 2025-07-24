@@ -1,7 +1,7 @@
 [package]
 name = "deckard"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 log.workspace = true
@@ -16,7 +16,7 @@ tree_magic = "0.2"
 mime_guess = "2.0"
 thiserror = "2.0"
 
-confy = "0.6"
+confy = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 rayon = "1.10"
 jwalk = "0.8"
@@ -33,7 +33,7 @@ dashmap = "6.1"
 lofty = "0.22"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.6"
 
 [[bench]]
 name = "process"

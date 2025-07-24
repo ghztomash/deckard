@@ -2,7 +2,10 @@
 
 ## Running
 
-`cargo run --bin deckard-tui -- test_files`
+```sh
+cargo run --bin deckard-cli -- test_files
+cargo run --bin deckard-tui -- test_files
+```
 
 ## To-do
 
