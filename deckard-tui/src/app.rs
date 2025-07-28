@@ -952,6 +952,7 @@ async fn find_duplicates(
         });
 
         fi.find_duplicates(Some(progress_callback), Some(cancel_flag));
+        fi.cleanup_index();
     })
     .await?;
     Ok(())

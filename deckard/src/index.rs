@@ -3,10 +3,10 @@ use dashmap::DashMap;
 use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
-use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
+use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::config::SearchConfig;
@@ -106,8 +106,7 @@ impl FileIndex {
                                         {
                                             trace!(
                                                 "File '{}' matches exclude filter pattern '{}'",
-                                                file_name,
-                                                exclude_filter
+                                                file_name, exclude_filter
                                             );
                                             return None;
                                         }
@@ -123,8 +122,7 @@ impl FileIndex {
                                         } else {
                                             trace!(
                                                 "File '{}' matches include filter pattern '{}'",
-                                                file_name,
-                                                include_filter
+                                                file_name, include_filter
                                             );
                                         }
                                     }
@@ -134,9 +132,7 @@ impl FileIndex {
                                     if file_size < self.config.min_size {
                                         trace!(
                                             "Skipping file {}, size {} smaller than {}",
-                                            file_name,
-                                            file_size,
-                                            self.config.min_size,
+                                            file_name, file_size, self.config.min_size,
                                         );
                                         return None;
                                     }
@@ -309,5 +305,25 @@ impl FileIndex {
             }
             self.files.remove(file);
         }
+    }
+
+    pub fn cleanup_index(&mut self) {
+        // Clean index from files without duplicates
+        let files_to_remove: Vec<PathBuf> = self
+            .files
+            .keys()
+            .filter_map(|file| {
+                if !self.duplicates.contains_key(file) {
+                    Some(file.clone()) // Mark for removal
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for file in files_to_remove {
+            self.files.remove(&file);
+        }
+        self.files.shrink_to_fit();
     }
 }
