@@ -214,7 +214,9 @@ impl App {
             KeyCode::Char('a') => self.mark_all(),
             KeyCode::Char('A') => self.clear_marked(),
             KeyCode::Char('m') => self.toggle_show_marked_table(),
+            KeyCode::Char('y') => unimplemented!(),
             KeyCode::Char('.') => self.toggle_more_keys(),
+            KeyCode::Char('?') => unimplemented!(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.focus_previus_table(),
             _ => {}
@@ -237,6 +239,9 @@ impl App {
             }
             let v = self.marked_files.clone().into_iter().collect();
             self.marked_table.update_table(&v);
+            if matches!(self.focused_window, FocusedWindow::Marked) {
+                self.marked_table.select_previous();
+            }
         }
     }
 
@@ -252,6 +257,9 @@ impl App {
         self.marked_files = HashSet::new();
         let v = self.marked_files.clone().into_iter().collect();
         self.marked_table.update_table(&v);
+        if matches!(self.focused_window, FocusedWindow::Marked) {
+            self.marked_table.select_none();
+        }
     }
 
     fn remove_marked(&mut self, remove_callback: fn(&PathBuf)) {
@@ -705,19 +713,29 @@ impl App {
         } else {
             " more "
         };
+        let selected_style = if self.active_selected_file().is_none() {
+            Style::new().dark_gray().bold()
+        } else {
+            Style::new().blue().bold()
+        };
+        let marked_style = if self.marked_files.is_empty() {
+            Style::new().dark_gray().bold()
+        } else {
+            Style::new().blue().bold()
+        };
         let instructions_text = vec![
-            "Mark ".into(),
-            "<space>".blue().bold(),
-            " Mark all ".into(),
+            "Mark file ".into(),
+            "<space>".set_style(selected_style),
+            " Mark all clones ".into(),
             "<a>".blue().bold(),
             " Open file ".into(),
-            "<o>".blue().bold(),
+            "<o>".set_style(selected_style),
             " Open path ".into(),
-            "<p>".blue().bold(),
+            "<p>".set_style(selected_style),
             " Trash ".into(),
-            "<t/backspace>".blue().bold(),
+            "<T/backspace>".set_style(marked_style),
             " Delete ".into(),
-            "<D/delete>".blue().bold(),
+            "<D/delete>".set_style(marked_style),
             " Quit ".into(),
             "<q/esc>".blue().bold(),
             more.into(),
@@ -730,14 +748,18 @@ impl App {
                 "<h/left>".blue().bold(),
                 " Focus right ".into(),
                 "<l/right>".blue().bold(),
+                " Copy path ".into(),
+                "<y>".set_style(selected_style),
+                " Clear marked ".into(),
+                "<A>".set_style(marked_style),
                 " Show marked ".into(),
                 "<m>".blue().bold(),
                 " Show clones ".into(),
                 "<c>".blue().bold(),
                 " Show info ".into(),
                 "<i>".blue().bold(),
-                " Copy path ".into(),
-                "<y>".blue().bold(),
+                " About ".into(),
+                "<?>".blue().bold(),
             ]
         } else {
             vec![]
