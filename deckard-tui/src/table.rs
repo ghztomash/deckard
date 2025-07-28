@@ -1,15 +1,15 @@
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::RwLock;
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
 use crate::app::format_path;
 use deckard::index::FileIndex;
-use ratatui::style::Color;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Margin, Rect},
-    style::{Style, Stylize},
+    style::{Color, Style, Styled, Stylize},
     text::Text,
     widgets::{
         Block, BorderType, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -172,15 +172,21 @@ impl FileTable {
             let date = date.format("%d/%m/%Y %H:%M");
             let is_marked = marked_files.contains(&p);
 
+            let path_style = if self.mark_marked && is_marked {
+                Style::new().yellow()
+            } else {
+                Style::new()
+            };
+
             let cells = vec![
-                Cell::from(Text::from(path)),
-                Cell::from(Text::from(format!("{date}"))),
-                Cell::from(Text::from(size)),
                 Cell::from(Text::from(if self.mark_marked && is_marked {
                     "*"
                 } else {
                     " "
                 })),
+                Cell::from(Text::from(path.set_style(path_style))),
+                Cell::from(Text::from(format!("{date}"))),
+                Cell::from(Text::from(size)),
             ];
             cells.into_iter().collect::<Row>().style(Style::new())
         });
@@ -195,10 +201,17 @@ impl FileTable {
                 .border_style(Style::new().dark_gray())
         };
 
+        let total_string = match total_size.len() {
+            8..9 => "Tot:",
+            9.. => "T:",
+            _ => "Total:",
+        };
+
         let footer = Row::new(vec![
+            Cell::from(Text::from("")),
             Cell::from(Text::from(format!("Files: {count}"))),
             Cell::from(Text::from("")),
-            Cell::from(Text::from(format!("Total: {total_size}"))),
+            Cell::from(Text::from(format!("{total_string} {total_size}"))),
         ])
         .style(footer_style);
 
@@ -206,10 +219,10 @@ impl FileTable {
             rows.clone(),
             [
                 // + 1 is for padding.
+                Constraint::Max(1),
                 Constraint::Min(10),
                 Constraint::Max(18),
                 Constraint::Max(14),
-                Constraint::Max(1),
             ],
         )
         .header(header)
