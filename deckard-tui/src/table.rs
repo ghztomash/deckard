@@ -192,9 +192,8 @@ impl FileTable {
         });
         let block = if focused {
             Block::bordered()
-                // .title(" Clones ")
                 .border_type(BorderType::Thick)
-                .border_style(Style::new().green())
+                .border_style(Style::new().light_magenta())
         } else {
             Block::bordered()
                 .border_type(BorderType::Plain)
