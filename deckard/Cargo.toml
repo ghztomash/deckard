@@ -33,7 +33,7 @@ dashmap = "6.1"
 lofty = "0.22"
 
 [dev-dependencies]
-criterion = "0.6"
+criterion = "0.7"
 
 [[bench]]
 name = "process"
