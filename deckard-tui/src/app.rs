@@ -60,6 +60,7 @@ pub struct App {
     show_clones_table: bool,
     show_marked_table: bool,
     show_file_info: bool,
+    show_more_keys: bool,
     current_state: State,
     cancel_flag: Arc<AtomicBool>,
     abort_handle: Option<AbortHandle>,
@@ -123,6 +124,7 @@ impl App {
             show_marked_table: true,
             show_clones_table: true,
             show_file_info: true,
+            show_more_keys: true,
             current_state: State::Idle,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             abort_handle: None,
@@ -212,6 +214,7 @@ impl App {
             KeyCode::Char('a') => self.mark_all(),
             KeyCode::Char('A') => self.clear_marked(),
             KeyCode::Char('m') => self.toggle_show_marked_table(),
+            KeyCode::Char('.') => self.toggle_more_keys(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.focus_previus_table(),
             _ => {}
@@ -383,6 +386,10 @@ impl App {
 
     fn toggle_info(&mut self) {
         self.show_file_info = !self.show_file_info;
+    }
+
+    fn toggle_more_keys(&mut self) {
+        self.show_more_keys = !self.show_more_keys;
     }
 
     pub fn next_file(&mut self) {
@@ -669,22 +676,20 @@ impl App {
         let dir_joined = dir_lines.join(" ");
         let total_size = humansize::format_size(total, humansize::DECIMAL);
 
-        let duplicate_lines = vec![
+        let summary_lines = vec![
             Line::from(vec![
                 "Files: ".into(),
                 files_len.to_string().magenta(),
                 " Total: ".into(),
                 total_size.blue(),
-            ]),
-            Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
-            Line::from(vec![
-                "State: ".into(),
+                " State: ".into(),
                 format!("{}", self.current_state)
                     .set_style(Style::default().fg(self.current_state.get_color())),
             ]),
+            Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
         ];
 
-        let summary_text = Text::from(duplicate_lines);
+        let summary_text = Text::from(summary_lines);
 
         let summary = Paragraph::new(summary_text).style(Style::new()).block(
             Block::bordered()
@@ -695,19 +700,12 @@ impl App {
     }
 
     fn render_footer(&self, buf: &mut Buffer, area: Rect) {
-        let instructions = Line::from(vec![
-            " File ".into(),
-            "<h/left>".blue().bold(),
-            " Clones ".into(),
-            "<l/right>".blue().bold(),
-            " Mark ".into(),
+        let more = if self.show_more_keys {" less "} else { " more "};
+        let instructions_text = vec![
+            "Mark ".into(),
             "<space>".blue().bold(),
-            " Mark All ".into(),
+            " Mark all ".into(),
             "<a>".blue().bold(),
-            " Show clones ".into(),
-            "<c>".blue().bold(),
-            " Info ".into(),
-            "<i>".blue().bold(),
             " Open file ".into(),
             "<o>".blue().bold(),
             " Open path ".into(),
@@ -718,7 +716,26 @@ impl App {
             "<D/delete>".blue().bold(),
             " Quit ".into(),
             "<q/esc>".blue().bold(),
-        ]);
+            more.into(),
+            "<.>".blue().bold(),
+        ];
+
+        let more_instructions_text = if self.show_more_keys {vec! [
+            " Focus left ".into(),
+            "<h/left>".blue().bold(),
+            " Focus right ".into(),
+            "<l/right>".blue().bold(),
+            " Show marked ".into(),
+            "<m>".blue().bold(),
+            " Show clones ".into(),
+            "<c>".blue().bold(),
+            " Show info ".into(),
+            "<i>".blue().bold(),
+            " Copy path ".into(),
+            "<y>".blue().bold(),
+        ]} else { vec![]};
+
+        let instructions = vec![Line::from(instructions_text), Line::from(more_instructions_text)];
         let info_footer = Paragraph::new(instructions).style(Style::new());
         info_footer.render(area, buf)
     }
@@ -726,11 +743,13 @@ impl App {
 
 impl App {
     fn render_ui(&mut self, area: Rect, buf: &mut Buffer) {
+        let footer_height = if self.show_more_keys {2} else {1};
+
         let rects = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(5),
-            Constraint::Max(5),
-            Constraint::Length(1),
+            Constraint::Max(4),
+            Constraint::Length(footer_height), // footer
         ])
         .split(area);
 
