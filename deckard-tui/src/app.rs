@@ -700,7 +700,11 @@ impl App {
     }
 
     fn render_footer(&self, buf: &mut Buffer, area: Rect) {
-        let more = if self.show_more_keys {" less "} else { " more "};
+        let more = if self.show_more_keys {
+            " less "
+        } else {
+            " more "
+        };
         let instructions_text = vec![
             "Mark ".into(),
             "<space>".blue().bold(),
@@ -720,107 +724,151 @@ impl App {
             "<.>".blue().bold(),
         ];
 
-        let more_instructions_text = if self.show_more_keys {vec! [
-            " Focus left ".into(),
-            "<h/left>".blue().bold(),
-            " Focus right ".into(),
-            "<l/right>".blue().bold(),
-            " Show marked ".into(),
-            "<m>".blue().bold(),
-            " Show clones ".into(),
-            "<c>".blue().bold(),
-            " Show info ".into(),
-            "<i>".blue().bold(),
-            " Copy path ".into(),
-            "<y>".blue().bold(),
-        ]} else { vec![]};
+        let more_instructions_text = if self.show_more_keys {
+            vec![
+                " Focus left ".into(),
+                "<h/left>".blue().bold(),
+                " Focus right ".into(),
+                "<l/right>".blue().bold(),
+                " Show marked ".into(),
+                "<m>".blue().bold(),
+                " Show clones ".into(),
+                "<c>".blue().bold(),
+                " Show info ".into(),
+                "<i>".blue().bold(),
+                " Copy path ".into(),
+                "<y>".blue().bold(),
+            ]
+        } else {
+            vec![]
+        };
 
-        let instructions = vec![Line::from(instructions_text), Line::from(more_instructions_text)];
+        let instructions = vec![
+            Line::from(instructions_text),
+            Line::from(more_instructions_text),
+        ];
         let info_footer = Paragraph::new(instructions).style(Style::new());
         info_footer.render(area, buf)
+    }
+
+    fn render_main(&mut self, buf: &mut Buffer, area: Rect) {
+        // count shown panes
+        let window_count = [
+            true,
+            self.show_file_info,
+            self.show_clones_table,
+            self.show_marked_table,
+        ]
+        .iter()
+        .filter(|&&enabled| enabled)
+        .count();
+
+        let (
+            main_vertical_constrains,
+            main_horiozntal_top_constrains,
+            main_horiozntal_bottom_constrains,
+        ) = match window_count {
+            1 => (
+                [Constraint::Percentage(100), Constraint::Percentage(0)],
+                [Constraint::Percentage(100), Constraint::Percentage(0)],
+                [Constraint::Percentage(100), Constraint::Percentage(0)],
+            ),
+            2 => (
+                [Constraint::Percentage(100), Constraint::Percentage(0)],
+                [Constraint::Percentage(50), Constraint::Percentage(50)],
+                [Constraint::Percentage(100), Constraint::Percentage(0)],
+            ),
+            3 => (
+                [Constraint::Percentage(60), Constraint::Percentage(40)],
+                [Constraint::Percentage(50), Constraint::Percentage(50)],
+                [Constraint::Percentage(100), Constraint::Percentage(0)],
+            ),
+            _ => (
+                [Constraint::Percentage(60), Constraint::Percentage(40)],
+                [Constraint::Percentage(50), Constraint::Percentage(50)],
+                [Constraint::Percentage(50), Constraint::Percentage(50)],
+            ),
+        };
+
+        let main_sub_area = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(main_vertical_constrains)
+            .split(area);
+
+        let main_sub_area_top = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(main_horiozntal_top_constrains)
+            .split(main_sub_area[0]);
+
+        let main_sub_area_bottom = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(main_horiozntal_bottom_constrains)
+            .split(main_sub_area[1]);
+
+        self.file_table.render(
+            buf,
+            main_sub_area_top[0], // top left
+            matches!(self.focused_window, FocusedWindow::Files),
+            &self.file_index,
+            &self.marked_files,
+        );
+        if self.show_clones_table {
+            self.clone_table.render(
+                buf,
+                main_sub_area_top[1], // top right
+                matches!(self.focused_window, FocusedWindow::Clones),
+                &self.file_index,
+                &self.marked_files,
+            );
+        }
+        if self.show_marked_table {
+            let rect_area = if window_count == 2 {
+                main_sub_area_top[1] // top right
+            } else {
+                main_sub_area_bottom[0] // bottom left
+            };
+            self.marked_table.render(
+                buf,
+                rect_area,
+                matches!(self.focused_window, FocusedWindow::Marked),
+                &self.file_index,
+                &self.marked_files,
+            );
+        }
+        if self.show_file_info {
+            let rect_area = match window_count {
+                2 => main_sub_area_top[1],                           // top right
+                3 if self.show_marked_table => main_sub_area_top[1], // top right
+                3 => main_sub_area_bottom[0],                        // bottom left
+                _ => main_sub_area_bottom[1],                        // bottom right
+            };
+            self.render_file_info(buf, rect_area);
+        }
     }
 }
 
 impl App {
     fn render_ui(&mut self, area: Rect, buf: &mut Buffer) {
-        let footer_height = if self.show_more_keys {2} else {1};
+        let footer_height = if self.show_more_keys { 2 } else { 1 };
 
         let rects = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Min(5),
-            Constraint::Max(4),
+            Constraint::Length(1),             // header
+            Constraint::Min(5),                // main content
+            Constraint::Max(4),                // summary
             Constraint::Length(footer_height), // footer
         ])
         .split(area);
 
         self.render_header(buf, rects[0]);
 
-        let main_sub_area_constrains = if self.show_clones_table || self.show_file_info {
-            [Constraint::Percentage(50), Constraint::Percentage(50)]
-        } else {
-            [Constraint::Percentage(100), Constraint::Percentage(0)]
-        };
-
-        let main_sub_area_inner_constrains = if self.show_file_info || self.show_marked_table {
-            [Constraint::Percentage(60), Constraint::Percentage(40)]
-        } else {
-            [Constraint::Percentage(100), Constraint::Percentage(0)]
-        };
-
-        let main_sub_area = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(main_sub_area_constrains)
-            .split(rects[1]);
-
-        let main_sub_area_left = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(main_sub_area_inner_constrains)
-            .split(main_sub_area[0]);
-
-        let main_sub_area_right = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(main_sub_area_inner_constrains)
-            .split(main_sub_area[1]);
-
         if self.is_done() {
-            self.file_table.render(
-                buf,
-                main_sub_area_left[0],
-                matches!(self.focused_window, FocusedWindow::Files),
-                &self.file_index,
-                &self.marked_files,
-            );
-
-            if self.show_marked_table {
-                self.marked_table.render(
-                    buf,
-                    main_sub_area_left[1],
-                    matches!(self.focused_window, FocusedWindow::Marked),
-                    &self.file_index,
-                    &self.marked_files,
-                );
-            }
-
-            if self.show_clones_table {
-                self.clone_table.render(
-                    buf,
-                    main_sub_area_right[0],
-                    matches!(self.focused_window, FocusedWindow::Clones),
-                    &self.file_index,
-                    &self.marked_files,
-                );
-            }
-
-            if self.show_file_info {
-                let area = if self.show_clones_table { 1 } else { 0 };
-                self.render_file_info(buf, main_sub_area_right[area]);
-            }
-
+            self.render_main(buf, rects[1]);
             self.render_summary(buf, rects[2]);
-            self.render_footer(buf, rects[3]);
         } else {
             self.render_progress_bar(buf, area);
         }
+
+        self.render_footer(buf, rects[3]);
     }
 
     fn handle_state(&mut self, state: State) {
