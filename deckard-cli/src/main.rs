@@ -4,7 +4,7 @@ use colored::*;
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
 use std::{io::stderr, time::Instant};
-use tracing::{info, Level};
+use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
 const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -18,30 +18,13 @@ fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    let cli = deckard::cli::commands()
-        .arg(
-            Arg::new("json")
-                .short('j')
-                .long("json")
-                .action(clap::ArgAction::SetTrue)
-                .help("Output in JSON format"),
-        )
-        .arg(
-            Arg::new("delete")
-                .long("DELETE")
-                .action(clap::ArgAction::SetTrue)
-                .help(format!(
-                    "{} {}",
-                    "Delete duplicate files",
-                    "(No way to undo!)".bold()
-                )),
-        )
-        .arg(
-            Arg::new("trash")
-                .long("trash")
-                .action(clap::ArgAction::SetTrue)
-                .help("Move duplicate files to trash"),
-        );
+    let cli = deckard::cli::commands().arg(
+        Arg::new("json")
+            .short('j')
+            .long("json")
+            .action(clap::ArgAction::SetTrue)
+            .help("Output in JSON format"),
+    );
     let args = cli.get_matches();
 
     if args.get_flag("open_config") {

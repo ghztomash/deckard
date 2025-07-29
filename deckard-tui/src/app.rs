@@ -52,6 +52,8 @@ enum Sorting {
 pub struct App {
     focused_window: FocusedWindow,
     should_exit: bool,
+    dry_run: bool,
+    remove_dirs: bool,
     file_index: Arc<RwLock<FileIndex>>,
     file_table: FileTable,
     clone_table: FileTable,
@@ -112,7 +114,12 @@ impl fmt::Display for State {
 impl App {
     const FRAMES_PER_SECOND: f32 = 30.0;
 
-    pub fn new(target_paths: HashSet<PathBuf>, config: SearchConfig) -> Self {
+    pub fn new(
+        target_paths: HashSet<PathBuf>,
+        config: SearchConfig,
+        dry_run: bool,
+        remove_dirs: bool,
+    ) -> Self {
         Self {
             focused_window: FocusedWindow::Files,
             should_exit: false,
@@ -128,6 +135,8 @@ impl App {
             current_state: State::Idle,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             abort_handle: None,
+            dry_run,
+            remove_dirs,
         }
     }
 
@@ -266,7 +275,12 @@ impl App {
         {
             let mut index = self.file_index.write().unwrap();
             for file in &self.marked_files {
-                remove_callback(file);
+                if !self.dry_run {
+                    remove_callback(file);
+                    if self.remove_dirs {
+                        // TODO: Delete any empty dirs
+                    }
+                }
                 index.remove_from_index(file);
             }
         }

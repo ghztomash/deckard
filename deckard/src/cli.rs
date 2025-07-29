@@ -1,5 +1,5 @@
-use crate::{config::LogLevel, SearchConfig};
-use clap::{command, value_parser, Arg, ArgAction, ArgMatches, Command};
+use crate::{SearchConfig, config::LogLevel};
+use clap::{Arg, ArgAction, ArgMatches, Command, command, value_parser};
 use log::{debug, trace};
 
 pub fn commands() -> Command {
