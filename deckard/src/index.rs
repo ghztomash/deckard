@@ -309,21 +309,8 @@ impl FileIndex {
 
     pub fn cleanup_index(&mut self) {
         // Clean index from files without duplicates
-        let files_to_remove: Vec<PathBuf> = self
-            .files
-            .keys()
-            .filter_map(|file| {
-                if !self.duplicates.contains_key(file) {
-                    Some(file.clone()) // Mark for removal
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        for file in files_to_remove {
-            self.files.remove(&file);
-        }
+        self.files
+            .retain(|path, _entry| self.duplicates.contains_key(path));
         self.files.shrink_to_fit();
     }
 }
