@@ -2,7 +2,6 @@ use crate::config::{HashAlgorithm, ImageFilterAlgorithm, ImageHashAlgorithm};
 use chksum::{md5, sha1, sha2_256, sha2_512};
 use image::io::Reader as ImageReader;
 use image_hasher::{HasherConfig, ImageHash};
-use log::{trace, warn};
 use rusty_chromaprint::{Configuration, Fingerprinter};
 use std::{
     fs::File,
@@ -11,11 +10,12 @@ use std::{
 };
 use symphonia::core::{
     audio::SampleBuffer,
-    codecs::{DecoderOptions, CODEC_TYPE_NULL},
+    codecs::{CODEC_TYPE_NULL, DecoderOptions},
     errors::Error,
     io::MediaSourceStream,
     probe::Hint,
 };
+use tracing::{trace, warn};
 
 #[inline]
 pub fn get_full_hash<P: AsRef<Path>>(hash: &HashAlgorithm, path: P) -> String {

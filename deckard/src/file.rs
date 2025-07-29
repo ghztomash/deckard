@@ -1,4 +1,6 @@
+use crate::{config::SearchConfig, error::DeckardError, hasher};
 use chrono::prelude::*;
+use image_hasher::ImageHash;
 use lofty::{
     file::{AudioFile, TaggedFileExt},
     tag::Accessor,
@@ -12,12 +14,7 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
-
-use image_hasher::ImageHash;
-
-use log::{debug, trace, warn};
-
-use crate::{config::SearchConfig, error::DeckardError, hasher};
+use tracing::{debug, trace, warn};
 
 const MAGIC_SIZE: usize = 8;
 

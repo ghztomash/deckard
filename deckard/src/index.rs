@@ -14,7 +14,7 @@ use crate::file::{EntryType, FileEntry};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use log::{debug, error, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Default, Clone)]
 pub struct FileIndex {

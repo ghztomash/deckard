@@ -7,4 +7,6 @@ pub enum DeckardError {
     IoError(#[from] io::Error),
     #[error(transparent)]
     ConfigError(#[from] confy::ConfyError),
+    #[error("Config path does not exist")]
+    ConfigPathNotFound(),
 }

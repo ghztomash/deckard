@@ -1,5 +1,8 @@
 use clap::Arg;
 use color_eyre::eyre::Result;
+use tracing::Level;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::FmtSubscriber;
 
 mod app;
 mod table;
@@ -10,7 +13,20 @@ const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
-    env_logger::init();
+
+    // setup logging
+    let file_appender = RollingFileAppender::new(
+        Rotation::NEVER,
+        deckard::config::SearchConfig::get_config_folder(CONFIG_NAME)?,
+        "deckard-tui.log",
+    );
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .with_writer(non_blocking)
+        .without_time()
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
 
     let cli = deckard::cli::commands()
         .arg(

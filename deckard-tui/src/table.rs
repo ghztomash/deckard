@@ -1,9 +1,3 @@
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
-
 use crate::app::format_path;
 use deckard::index::FileIndex;
 use ratatui::{
@@ -15,6 +9,11 @@ use ratatui::{
         Block, BorderType, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         StatefulWidget, Table, TableState,
     },
+};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::{Arc, RwLock},
 };
 
 #[derive(Debug, Default)]

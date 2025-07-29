@@ -6,9 +6,9 @@ mod hasher;
 pub mod index;
 
 use config::SearchConfig;
-use log::{error, warn};
 use std::collections::HashSet;
 use std::{env, fs, path::Path, path::PathBuf};
+use tracing::{error, warn};
 
 pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
     let mut paths: HashSet<PathBuf> = HashSet::with_capacity(target_paths.len());

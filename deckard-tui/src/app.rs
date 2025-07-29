@@ -1,17 +1,8 @@
-use std::{
-    collections::HashSet,
-    env, fmt, fs,
-    hash::{DefaultHasher, Hash, Hasher},
-    path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
-
-use std::sync::{Arc, RwLock};
-
+use crate::table::FileTable;
 use color_eyre::eyre::{Result, WrapErr};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
 use deckard::config::SearchConfig;
+use deckard::index::FileIndex;
 use futures::StreamExt;
 use ratatui::{
     buffer::Buffer,
@@ -20,15 +11,19 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Gauge, Paragraph, Widget, Wrap},
 };
-
+use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashSet,
+    env, fmt, fs,
+    hash::{DefaultHasher, Hash, Hasher},
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use tokio::{
     sync::mpsc::{UnboundedSender, unbounded_channel},
     task::AbortHandle,
 };
-
-use deckard::index::FileIndex;
-
-use crate::table::FileTable;
 
 #[derive(Debug, Default)]
 enum FocusedWindow {

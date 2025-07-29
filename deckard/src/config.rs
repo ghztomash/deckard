@@ -1,7 +1,7 @@
 use image_hasher::{FilterType, HashAlg};
-use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, path::PathBuf};
+use tracing::{debug, error, info, warn};
 
 use crate::error::DeckardError;
 
@@ -205,6 +205,13 @@ impl SearchConfig {
 
     pub fn get_config_path(config_name: &str) -> Result<PathBuf, DeckardError> {
         Ok(confy::get_configuration_file_path("deckard", config_name)?)
+    }
+
+    pub fn get_config_folder(config_name: &str) -> Result<PathBuf, DeckardError> {
+        Ok(confy::get_configuration_file_path("deckard", config_name)?
+            .parent()
+            .ok_or(DeckardError::ConfigPathNotFound())?
+            .to_path_buf())
     }
 
     pub fn edit_config(config_name: &str) -> Result<(), DeckardError> {

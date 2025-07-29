@@ -1,6 +1,6 @@
 use crate::{SearchConfig, config::LogLevel};
 use clap::{Arg, ArgAction, ArgMatches, Command, command, value_parser};
-use log::{debug, trace};
+use tracing::{debug, trace};
 
 pub fn commands() -> Command {
     command!()
