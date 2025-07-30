@@ -681,7 +681,7 @@ impl App {
             .iter()
             .map(|d| {
                 format!(
-                    "{}",
+                    "./{}",
                     deckard::to_relative_path(d)
                         .to_string_lossy()
                         .to_string()
