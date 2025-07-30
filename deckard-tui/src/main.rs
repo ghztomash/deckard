@@ -76,3 +76,21 @@ async fn main() -> Result<()> {
 
     app_result
 }
+
+/// Initialize the tracing subscriber to log to a file
+fn init_tracing(log_level: u8) -> Result<WorkerGuard> {
+    let file = File::create("eos-term.log").wrap_err("failed to create eos-term.log")?;
+    let (non_blocking, guard) = non_blocking(file);
+
+    // By default, the subscriber is configured to log all events with a level of `DEBUG` or higher,
+    // but this can be changed by setting the `RUST_LOG` environment variable.
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(log_level.into())
+        .from_env_lossy();
+
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_env_filter(env_filter)
+        .init();
+    Ok(guard)
+}
