@@ -4,19 +4,12 @@ use colored::*;
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
 use std::{io::stderr, time::Instant};
-use tracing::{Level, info};
-use tracing_subscriber::FmtSubscriber;
+use tracing::info;
 
 const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 
 fn main() -> Result<()> {
     color_eyre::install()?;
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .with_writer(stderr)
-        .without_time()
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
 
     let cli = deckard::cli::commands().arg(
         Arg::new("json")
@@ -26,6 +19,16 @@ fn main() -> Result<()> {
             .help("Output in JSON format"),
     );
     let args = cli.get_matches();
+
+    // setup logging
+    let log_level = deckard::cli::log_level(args.get_count("verbose"));
+    tracing_subscriber::fmt()
+        .with_max_level(log_level)
+        .with_writer(stderr)
+        .without_time()
+        .init();
+
+    let config = deckard::cli::augment_config(CONFIG_NAME, &args);
 
     if args.get_flag("open_config") {
         SearchConfig::edit_config(CONFIG_NAME)?;
@@ -39,8 +42,6 @@ fn main() -> Result<()> {
         None => vec!["."],
     };
     let target_paths = deckard::collect_paths(target_dirs);
-
-    let config = deckard::cli::augment_config(CONFIG_NAME, args);
 
     if !json {
         println!("Paths: {}", format!("{:?}", target_paths).yellow());

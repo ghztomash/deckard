@@ -1,8 +1,8 @@
+use std::{fs::File, path::PathBuf};
+
 use clap::Arg;
 use color_eyre::eyre::Result;
-use tracing::Level;
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
-use tracing_subscriber::FmtSubscriber;
+use tracing_appender::non_blocking::WorkerGuard;
 
 mod app;
 mod table;
@@ -14,21 +14,14 @@ const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 async fn main() -> Result<()> {
     color_eyre::install()?;
 
-    // setup logging
-    let file_appender = RollingFileAppender::new(
-        Rotation::NEVER,
-        deckard::config::SearchConfig::get_config_folder(CONFIG_NAME)?,
-        "deckard-tui.log",
-    );
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .with_writer(non_blocking)
-        .without_time()
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
-
     let cli = deckard::cli::commands()
+        .arg(
+            Arg::new("open_logs")
+                .short('L')
+                .long("open_logs")
+                .action(clap::ArgAction::SetTrue)
+                .help("Open logs file"),
+        )
         .arg(
             Arg::new("remove_dirs")
                 .short('E')
@@ -44,10 +37,24 @@ async fn main() -> Result<()> {
         );
     let args = cli.get_matches();
 
+    // open log file, before setting up logging because it overwrites it
+    if args.get_flag("open_logs") {
+        let log_path = log_path()?;
+        eprintln!("Opening log file: {:?}", log_path);
+        std::process::Command::new("open").arg(log_path).output()?;
+        return Ok(());
+    }
+
+    // setup logging
+    let log_level = deckard::cli::log_level(args.get_count("verbose"));
+    let _guard = init_tracing(log_level)?;
+
     if args.get_flag("open_config") {
         deckard::config::SearchConfig::edit_config(CONFIG_NAME)?;
         return Ok(());
     }
+
+    let config = deckard::cli::augment_config(CONFIG_NAME, &args);
 
     let dry_run = args.get_flag("dry_run");
     let remove_dirs = args.get_flag("remove_dirs");
@@ -60,7 +67,6 @@ async fn main() -> Result<()> {
     };
     let target_paths = deckard::collect_paths(target_dirs);
 
-    let config = deckard::cli::augment_config(CONFIG_NAME, args);
     let app_result = app::App::new(target_paths, config, dry_run, remove_dirs)
         .run(&mut terminal)
         .await;
@@ -78,19 +84,19 @@ async fn main() -> Result<()> {
 }
 
 /// Initialize the tracing subscriber to log to a file
-fn init_tracing(log_level: u8) -> Result<WorkerGuard> {
-    let file = File::create("eos-term.log").wrap_err("failed to create eos-term.log")?;
-    let (non_blocking, guard) = non_blocking(file);
-
-    // By default, the subscriber is configured to log all events with a level of `DEBUG` or higher,
-    // but this can be changed by setting the `RUST_LOG` environment variable.
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(log_level.into())
-        .from_env_lossy();
+fn init_tracing(log_level: tracing::Level) -> Result<WorkerGuard> {
+    let file = File::create(log_path()?)?;
+    let (non_blocking, guard) = tracing_appender::non_blocking(file);
 
     tracing_subscriber::fmt()
+        .with_max_level(log_level)
         .with_writer(non_blocking)
-        .with_env_filter(env_filter)
         .init();
+
     Ok(guard)
+}
+
+/// Helper to get log file path
+fn log_path() -> Result<PathBuf> {
+    Ok(deckard::config::SearchConfig::get_config_folder(CONFIG_NAME)?.join("deckard-tui.log"))
 }

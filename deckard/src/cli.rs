@@ -1,6 +1,6 @@
-use crate::{SearchConfig, config::LogLevel};
+use crate::SearchConfig;
 use clap::{Arg, ArgAction, ArgMatches, Command, command, value_parser};
-use tracing::{debug, trace};
+use tracing::{Level, debug, trace};
 
 pub fn commands() -> Command {
     command!()
@@ -93,7 +93,7 @@ pub fn commands() -> Command {
         )
 }
 
-pub fn augment_config(config_name: &str, args: ArgMatches) -> SearchConfig {
+pub fn augment_config(config_name: &str, args: &ArgMatches) -> SearchConfig {
     let mut config = SearchConfig::load(config_name);
 
     trace!("loaded {:#?}", config);
@@ -141,12 +141,17 @@ pub fn augment_config(config_name: &str, args: ArgMatches) -> SearchConfig {
         config.threads = *t;
     }
 
-    let verbose = args.get_count("verbose");
-    if verbose > 0 {
-        config.log_level = LogLevel::from_count(verbose);
-    }
-
     debug!("with arguments {:#?}", config);
 
     config
+}
+
+/// Convert verbose counts to log Level
+pub fn log_level(count: u8) -> Level {
+    match count {
+        0 => Level::ERROR,
+        1 => Level::INFO,
+        2 => Level::DEBUG,
+        _ => Level::TRACE,
+    }
 }
