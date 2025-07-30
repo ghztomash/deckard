@@ -25,11 +25,12 @@ pub struct FileTable {
     scroll_state: ScrollbarState,
     header: Vec<&'static str>,
     mark_marked: bool,
+    show_clone_count: bool,
     // callback function that populates rows
 }
 
 impl FileTable {
-    pub fn new(header: Vec<&'static str>, mark_marked: bool) -> Self {
+    pub fn new(header: Vec<&'static str>, mark_marked: bool, show_clone_count: bool) -> Self {
         Self {
             table_state: TableState::new(),
             table_len: 0,
@@ -38,6 +39,7 @@ impl FileTable {
             scroll_state: ScrollbarState::new(0),
             header,
             mark_marked,
+            show_clone_count,
         }
     }
 
@@ -156,39 +158,45 @@ impl FileTable {
             for path in &self.paths {
                 let size = fi.file_size(path).unwrap_or_default();
                 let date = fi.file_date_modified(path).unwrap_or_default(); // or created
+                let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
                 total_size_acc += size;
 
-                meta_vec.push((path.clone(), size, date));
+                meta_vec.push((path.clone(), size, date, clone_count));
             }
             (dirs, meta_vec, total_size_acc)
         };
 
         let total_size = humansize::format_size(total_size_raw, humansize::DECIMAL);
 
-        let rows = meta_for_paths.into_iter().map(|(p, size, date)| {
-            let path = format_path(&p, &dirs);
-            let size = humansize::format_size(size, humansize::DECIMAL);
-            let date = date.format("%d/%m/%Y %H:%M");
-            let is_marked = marked_files.contains(&p);
+        let rows = meta_for_paths
+            .into_iter()
+            .map(|(p, size, date, clone_count)| {
+                let path = format_path(&p, &dirs);
+                let size = humansize::format_size(size, humansize::DECIMAL);
+                let date = date.format("%d/%m/%Y");
+                let is_marked = marked_files.contains(&p);
 
-            let path_style = if self.mark_marked && is_marked {
-                Style::new().yellow()
-            } else {
-                Style::new()
-            };
-
-            let cells = vec![
-                Cell::from(Text::from(if self.mark_marked && is_marked {
-                    "*"
+                let path_style = if self.mark_marked && is_marked {
+                    Style::new().yellow()
                 } else {
-                    " "
-                })),
-                Cell::from(Text::from(path.set_style(path_style))),
-                Cell::from(Text::from(format!("{date}"))),
-                Cell::from(Text::from(size)),
-            ];
-            cells.into_iter().collect::<Row>().style(Style::new())
-        });
+                    Style::new()
+                };
+
+                let mut cells = vec![
+                    Cell::from(Text::from(if self.mark_marked && is_marked {
+                        "*"
+                    } else {
+                        " "
+                    })),
+                    Cell::from(Text::from(path.set_style(path_style))),
+                    Cell::from(Text::from(format!("{date}"))),
+                    Cell::from(Text::from(size)),
+                ];
+                if self.show_clone_count {
+                    cells.push(Cell::from(Text::from(clone_count.to_string())));
+                }
+                cells.into_iter().collect::<Row>().style(Style::new())
+            });
         let block = if focused {
             Block::bordered()
                 .border_type(BorderType::Thick)
@@ -199,34 +207,30 @@ impl FileTable {
                 .border_style(Style::new().dark_gray())
         };
 
-        let total_string = match total_size.len() {
-            8..9 => "Tot:",
-            9.. => "T:",
-            _ => "Total:",
-        };
-
         let footer = Row::new(vec![
             Cell::from(Text::from("")),
             Cell::from(Text::from(format!("Files: {count}"))),
-            Cell::from(Text::from("")),
-            Cell::from(Text::from(format!("{total_string} {total_size}"))),
+            Cell::from(Text::from("Total:")),
+            Cell::from(Text::from(total_size.to_string())),
         ])
         .style(footer_style);
 
-        let table = Table::new(
-            rows.clone(),
-            [
-                // + 1 is for padding.
-                Constraint::Max(1),
-                Constraint::Min(10),
-                Constraint::Max(18),
-                Constraint::Max(14),
-            ],
-        )
-        .header(header)
-        .footer(footer)
-        .row_highlight_style(selected_style)
-        .block(block);
+        let mut widths = vec![
+            // + 1 is for padding.
+            Constraint::Max(1),
+            Constraint::Min(10),
+            Constraint::Max(11),
+            Constraint::Max(11),
+        ];
+        if self.show_clone_count {
+            widths.push(Constraint::Max(7));
+        }
+
+        let table = Table::new(rows.clone(), widths)
+            .header(header)
+            .footer(footer)
+            .row_highlight_style(selected_style)
+            .block(block);
 
         StatefulWidget::render(table, area, buf, &mut self.table_state);
 

@@ -289,6 +289,11 @@ impl FileIndex {
         self.files.get(file).map(|f| f.created)
     }
 
+    /// Get number of duplicates a file has
+    pub fn file_duplicates_len(&self, file: &PathBuf) -> Option<usize> {
+        Some(self.duplicates.get(file)?.len())
+    }
+
     pub fn remove_from_index(&mut self, file: &PathBuf) {
         // get the given file
         if let Some(clones) = self.duplicates.remove(file) {

@@ -119,9 +119,9 @@ impl App {
             focused_window: FocusedWindow::Files,
             should_exit: false,
             file_index: Arc::new(RwLock::new(FileIndex::new(target_paths, config))),
-            file_table: FileTable::new(vec![" ", "File", "Date", "Size"], true),
-            clone_table: FileTable::new(vec![" ", "Clone", "Date", "Size"], true),
-            marked_table: FileTable::new(vec![" ", "Marked"], false),
+            file_table: FileTable::new(vec![" ", "File", "Date", "Size", "Clones"], true, true),
+            clone_table: FileTable::new(vec![" ", "Clone", "Date", "Size"], true, false),
+            marked_table: FileTable::new(vec![" ", "Marked"], false, false),
             marked_files: HashSet::new(),
             show_marked_table: true,
             show_clones_table: true,
@@ -522,11 +522,19 @@ impl App {
                 ]),
                 Line::from(vec![
                     "created: ".into(),
-                    file_entry.created.to_string().red(),
+                    file_entry
+                        .created
+                        .format("%d/%m/%Y %H:%M:%S %Z")
+                        .to_string()
+                        .red(),
                 ]),
                 Line::from(vec![
                     "modified: ".into(),
-                    file_entry.created.to_string().red(),
+                    file_entry
+                        .modified
+                        .format("%d/%m/%Y %H:%M:%S %Z")
+                        .to_string()
+                        .red(),
                 ]),
                 Line::from(vec![
                     "mime: ".into(),

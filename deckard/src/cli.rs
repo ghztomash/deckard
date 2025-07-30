@@ -82,7 +82,7 @@ pub fn commands() -> Command {
                 .short('m')
                 .long("min_size")
                 .value_parser(value_parser!(u64))
-                .help("Filter out files that smaller in size"),
+                .help("Filter out files smaller than bytes"),
         )
         .arg(
             Arg::new("verbose")
