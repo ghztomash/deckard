@@ -268,7 +268,7 @@ impl App {
                 self.marked_files.remove(&path);
             }
             let v = self.marked_files.clone().into_iter().collect();
-            self.marked_table.update_table(&v);
+            self.marked_table.update_table(&v, &self.file_index, None);
             if matches!(self.focused_window, FocusedWindow::Marked) {
                 self.marked_table.select_previous();
             }
@@ -279,14 +279,14 @@ impl App {
         for p in self.clone_table.paths() {
             self.marked_files.insert(p);
             let v = self.marked_files.clone().into_iter().collect();
-            self.marked_table.update_table(&v);
+            self.marked_table.update_table(&v, &self.file_index, None);
         }
     }
 
     fn clear_marked(&mut self) {
         self.marked_files = HashSet::new();
         let v = self.marked_files.clone().into_iter().collect();
-        self.marked_table.update_table(&v);
+        self.marked_table.update_table(&v, &self.file_index, None);
         if matches!(self.focused_window, FocusedWindow::Marked) {
             self.marked_table.select_none();
         }
@@ -437,6 +437,7 @@ impl App {
 
     fn cycle_sort_by(&mut self) {
         self.sort_by = self.sort_by.next();
+        self.update_file_table();
     }
 
     pub fn next_file(&mut self) {
@@ -472,7 +473,7 @@ impl App {
     }
 
     fn update_file_table(&mut self) {
-        let mut paths: Vec<PathBuf> = self
+        let paths: Vec<PathBuf> = self
             .file_index
             .read()
             .unwrap()
@@ -481,14 +482,9 @@ impl App {
             .cloned()
             .collect();
 
-        paths.sort_by(|a, b| {
-            let a_size = self.file_index.read().unwrap().file_size(a).unwrap();
-            let b_size = self.file_index.read().unwrap().file_size(b).unwrap();
-            b_size.cmp(&a_size)
-        });
-
         if !paths.is_empty() {
-            self.file_table.update_table(&paths);
+            self.file_table
+                .update_table(&paths, &self.file_index, Some(&self.sort_by));
             self.file_table.select_first();
         } else {
             self.file_table.clear();
@@ -505,7 +501,8 @@ impl App {
                 .get(selected_file)
             {
                 let paths = clone_paths.iter().cloned().collect();
-                self.clone_table.update_table(&paths);
+                self.clone_table
+                    .update_table(&paths, &self.file_index, Some(&Sorting::Path));
                 self.clone_table.select_none();
             }
         } else {
@@ -872,18 +869,14 @@ impl App {
             buf,
             main_sub_area_top[0], // top left
             matches!(self.focused_window, FocusedWindow::Files),
-            &self.file_index,
             &self.marked_files,
-            &self.sort_by,
         );
         if self.show_clones_table {
             self.clone_table.render(
                 buf,
                 main_sub_area_top[1], // top right
                 matches!(self.focused_window, FocusedWindow::Clones),
-                &self.file_index,
                 &self.marked_files,
-                &self.sort_by,
             );
         }
         if self.show_marked_table {
@@ -896,9 +889,7 @@ impl App {
                 buf,
                 rect_area,
                 matches!(self.focused_window, FocusedWindow::Marked),
-                &self.file_index,
                 &self.marked_files,
-                &self.sort_by,
             );
         }
         if self.show_file_info {

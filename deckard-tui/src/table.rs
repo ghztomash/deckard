@@ -1,4 +1,5 @@
 use crate::app::{Sorting, format_path};
+use chrono::{DateTime, Local};
 use deckard::index::FileIndex;
 use ratatui::{
     buffer::Buffer,
@@ -16,16 +17,26 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+#[derive(Debug, Default, Clone)]
+pub struct FileTableEntry {
+    path: PathBuf,
+    display_path: String,
+    size: u64,
+    date: DateTime<Local>,
+    clone_count: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct FileTable {
     pub table_state: TableState,
     pub table_len: usize,
-    paths: Vec<PathBuf>,
+    entries: Vec<FileTableEntry>,
     selected_path: Option<PathBuf>,
     scroll_state: ScrollbarState,
     header: Vec<&'static str>,
     mark_marked: bool,
     show_clone_count: bool,
+    total_size: u64,
     // callback function that populates rows
 }
 
@@ -34,7 +45,8 @@ impl FileTable {
         Self {
             table_state: TableState::new(),
             table_len: 0,
-            paths: Vec::new(),
+            total_size: 0,
+            entries: Vec::new(),
             selected_path: None,
             scroll_state: ScrollbarState::new(0),
             header,
@@ -46,18 +58,61 @@ impl FileTable {
     pub fn clear(&mut self) {
         self.table_state = TableState::new();
         self.table_len = 0;
-        self.paths = Vec::new();
+        self.entries = Vec::new();
         self.selected_path = None;
         self.scroll_state = ScrollbarState::new(0);
     }
 
     pub fn paths(&self) -> Vec<PathBuf> {
-        self.paths.clone()
+        self.entries.iter().map(|e| e.path.clone()).collect()
     }
 
-    pub fn update_table(&mut self, paths: &Vec<PathBuf>) {
-        self.paths = paths.to_owned();
-        self.table_len = self.paths.len();
+    pub fn update_table(
+        &mut self,
+        paths: &Vec<PathBuf>,
+        file_index: &Arc<RwLock<FileIndex>>,
+        sort_by: Option<&Sorting>,
+    ) {
+        // Lock the FileIndex only once, then copy out the data we need:
+        let (mut entries, total_size) = {
+            let fi = file_index.read().unwrap();
+
+            // Pre-calculate file metadata for each path we display,
+            // including size & date. Also track a sum to show total size.
+            let mut total_size_acc = 0u64;
+            let mut entries_vec = Vec::with_capacity(paths.len());
+            for path in paths {
+                let size = fi.file_size(path).unwrap_or_default();
+                let date = fi.file_date_modified(path).unwrap_or_default(); // or created
+                let display_path = format_path(path, &fi.dirs);
+                let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
+                total_size_acc += size;
+
+                entries_vec.push(FileTableEntry {
+                    path: path.clone(),
+                    display_path,
+                    size,
+                    date,
+                    clone_count,
+                });
+            }
+
+            (entries_vec, total_size_acc)
+        };
+
+        // Sort the paths
+        if let Some(sort_by) = sort_by {
+            entries.sort_by(|a, b| match sort_by {
+                Sorting::Path => a.path.cmp(&b.path),
+                Sorting::Size => b.size.cmp(&a.size),
+                Sorting::Date => b.date.cmp(&a.date),
+                Sorting::Count => b.clone_count.cmp(&a.clone_count),
+            });
+        }
+
+        self.entries = entries;
+        self.table_len = self.entries.len();
+        self.total_size = total_size;
         self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
     }
 
@@ -67,7 +122,7 @@ impl FileTable {
             return;
         }
         self.table_state.select(Some(index));
-        self.selected_path = self.paths.get(index).cloned();
+        self.selected_path = self.entries.get(index).map(|e| e.path.to_owned());
         self.scroll_state = self.scroll_state.position(index);
     }
 
@@ -125,9 +180,7 @@ impl FileTable {
         buf: &mut Buffer,
         area: Rect,
         focused: bool,
-        file_index: &Arc<RwLock<FileIndex>>,
         marked_files: &HashSet<PathBuf>,
-        sort_by: &Sorting,
     ) {
         let header_style = Style::default().dark_gray();
         let selected_style = if focused {
@@ -145,69 +198,34 @@ impl FileTable {
             .collect::<Row>()
             .style(header_style);
 
-        let count = self.paths.len();
+        let total_size = humansize::format_size(self.total_size, humansize::DECIMAL);
 
-        // TODO: Move this to update_table
-        // Lock the FileIndex only once, then copy out the data we need:
-        let (dirs, meta_for_paths, total_size_raw) = {
-            let fi = file_index.read().unwrap();
+        let rows = self.entries.clone().into_iter().map(|e| {
+            let size = humansize::format_size(e.size, humansize::DECIMAL);
+            let date = e.date.format("%d/%m/%Y");
+            let is_marked = marked_files.contains(&e.path);
 
-            // Pre-calculate file metadata for each path we display,
-            // including size & date. Also track a sum to show total size.
-            let dirs = fi.dirs.clone();
-            let mut total_size_acc = 0u64;
-            let mut meta_vec = Vec::with_capacity(count);
-            for path in &self.paths {
-                let size = fi.file_size(path).unwrap_or_default();
-                let date = fi.file_date_modified(path).unwrap_or_default(); // or created
-                let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
-                total_size_acc += size;
+            let path_style = if self.mark_marked && is_marked {
+                Style::new().yellow()
+            } else {
+                Style::new()
+            };
 
-                meta_vec.push((path.clone(), size, date, clone_count));
-            }
-
-            // Sort the paths
-            meta_vec.sort_by(|a, b| match sort_by {
-                Sorting::Path => b.0.cmp(&a.0),
-                Sorting::Size => b.1.cmp(&a.1),
-                Sorting::Date => b.2.cmp(&a.2),
-                Sorting::Count => b.3.cmp(&a.3),
-            });
-
-            (dirs, meta_vec, total_size_acc)
-        };
-
-        let total_size = humansize::format_size(total_size_raw, humansize::DECIMAL);
-
-        let rows = meta_for_paths
-            .into_iter()
-            .map(|(p, size, date, clone_count)| {
-                let path = format_path(&p, &dirs);
-                let size = humansize::format_size(size, humansize::DECIMAL);
-                let date = date.format("%d/%m/%Y");
-                let is_marked = marked_files.contains(&p);
-
-                let path_style = if self.mark_marked && is_marked {
-                    Style::new().yellow()
+            let mut cells = vec![
+                Cell::from(Text::from(if self.mark_marked && is_marked {
+                    "*"
                 } else {
-                    Style::new()
-                };
-
-                let mut cells = vec![
-                    Cell::from(Text::from(if self.mark_marked && is_marked {
-                        "*"
-                    } else {
-                        " "
-                    })),
-                    Cell::from(Text::from(path.set_style(path_style))),
-                    Cell::from(Text::from(format!("{date}"))),
-                    Cell::from(Text::from(size)),
-                ];
-                if self.show_clone_count {
-                    cells.push(Cell::from(Text::from(clone_count.to_string())));
-                }
-                cells.into_iter().collect::<Row>().style(Style::new())
-            });
+                    " "
+                })),
+                Cell::from(Text::from(e.display_path.set_style(path_style))),
+                Cell::from(Text::from(format!("{date}"))),
+                Cell::from(Text::from(size)),
+            ];
+            if self.show_clone_count {
+                cells.push(Cell::from(Text::from(e.clone_count.to_string())));
+            }
+            cells.into_iter().collect::<Row>().style(Style::new())
+        });
         let block = if focused {
             Block::bordered()
                 .border_type(BorderType::Thick)
@@ -220,7 +238,7 @@ impl FileTable {
 
         let footer = Row::new(vec![
             Cell::from(Text::from("")),
-            Cell::from(Text::from(format!("Files: {count}"))),
+            Cell::from(Text::from(format!("Files: {}", self.table_len))),
             Cell::from(Text::from("Total:")),
             Cell::from(Text::from(total_size.to_string())),
         ])
@@ -237,7 +255,7 @@ impl FileTable {
             widths.push(Constraint::Max(7));
         }
 
-        let table = Table::new(rows.clone(), widths)
+        let table = Table::new(rows, widths)
             .header(header)
             .footer(footer)
             .row_highlight_style(selected_style)

@@ -6,8 +6,8 @@ edition = "2024"
 [dependencies]
 tracing.workspace = true
 clap.workspace = true
+chrono.workspace = true
 
-chrono = "0.4"
 chksum = "0.4"
 base64 = "0.22"
 infer = "0.19"
