@@ -5,10 +5,9 @@ use color_eyre::eyre::Result;
 use tracing_appender::non_blocking::WorkerGuard;
 
 mod app;
+mod constants;
 mod table;
 mod tui;
-
-const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -50,11 +49,11 @@ async fn main() -> Result<()> {
     let _guard = init_tracing(log_level)?;
 
     if args.get_flag("open_config") {
-        deckard::config::SearchConfig::edit_config(CONFIG_NAME)?;
+        deckard::config::SearchConfig::edit_config(constants::CONFIG_NAME)?;
         return Ok(());
     }
 
-    let config = deckard::cli::augment_config(CONFIG_NAME, &args);
+    let config = deckard::cli::augment_config(constants::CONFIG_NAME, &args);
 
     let dry_run = args.get_flag("dry_run");
     let remove_dirs = args.get_flag("remove_dirs");
@@ -98,5 +97,8 @@ fn init_tracing(log_level: tracing::Level) -> Result<WorkerGuard> {
 
 /// Helper to get log file path
 fn log_path() -> Result<PathBuf> {
-    Ok(deckard::config::SearchConfig::get_config_folder(CONFIG_NAME)?.join("deckard-tui.log"))
+    Ok(
+        deckard::config::SearchConfig::get_config_folder(constants::CONFIG_NAME)?
+            .join(constants::LOG_NAME),
+    )
 }

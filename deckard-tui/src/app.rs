@@ -1,3 +1,4 @@
+use crate::constants;
 use crate::table::FileTable;
 use arboard::Clipboard;
 use color_eyre::eyre::{Result, WrapErr};
@@ -7,10 +8,10 @@ use deckard::index::FileIndex;
 use futures::StreamExt;
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Styled, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Gauge, Paragraph, Widget, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Gauge, Paragraph, Widget, Wrap},
 };
 use std::sync::{Arc, RwLock};
 use std::{
@@ -33,7 +34,7 @@ enum FocusedWindow {
     Files,
     Clones,
     Marked,
-    _Help,
+    Popup,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -257,13 +258,21 @@ impl App {
             KeyCode::Char('m') => self.toggle_show_marked_table(),
             KeyCode::Char('y') => self.copy_path(),
             KeyCode::Char('.') => self.toggle_more_keys(),
-            KeyCode::Char('?') => unimplemented!(), // TODO: popup help
+            KeyCode::Char('?') => self.toggle_about(),
             KeyCode::Char('s') => self.cycle_sort_by(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.focus_previus_table(),
             _ => {}
         }
         Ok(())
+    }
+
+    fn toggle_about(&mut self) {
+        if matches!(self.focused_window, FocusedWindow::Popup) {
+            self.focused_window = FocusedWindow::Files;
+        } else {
+            self.focused_window = FocusedWindow::Popup;
+        }
     }
 
     fn exit(&mut self) {
@@ -690,13 +699,7 @@ impl App {
     }
 
     fn render_progress_bar(&self, buf: &mut Buffer, area: Rect) {
-        // take up a third of the screen vertically and half horizontally
-        let popup_area = Rect {
-            x: area.width / 4,
-            y: area.height / 3,
-            width: area.width / 2,
-            height: area.height / 6,
-        };
+        let popup_area = popup_area(area, 60, 30);
 
         let title = Line::from(" Working ").centered();
         let label = Span::styled(format!("{} files", self.current_state), Style::new().bold());
@@ -724,6 +727,37 @@ impl App {
             .label(label);
 
         gauge.render(popup_area, buf);
+    }
+
+    fn render_about(&self, buf: &mut Buffer, area: Rect) {
+        // take up a third of the screen vertically and half horizontally
+        let popup_area = popup_area(area, 60, 60);
+
+        let title = Line::from(" About ").centered();
+
+        let title_block = Block::new()
+            .title(title)
+            .title_style(Style::new().bold().white())
+            .title_bottom(Line::from(vec![" Hide ".into(), "<?> ".blue().bold()]).right_aligned())
+            .borders(Borders::ALL)
+            .border_type(BorderType::Thick)
+            .border_style(Color::LightMagenta);
+
+        Clear.render(popup_area, buf);
+
+        let help_text = Text::raw(format!(
+            "{}\n{}",
+            constants::HELP_LOGO,
+            constants::HELP_TEXT
+        ));
+
+        Paragraph::new(help_text)
+            .block(title_block)
+            // .gray()
+            .left_aligned()
+            // .scroll((self.scroll, 0))
+            // .wrap(Wrap { trim: false })
+            .render(popup_area, buf);
     }
 
     fn render_summary(&self, buf: &mut Buffer, area: Rect) {
@@ -946,6 +980,9 @@ impl App {
             self.render_main(buf, rects[1]);
             self.render_summary(buf, rects[2]);
             self.render_footer(buf, rects[3]);
+            if matches!(self.focused_window, FocusedWindow::Popup) {
+                self.render_about(buf, area);
+            }
         } else {
             self.render_progress_bar(buf, area);
         }
@@ -1027,4 +1064,13 @@ pub fn format_path(path: &PathBuf, target_paths: &HashSet<PathBuf>) -> String {
         path
     };
     relative_path.to_string_lossy().to_string()
+}
+
+/// helper function to create a centered rect using up certain percentage of the available rect `r`
+fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
+    let vertical = Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center);
+    let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
+    let [area] = vertical.areas(area);
+    let [area] = horizontal.areas(area);
+    area
 }
