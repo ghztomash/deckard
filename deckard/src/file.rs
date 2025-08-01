@@ -8,10 +8,8 @@ use lofty::{
 use rusty_chromaprint::Configuration;
 use std::{
     ffi::OsString,
-    fmt::{self, Display},
     fs::{DirEntry, File, FileType, Metadata},
     io::Read,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 use tracing::{debug, trace, warn};
@@ -41,18 +39,6 @@ impl EntryType {
             return EntryType::File;
         }
         EntryType::Unknown
-    }
-}
-
-impl Display for EntryType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let symbol = match self {
-            EntryType::File => "file",
-            EntryType::Dir => "dir",
-            EntryType::Symlink => "link",
-            EntryType::Unknown => "?",
-        };
-        write!(f, "{}", symbol)
     }
 }
 
@@ -110,7 +96,7 @@ impl FileEntry {
             created: metadata.created().unwrap().into(),
             modified: metadata.modified().unwrap().into(),
             mime_type: None,
-            size: metadata.size(),
+            size: metadata.len(),
             hash: None,
             full_hash: None,
             image_hash: None,
@@ -143,7 +129,7 @@ impl FileEntry {
             created: metadata.created().unwrap().into(),
             modified: metadata.modified().unwrap().into(),
             mime_type: None,
-            size: metadata.size(),
+            size: metadata.len(),
             hash: None,
             full_hash: None,
             image_hash: None,
@@ -304,20 +290,6 @@ impl FileEntry {
     }
 }
 
-impl Display for FileEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}  {} {} {} B : {}",
-            self.file_type,
-            self.name,
-            self.size,
-            self.created.format("%Y-%m-%d %H:%M:%S"),
-            self.path.to_string_lossy(),
-        )
-    }
-}
-
 #[inline]
 pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<String, DeckardError> {
     let mime = mime_guess::from_path(&path).first();
@@ -327,7 +299,7 @@ pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<String
             let mut file = File::open(&path)?;
 
             let mut magic = [0; MAGIC_SIZE];
-            if file.metadata()?.size() >= MAGIC_SIZE as u64 {
+            if file.metadata()?.len() >= MAGIC_SIZE as u64 {
                 file.read_exact(&mut magic)
                     .unwrap_or_else(|e| warn!("read magic: {:?} for {:?}", e, path));
             }
