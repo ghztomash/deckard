@@ -1,4 +1,4 @@
-use crate::app::format_path;
+use crate::app::{Sorting, format_path};
 use deckard::index::FileIndex;
 use ratatui::{
     buffer::Buffer,
@@ -127,6 +127,7 @@ impl FileTable {
         focused: bool,
         file_index: &Arc<RwLock<FileIndex>>,
         marked_files: &HashSet<PathBuf>,
+        sort_by: &Sorting,
     ) {
         let header_style = Style::default().dark_gray();
         let selected_style = if focused {
@@ -146,6 +147,7 @@ impl FileTable {
 
         let count = self.paths.len();
 
+        // TODO: Move this to update_table
         // Lock the FileIndex only once, then copy out the data we need:
         let (dirs, meta_for_paths, total_size_raw) = {
             let fi = file_index.read().unwrap();
@@ -163,6 +165,15 @@ impl FileTable {
 
                 meta_vec.push((path.clone(), size, date, clone_count));
             }
+
+            // Sort the paths
+            meta_vec.sort_by(|a, b| match sort_by {
+                Sorting::Path => b.0.cmp(&a.0),
+                Sorting::Size => b.1.cmp(&a.1),
+                Sorting::Date => b.2.cmp(&a.2),
+                Sorting::Count => b.3.cmp(&a.3),
+            });
+
             (dirs, meta_vec, total_size_acc)
         };
 

@@ -34,13 +34,36 @@ enum FocusedWindow {
     _Help,
 }
 
-#[derive(Debug, Default)]
-enum Sorting {
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Sorting {
     #[default]
-    None,
-    _Count,
-    _Size,
-    _Date,
+    Size,
+    Count,
+    Date,
+    Path,
+}
+
+impl Sorting {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Size => Self::Count,
+            Self::Count => Self::Date,
+            Self::Date => Self::Path,
+            Self::Path => Self::Size,
+        }
+    }
+}
+
+impl fmt::Display for Sorting {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let result = match self {
+            Self::Size => "Size",
+            Self::Count => "Count",
+            Self::Date => "Date",
+            Self::Path => "Path",
+        };
+        write!(f, "{result}")
+    }
 }
 
 #[derive(Debug, Default)]
@@ -59,6 +82,7 @@ pub struct App {
     show_file_info: bool,
     show_more_keys: bool,
     current_state: State,
+    sort_by: Sorting,
     cancel_flag: Arc<AtomicBool>,
     abort_handle: Option<AbortHandle>,
 }
@@ -130,6 +154,7 @@ impl App {
             current_state: State::Idle,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             abort_handle: None,
+            sort_by: Sorting::default(),
             dry_run,
             remove_dirs,
         }
@@ -218,9 +243,10 @@ impl App {
             KeyCode::Char('a') => self.mark_all(),
             KeyCode::Char('A') => self.clear_marked(),
             KeyCode::Char('m') => self.toggle_show_marked_table(),
-            KeyCode::Char('y') => unimplemented!(),
+            KeyCode::Char('y') => unimplemented!(), // TODO: copy path
             KeyCode::Char('.') => self.toggle_more_keys(),
-            KeyCode::Char('?') => unimplemented!(),
+            KeyCode::Char('?') => unimplemented!(), // TODO: popup help
+            KeyCode::Char('s') => self.cycle_sort_by(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.focus_previus_table(),
             _ => {}
@@ -407,6 +433,10 @@ impl App {
 
     fn toggle_more_keys(&mut self) {
         self.show_more_keys = !self.show_more_keys;
+    }
+
+    fn cycle_sort_by(&mut self) {
+        self.sort_by = self.sort_by.next();
     }
 
     pub fn next_file(&mut self) {
@@ -675,14 +705,9 @@ impl App {
 
     fn render_summary(&self, buf: &mut Buffer, area: Rect) {
         // Acquire the lock to pull needed data, then drop it.
-        let (dirs, total, files_len) = {
+        let dirs: Vec<PathBuf> = {
             let file_index = self.file_index.read().unwrap();
-
-            // Copy out what you need into local variables.
-            let dirs: Vec<PathBuf> = file_index.dirs.clone().into_iter().collect();
-            let total: u64 = file_index.files.values().map(|f| f.size).sum();
-            let files_len = file_index.files_len();
-            (dirs, total, files_len)
+            file_index.dirs.clone().into_iter().collect()
         };
 
         let dir_lines: Vec<String> = dirs
@@ -699,14 +724,11 @@ impl App {
             .collect();
 
         let dir_joined = dir_lines.join(" ");
-        let total_size = humansize::format_size(total, humansize::DECIMAL);
 
         let summary_lines = vec![
             Line::from(vec![
-                "Files: ".into(),
-                files_len.to_string().magenta(),
-                " Total: ".into(),
-                total_size.blue(),
+                "Sort by: ".into(),
+                format!("{:?}", self.sort_by).blue(),
                 " State: ".into(),
                 format!("{}", self.current_state)
                     .set_style(Style::default().fg(self.current_state.get_color())),
@@ -766,6 +788,8 @@ impl App {
                 " Focus right ".into(),
                 "<l/right>".blue().bold(),
                 " Copy path ".into(),
+                "<s>".blue().bold(),
+                " Sort by ".into(),
                 "<y>".set_style(selected_style),
                 " Clear marked ".into(),
                 "<A>".set_style(marked_style),
@@ -850,6 +874,7 @@ impl App {
             matches!(self.focused_window, FocusedWindow::Files),
             &self.file_index,
             &self.marked_files,
+            &self.sort_by,
         );
         if self.show_clones_table {
             self.clone_table.render(
@@ -858,6 +883,7 @@ impl App {
                 matches!(self.focused_window, FocusedWindow::Clones),
                 &self.file_index,
                 &self.marked_files,
+                &self.sort_by,
             );
         }
         if self.show_marked_table {
@@ -872,6 +898,7 @@ impl App {
                 matches!(self.focused_window, FocusedWindow::Marked),
                 &self.file_index,
                 &self.marked_files,
+                &self.sort_by,
             );
         }
         if self.show_file_info {
