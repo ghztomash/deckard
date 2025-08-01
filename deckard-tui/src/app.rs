@@ -785,9 +785,9 @@ impl App {
                 " Focus right ".into(),
                 "<l/right>".blue().bold(),
                 " Copy path ".into(),
-                "<s>".blue().bold(),
-                " Sort by ".into(),
                 "<y>".set_style(selected_style),
+                " Sort by ".into(),
+                "<s>".blue().bold(),
                 " Clear marked ".into(),
                 "<A>".set_style(marked_style),
                 " Show marked ".into(),
@@ -902,9 +902,7 @@ impl App {
             self.render_file_info(buf, rect_area);
         }
     }
-}
 
-impl App {
     fn render_ui(&mut self, area: Rect, buf: &mut Buffer) {
         let footer_height = if self.show_more_keys { 2 } else { 1 };
 
