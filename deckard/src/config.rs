@@ -201,9 +201,7 @@ impl SearchConfig {
         }
 
         eprintln!("Opening configuration file: {:?}", config_path);
-        std::process::Command::new("open")
-            .arg(config_path)
-            .output()?;
+        open::that_detached(config_path)?;
         Ok(())
     }
 }

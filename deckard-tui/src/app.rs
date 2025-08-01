@@ -1,4 +1,5 @@
 use crate::table::FileTable;
+use arboard::Clipboard;
 use color_eyre::eyre::{Result, WrapErr};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
 use deckard::config::SearchConfig;
@@ -24,6 +25,7 @@ use tokio::{
     sync::mpsc::{UnboundedSender, unbounded_channel},
     task::AbortHandle,
 };
+use tracing::{debug, error, warn};
 
 #[derive(Debug, Default)]
 enum FocusedWindow {
@@ -66,7 +68,7 @@ impl fmt::Display for Sorting {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct App {
     focused_window: FocusedWindow,
     should_exit: bool,
@@ -83,6 +85,7 @@ pub struct App {
     show_more_keys: bool,
     current_state: State,
     sort_by: Sorting,
+    clipboard: Option<Clipboard>,
     cancel_flag: Arc<AtomicBool>,
     abort_handle: Option<AbortHandle>,
 }
@@ -139,6 +142,14 @@ impl App {
         dry_run: bool,
         remove_dirs: bool,
     ) -> Self {
+        let clipboard = Clipboard::new().map_or_else(
+            |e| {
+                error!("Failed to create Clipboard {}", e);
+                None
+            },
+            Some,
+        );
+
         Self {
             focused_window: FocusedWindow::Files,
             should_exit: false,
@@ -154,6 +165,7 @@ impl App {
             current_state: State::Idle,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             abort_handle: None,
+            clipboard,
             sort_by: Sorting::default(),
             dry_run,
             remove_dirs,
@@ -243,7 +255,7 @@ impl App {
             KeyCode::Char('a') => self.mark_all(),
             KeyCode::Char('A') => self.clear_marked(),
             KeyCode::Char('m') => self.toggle_show_marked_table(),
-            KeyCode::Char('y') => unimplemented!(), // TODO: copy path
+            KeyCode::Char('y') => self.copy_path(),
             KeyCode::Char('.') => self.toggle_more_keys(),
             KeyCode::Char('?') => unimplemented!(), // TODO: popup help
             KeyCode::Char('s') => self.cycle_sort_by(),
@@ -317,6 +329,20 @@ impl App {
             _ => return None,
         };
         active_table.selected_path()
+    }
+
+    fn copy_path(&mut self) {
+        if let Some(selected_file) = self.active_selected_file() {
+            self.clipboard.as_mut().map_or_else(
+                || warn!("No Clipboard found"),
+                |clipboard| {
+                    debug!("Copying path to clipboard {:?}", selected_file);
+                    if let Err(e) = clipboard.set_text(selected_file.to_string_lossy()) {
+                        error!("Failed to set Clipboard {}", e);
+                    }
+                },
+            );
+        }
     }
 
     fn open_file(&mut self) {

@@ -40,8 +40,8 @@ async fn main() -> Result<()> {
     // open log file, before setting up logging because it overwrites it
     if args.get_flag("open_logs") {
         let log_path = log_path()?;
-        eprintln!("Opening log file: {:?}", log_path);
-        std::process::Command::new("open").arg(log_path).output()?;
+        eprintln!("Opening log file: {log_path:?}");
+        open::that_detached(log_path)?;
         return Ok(());
     }
 
