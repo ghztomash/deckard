@@ -34,13 +34,36 @@ enum FocusedWindow {
     _Help,
 }
 
-#[derive(Debug, Default)]
-enum Sorting {
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Sorting {
     #[default]
-    None,
-    _Count,
-    _Size,
-    _Date,
+    Size,
+    Count,
+    Date,
+    Path,
+}
+
+impl Sorting {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Size => Self::Count,
+            Self::Count => Self::Date,
+            Self::Date => Self::Path,
+            Self::Path => Self::Size,
+        }
+    }
+}
+
+impl fmt::Display for Sorting {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let result = match self {
+            Self::Size => "Size",
+            Self::Count => "Count",
+            Self::Date => "Date",
+            Self::Path => "Path",
+        };
+        write!(f, "{result}")
+    }
 }
 
 #[derive(Debug, Default)]
@@ -59,6 +82,7 @@ pub struct App {
     show_file_info: bool,
     show_more_keys: bool,
     current_state: State,
+    sort_by: Sorting,
     cancel_flag: Arc<AtomicBool>,
     abort_handle: Option<AbortHandle>,
 }
@@ -130,6 +154,7 @@ impl App {
             current_state: State::Idle,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             abort_handle: None,
+            sort_by: Sorting::default(),
             dry_run,
             remove_dirs,
         }
@@ -218,9 +243,10 @@ impl App {
             KeyCode::Char('a') => self.mark_all(),
             KeyCode::Char('A') => self.clear_marked(),
             KeyCode::Char('m') => self.toggle_show_marked_table(),
-            KeyCode::Char('y') => unimplemented!(),
+            KeyCode::Char('y') => unimplemented!(), // TODO: copy path
             KeyCode::Char('.') => self.toggle_more_keys(),
-            KeyCode::Char('?') => unimplemented!(),
+            KeyCode::Char('?') => unimplemented!(), // TODO: popup help
+            KeyCode::Char('s') => self.cycle_sort_by(),
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.focus_previus_table(),
             _ => {}
@@ -242,7 +268,7 @@ impl App {
                 self.marked_files.remove(&path);
             }
             let v = self.marked_files.clone().into_iter().collect();
-            self.marked_table.update_table(&v);
+            self.marked_table.update_table(&v, &self.file_index, None);
             if matches!(self.focused_window, FocusedWindow::Marked) {
                 self.marked_table.select_previous();
             }
@@ -253,14 +279,14 @@ impl App {
         for p in self.clone_table.paths() {
             self.marked_files.insert(p);
             let v = self.marked_files.clone().into_iter().collect();
-            self.marked_table.update_table(&v);
+            self.marked_table.update_table(&v, &self.file_index, None);
         }
     }
 
     fn clear_marked(&mut self) {
         self.marked_files = HashSet::new();
         let v = self.marked_files.clone().into_iter().collect();
-        self.marked_table.update_table(&v);
+        self.marked_table.update_table(&v, &self.file_index, None);
         if matches!(self.focused_window, FocusedWindow::Marked) {
             self.marked_table.select_none();
         }
@@ -409,6 +435,11 @@ impl App {
         self.show_more_keys = !self.show_more_keys;
     }
 
+    fn cycle_sort_by(&mut self) {
+        self.sort_by = self.sort_by.next();
+        self.update_file_table();
+    }
+
     pub fn next_file(&mut self) {
         match self.focused_window {
             FocusedWindow::Files => {
@@ -442,7 +473,7 @@ impl App {
     }
 
     fn update_file_table(&mut self) {
-        let mut paths: Vec<PathBuf> = self
+        let paths: Vec<PathBuf> = self
             .file_index
             .read()
             .unwrap()
@@ -451,14 +482,9 @@ impl App {
             .cloned()
             .collect();
 
-        paths.sort_by(|a, b| {
-            let a_size = self.file_index.read().unwrap().file_size(a).unwrap();
-            let b_size = self.file_index.read().unwrap().file_size(b).unwrap();
-            b_size.cmp(&a_size)
-        });
-
         if !paths.is_empty() {
-            self.file_table.update_table(&paths);
+            self.file_table
+                .update_table(&paths, &self.file_index, Some(&self.sort_by));
             self.file_table.select_first();
         } else {
             self.file_table.clear();
@@ -475,7 +501,8 @@ impl App {
                 .get(selected_file)
             {
                 let paths = clone_paths.iter().cloned().collect();
-                self.clone_table.update_table(&paths);
+                self.clone_table
+                    .update_table(&paths, &self.file_index, Some(&Sorting::Path));
                 self.clone_table.select_none();
             }
         } else {
@@ -675,14 +702,9 @@ impl App {
 
     fn render_summary(&self, buf: &mut Buffer, area: Rect) {
         // Acquire the lock to pull needed data, then drop it.
-        let (dirs, total, files_len) = {
+        let dirs: Vec<PathBuf> = {
             let file_index = self.file_index.read().unwrap();
-
-            // Copy out what you need into local variables.
-            let dirs: Vec<PathBuf> = file_index.dirs.clone().into_iter().collect();
-            let total: u64 = file_index.files.values().map(|f| f.size).sum();
-            let files_len = file_index.files_len();
-            (dirs, total, files_len)
+            file_index.dirs.clone().into_iter().collect()
         };
 
         let dir_lines: Vec<String> = dirs
@@ -699,14 +721,11 @@ impl App {
             .collect();
 
         let dir_joined = dir_lines.join(" ");
-        let total_size = humansize::format_size(total, humansize::DECIMAL);
 
         let summary_lines = vec![
             Line::from(vec![
-                "Files: ".into(),
-                files_len.to_string().magenta(),
-                " Total: ".into(),
-                total_size.blue(),
+                "Sort by: ".into(),
+                format!("{:?}", self.sort_by).blue(),
                 " State: ".into(),
                 format!("{}", self.current_state)
                     .set_style(Style::default().fg(self.current_state.get_color())),
@@ -766,6 +785,8 @@ impl App {
                 " Focus right ".into(),
                 "<l/right>".blue().bold(),
                 " Copy path ".into(),
+                "<s>".blue().bold(),
+                " Sort by ".into(),
                 "<y>".set_style(selected_style),
                 " Clear marked ".into(),
                 "<A>".set_style(marked_style),
@@ -848,7 +869,6 @@ impl App {
             buf,
             main_sub_area_top[0], // top left
             matches!(self.focused_window, FocusedWindow::Files),
-            &self.file_index,
             &self.marked_files,
         );
         if self.show_clones_table {
@@ -856,7 +876,6 @@ impl App {
                 buf,
                 main_sub_area_top[1], // top right
                 matches!(self.focused_window, FocusedWindow::Clones),
-                &self.file_index,
                 &self.marked_files,
             );
         }
@@ -870,7 +889,6 @@ impl App {
                 buf,
                 rect_area,
                 matches!(self.focused_window, FocusedWindow::Marked),
-                &self.file_index,
                 &self.marked_files,
             );
         }
