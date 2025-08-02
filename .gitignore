@@ -1,6 +1,7 @@
 .DS_Store
 /target
 /test_files/big_files
+/test_files/audio
 *.mp3
 *.wav
 *.ogg
