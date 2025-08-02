@@ -15,7 +15,7 @@ use symphonia::core::{
     io::MediaSourceStream,
     probe::Hint,
 };
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 #[inline]
 pub fn get_full_hash<P: AsRef<Path>>(hash: &HashAlgorithm, path: P) -> String {
@@ -132,9 +132,18 @@ pub fn get_audio_hash(
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
     // guess the format
-    let probe = symphonia::default::get_probe()
-        .format(&hint, mss, &Default::default(), &Default::default())
-        .expect("failed to prove audio format");
+    let probe = match symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &Default::default(),
+        &Default::default(),
+    ) {
+        Ok(br) => br,
+        Err(e) => {
+            error!("failed to prove audio format for file {:?}: {:?}", path, e);
+            return None;
+        }
+    };
     let mut format = probe.format;
 
     let track = format

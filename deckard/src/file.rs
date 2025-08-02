@@ -145,9 +145,6 @@ impl FileEntry {
             return;
         }
 
-        self.mime_type = get_mime_type(&self.path).ok();
-        trace!("{} found mime type {:?}", self.name, self.mime_type);
-
         self.hash = Some(hasher::get_quick_hash(
             &config.hasher_config.hash_algorithm,
             config.hasher_config.size,
@@ -162,31 +159,39 @@ impl FileEntry {
             ))
         }
 
-        if let Some(mime) = self.mime_type.as_ref() {
-            if mime.contains("image") && config.image_config.compare {
-                self.image_hash = hasher::get_image_hash(
-                    &config.image_config.hash_algorithm,
-                    &config.image_config.filter_algorithm,
-                    config.image_config.size,
-                    &self.path,
-                );
-            }
-        } else {
-            warn!("No MIME type for file {}", self.path.to_string_lossy())
+        if config.image_config.compare || config.audio_config.compare {
+            self.mime_type = get_mime_type(&self.path).ok();
+            trace!("{} found mime type {:?}", self.name, self.mime_type);
         }
 
-        if let Some(mime) = self.mime_type.as_ref() {
-            if mime.contains("audio") {
-                if config.audio_config.read_tags {
+        if config.image_config.compare {
+            if let Some(mime) = self.mime_type.as_ref() {
+                if mime.contains("image") {
+                    self.image_hash = hasher::get_image_hash(
+                        &config.image_config.hash_algorithm,
+                        &config.image_config.filter_algorithm,
+                        config.image_config.size,
+                        &self.path,
+                    );
+                }
+            }
+        }
+
+        if config.audio_config.read_tags {
+            if let Some(mime) = self.mime_type.as_ref() {
+                if mime.contains("audio") {
                     self.audio_tags = get_id3_tags(&self.path);
                 }
-                if config.audio_config.compare {
+            }
+        }
+
+        if config.audio_config.compare {
+            if let Some(mime) = self.mime_type.as_ref() {
+                if mime.contains("audio") {
                     let chroma_config = Configuration::preset_test1();
                     self.audio_hash = hasher::get_audio_hash(&self.path, &chroma_config);
                 }
             }
-        } else {
-            warn!("No MIME type for file {}", self.path.to_string_lossy())
         }
 
         self.processed = true;
