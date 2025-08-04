@@ -2,7 +2,7 @@ use crate::constants;
 use crate::table::FileTable;
 use arboard::Clipboard;
 use color_eyre::eyre::{Result, WrapErr};
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
 use futures::StreamExt;
@@ -244,8 +244,22 @@ impl App {
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
         match key_event.code {
             KeyCode::Char('q') | KeyCode::Esc => self.exit(),
-            KeyCode::Char('j') | KeyCode::Down => self.next_file(),
-            KeyCode::Char('k') | KeyCode::Up => self.previous_file(),
+
+            // page move
+            KeyCode::Char('J') | KeyCode::Down
+                if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                self.next_file(true)
+            }
+            KeyCode::Char('K') | KeyCode::Up
+                if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                self.previous_file(true)
+            }
+            // regular move
+            KeyCode::Char('j') | KeyCode::Down => self.next_file(false),
+            KeyCode::Char('k') | KeyCode::Up => self.previous_file(false),
+
             KeyCode::Char('i') => self.toggle_info(),
             KeyCode::Char('o') => self.open_file(),
             KeyCode::Char('p') => self.open_path(),
@@ -291,7 +305,7 @@ impl App {
             let v = self.marked_files.clone().into_iter().collect();
             self.marked_table.update_table(&v, &self.file_index, None);
             if matches!(self.focused_window, FocusedWindow::Marked) {
-                self.marked_table.select_previous();
+                self.marked_table.select_previous(1);
             }
         }
     }
@@ -475,33 +489,37 @@ impl App {
         self.update_file_table();
     }
 
-    pub fn next_file(&mut self) {
+    pub fn next_file(&mut self, jump: bool) {
+        let step = if jump { 10 } else { 1 };
+
         match self.focused_window {
             FocusedWindow::Files => {
-                self.file_table.select_next();
+                self.file_table.select_next(step);
                 self.update_clone_table();
             }
             FocusedWindow::Clones => {
-                self.clone_table.select_next();
+                self.clone_table.select_next(step);
             }
             FocusedWindow::Marked => {
-                self.marked_table.select_next();
+                self.marked_table.select_next(step);
             }
             _ => {}
         }
     }
 
-    pub fn previous_file(&mut self) {
+    pub fn previous_file(&mut self, jump: bool) {
+        let step = if jump { 10 } else { 1 };
+
         match self.focused_window {
             FocusedWindow::Files => {
-                self.file_table.select_previous();
+                self.file_table.select_previous(step);
                 self.update_clone_table();
             }
             FocusedWindow::Clones => {
-                self.clone_table.select_previous();
+                self.clone_table.select_previous(step);
             }
             FocusedWindow::Marked => {
-                self.marked_table.select_previous();
+                self.marked_table.select_previous(step);
             }
             _ => {}
         }

@@ -126,17 +126,20 @@ impl FileTable {
         self.scroll_state = self.scroll_state.position(index);
     }
 
-    pub fn select_next(&mut self) {
+    // Select step entries down
+    pub fn select_next(&mut self, step: usize) {
         if self.table_len == 0 {
             self.select_none();
             return;
         }
         let i = match self.table_state.selected() {
             Some(i) => {
-                if i >= self.table_len - 1 {
+                if i >= self.table_len.saturating_sub(1) {
                     0
+                } else if i >= self.table_len.saturating_sub(step) {
+                    self.table_len.saturating_sub(1)
                 } else {
-                    i + 1
+                    i.saturating_add(step)
                 }
             }
             None => 0,
@@ -144,7 +147,8 @@ impl FileTable {
         self.select_entry(i);
     }
 
-    pub fn select_previous(&mut self) {
+    /// Select step entries up
+    pub fn select_previous(&mut self, step: usize) {
         if self.table_len == 0 {
             self.select_none();
             return;
@@ -152,9 +156,9 @@ impl FileTable {
         let i = match self.table_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.table_len - 1
+                    self.table_len.saturating_sub(1)
                 } else {
-                    i - 1
+                    i.saturating_sub(step)
                 }
             }
             None => 0,
