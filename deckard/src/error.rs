@@ -8,5 +8,7 @@ pub enum DeckardError {
     #[error(transparent)]
     ConfigError(#[from] confy::ConfyError),
     #[error("Config path does not exist")]
-    ConfigPathNotFound(),
+    ConfigPathNotFound,
+    #[error("File name missing")]
+    FileNameMissing,
 }

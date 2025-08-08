@@ -8,7 +8,7 @@ use lofty::{
 use rusty_chromaprint::Configuration;
 use std::{
     ffi::OsString,
-    fs::{DirEntry, File, FileType, Metadata},
+    fs::{File, Metadata},
     io::Read,
     path::{Path, PathBuf},
 };
@@ -16,45 +16,15 @@ use tracing::{debug, trace, warn};
 
 const MAGIC_SIZE: usize = 8;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub enum EntryType {
-    File,
-    Dir,
-    Symlink,
-    Unknown,
-}
-
-impl EntryType {
-    pub fn new(file: std::io::Result<FileType>) -> Self {
-        if file.is_err() {
-            return EntryType::Unknown;
-        }
-        let file = file.unwrap();
-
-        if file.is_dir() {
-            return EntryType::Dir;
-        } else if file.is_symlink() {
-            return EntryType::Symlink;
-        } else if file.is_file() {
-            return EntryType::File;
-        }
-        EntryType::Unknown
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct FileEntry {
     pub path: PathBuf,
-    pub name: String,
-    pub prefix: String,
-    pub extension: Option<String>,
-    pub file_type: EntryType,
+    pub name: OsString,
     pub created: DateTime<Local>,
     pub modified: DateTime<Local>,
     pub mime_type: Option<String>,
     pub size: u64,
     pub hash: Option<String>,
-    pub full_hash: Option<String>,
     pub image_hash: Option<ImageHash>,
     pub audio_hash: Option<Vec<u32>>,
     pub audio_tags: Option<AudioTags>,
@@ -76,92 +46,47 @@ pub struct AudioTags {
 }
 
 impl FileEntry {
-    pub fn new(path: PathBuf, name: OsString, metadata: Metadata) -> Self {
-        Self {
+    pub fn new(path: &PathBuf, metadata: &Metadata) -> Result<Self, DeckardError> {
+        Ok(Self {
             path: path.to_owned(),
-            name: name.into_string().unwrap_or_default(),
-            prefix: path
-                .file_stem()
-                .and_then(|os_str| os_str.to_str())
-                .map(|s| s.to_string())
-                .unwrap_or_default()
-                .split('.')
-                .collect::<Vec<&str>>()[0]
-                .to_string(),
-            extension: path
-                .extension()
-                .and_then(|os_str| os_str.to_str())
-                .map(|s| s.to_string()),
-            file_type: EntryType::new(Ok(metadata.file_type())),
-            created: metadata.created().unwrap().into(),
-            modified: metadata.modified().unwrap().into(),
+            name: path
+                .file_name()
+                .ok_or(DeckardError::FileNameMissing)?
+                .into(),
+            created: metadata.created()?.into(),
+            modified: metadata.modified()?.into(),
             mime_type: None,
             size: metadata.len(),
             hash: None,
-            full_hash: None,
             image_hash: None,
             audio_hash: None,
             audio_tags: None,
             processed: false,
-        }
-    }
-
-    pub fn from_dir_entry(entry: DirEntry) -> Self {
-        let metadata = entry.metadata().unwrap();
-        Self {
-            path: entry.path(),
-            name: entry.file_name().into_string().unwrap_or_default(),
-            prefix: entry
-                .path()
-                .file_stem()
-                .and_then(|os_str| os_str.to_str())
-                .map(|s| s.to_string())
-                .unwrap_or_default()
-                .split('.')
-                .collect::<Vec<&str>>()[0]
-                .to_string(),
-            extension: entry
-                .path()
-                .extension()
-                .and_then(|os_str| os_str.to_str())
-                .map(|s| s.to_string()),
-            file_type: EntryType::new(entry.file_type()),
-            created: metadata.created().unwrap().into(),
-            modified: metadata.modified().unwrap().into(),
-            mime_type: None,
-            size: metadata.len(),
-            hash: None,
-            full_hash: None,
-            image_hash: None,
-            audio_hash: None,
-            audio_tags: None,
-            processed: false,
-        }
+        })
     }
 
     pub fn process(&mut self, config: &SearchConfig) {
-        if self.file_type != EntryType::File {
-            warn!("process: {} is not a file!", self.path.to_string_lossy());
-            return;
-        }
-
-        self.hash = Some(hasher::get_quick_hash(
-            &config.hasher_config.hash_algorithm,
-            config.hasher_config.size,
-            config.hasher_config.splits,
-            &self.path,
-        ));
-
         if config.hasher_config.full_hash {
-            self.full_hash = Some(hasher::get_full_hash(
+            self.hash = Some(hasher::get_full_hash(
                 &config.hasher_config.hash_algorithm,
+                &self.path,
+            ))
+        } else {
+            self.hash = Some(hasher::get_quick_hash(
+                &config.hasher_config.hash_algorithm,
+                config.hasher_config.size,
+                config.hasher_config.splits,
                 &self.path,
             ))
         }
 
         if config.image_config.compare || config.audio_config.compare {
             self.mime_type = get_mime_type(&self.path).ok();
-            trace!("{} found mime type {:?}", self.name, self.mime_type);
+            trace!(
+                "{} found mime type {:?}",
+                self.name.to_string_lossy(),
+                self.mime_type
+            );
         }
 
         if config.image_config.compare {
@@ -198,37 +123,11 @@ impl FileEntry {
     }
 
     pub fn compare(&self, other: &Self, config: &SearchConfig) -> bool {
-        if self.file_type != EntryType::File {
-            warn!(
-                "compare self: {} is not a file!",
-                self.path.to_string_lossy()
-            );
-            return false;
-        }
-
-        if other.file_type != EntryType::File {
-            warn!(
-                "compare other: {} is not a file!",
-                other.path.to_string_lossy()
-            );
-            return false;
-        }
-
-        if self.size == other.size
-            && self.hash.is_some()
-            && self.hash == other.hash
-            && other.hash.is_some()
-        {
-            // check the full file
-            if config.hasher_config.full_hash {
-                if self.full_hash.is_some()
-                    && other.full_hash.is_some()
-                    && self.full_hash == other.full_hash
-                {
+        if self.size == other.size {
+            if let (Some(a), Some(b)) = (self.hash.as_deref(), other.hash.as_deref()) {
+                if a == b {
                     return true;
                 }
-            } else {
-                return true;
             }
         }
 
@@ -246,7 +145,9 @@ impl FileEntry {
             let distance = this_image.dist(other_image);
             debug!(
                 "{} and {} hamming distance: {}",
-                self.name, other.name, distance
+                self.name.to_string_lossy(),
+                other.name.to_string_lossy(),
+                distance
             );
             if distance <= config.image_config.threshold as u32 {
                 return true;
@@ -278,8 +179,8 @@ impl FileEntry {
 
             debug!(
                 "{} and {} matching segments {} with score {}",
-                self.name,
-                other.name,
+                self.name.to_string_lossy(),
+                other.name.to_string_lossy(),
                 segments.len(),
                 score
             );

@@ -590,7 +590,10 @@ impl App {
 
         let info_lines = if let Some(file_entry) = maybe_entry {
             let mut lines = vec![
-                Line::from(vec!["name: ".into(), file_entry.name.to_string().yellow()]),
+                Line::from(vec![
+                    "name: ".into(),
+                    file_entry.name.to_string_lossy().to_string().yellow(),
+                ]),
                 Line::from(vec![
                     "size: ".into(),
                     humansize::format_size(file_entry.size, humansize::DECIMAL)

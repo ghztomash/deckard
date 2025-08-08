@@ -5,12 +5,13 @@ use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
 use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 
+use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::config::SearchConfig;
-use crate::file::{EntryType, FileEntry};
+use crate::file::FileEntry;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -87,62 +88,58 @@ impl FileIndex {
                             let path = entry.path();
 
                             if path.is_file() && !path.is_symlink() {
-                                let metadata = entry.metadata().ok()?;
-                                let file = FileEntry::new(
-                                    path.to_owned(),
-                                    entry.file_name.to_owned(),
-                                    metadata.to_owned(),
-                                );
-                                if file.file_type == EntryType::File {
-                                    // Check filename filter
-                                    let file_name = entry.file_name().to_string_lossy();
-                                    if let Some(exclude_filter) =
-                                        self.config.exclude_filter.as_ref()
+                                // Check filename filter
+                                let file_name = entry.file_name().to_string_lossy();
+                                if let Some(exclude_filter) = self.config.exclude_filter.as_ref() {
+                                    if file_name
+                                        .to_lowercase()
+                                        .contains(&exclude_filter.to_lowercase())
                                     {
-                                        if file_name
-                                            .to_lowercase()
-                                            .contains(&exclude_filter.to_lowercase())
-                                        {
-                                            trace!(
-                                                "File '{}' matches exclude filter pattern '{}'",
-                                                file_name, exclude_filter
-                                            );
-                                            return None;
-                                        }
-                                    }
-                                    if let Some(include_filter) =
-                                        self.config.include_filter.as_ref()
-                                    {
-                                        if !file_name
-                                            .to_lowercase()
-                                            .contains(&include_filter.to_lowercase())
-                                        {
-                                            return None;
-                                        } else {
-                                            trace!(
-                                                "File '{}' matches include filter pattern '{}'",
-                                                file_name, include_filter
-                                            );
-                                        }
-                                    }
-
-                                    // Skip files that are smaller in size
-                                    let file_size = metadata.len();
-                                    if file_size < self.config.min_size {
                                         trace!(
-                                            "Skipping file {}, size {} smaller than {}",
-                                            file_name, file_size, self.config.min_size,
+                                            "File '{}' matches exclude filter pattern '{}'",
+                                            file_name, exclude_filter
                                         );
                                         return None;
                                     }
-
-                                    // Update the progress counter
-                                    if let Some(ref callback) = callback {
-                                        let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                                        callback(count);
-                                    }
-                                    return Some((path, file));
                                 }
+                                if let Some(include_filter) = self.config.include_filter.as_ref() {
+                                    if !file_name
+                                        .to_lowercase()
+                                        .contains(&include_filter.to_lowercase())
+                                    {
+                                        return None;
+                                    } else {
+                                        trace!(
+                                            "File '{}' matches include filter pattern '{}'",
+                                            file_name, include_filter
+                                        );
+                                    }
+                                }
+
+                                // Skip files that are smaller in size
+                                let metadata = entry
+                                    .metadata()
+                                    .inspect_err(|e| error!("Error reading metadata {}", e))
+                                    .ok()?;
+                                let file_size = metadata.len();
+                                if file_size < self.config.min_size {
+                                    trace!(
+                                        "Skipping file {}, size {} smaller than {}",
+                                        file_name, file_size, self.config.min_size,
+                                    );
+                                    return None;
+                                }
+
+                                let file = FileEntry::new(&path, &metadata)
+                                    .inspect_err(|e| error!("Error reading File Entry {}", e))
+                                    .ok()?;
+
+                                // Update the progress counter
+                                if let Some(ref callback) = callback {
+                                    let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                                    callback(count);
+                                }
+                                return Some((path, file));
                             }
                         }
                         Err(e) => {
@@ -268,7 +265,7 @@ impl FileIndex {
         self.duplicates.len()
     }
 
-    pub fn file_name(&self, file: &PathBuf) -> Option<String> {
+    pub fn file_name(&self, file: &PathBuf) -> Option<OsString> {
         self.files.get(file).map(|f| f.name.to_owned())
     }
 

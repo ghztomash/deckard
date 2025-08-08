@@ -187,7 +187,7 @@ impl SearchConfig {
     pub fn get_config_folder(config_name: &str) -> Result<PathBuf, DeckardError> {
         Ok(confy::get_configuration_file_path("deckard", config_name)?
             .parent()
-            .ok_or(DeckardError::ConfigPathNotFound())?
+            .ok_or(DeckardError::ConfigPathNotFound)?
             .to_path_buf())
     }
 

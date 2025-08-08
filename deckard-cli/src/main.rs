@@ -96,7 +96,7 @@ fn main() -> Result<()> {
 
             println!(
                 "{} matches {}",
-                name.green(),
+                name.to_string_lossy().green(),
                 format!("{:#?}", match_names).yellow()
             );
         }
