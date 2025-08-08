@@ -79,7 +79,7 @@ impl FileEntry {
     pub fn new(path: PathBuf, name: OsString, metadata: Metadata) -> Self {
         Self {
             path: path.to_owned(),
-            name: name.into_string().unwrap(),
+            name: name.into_string().unwrap_or_default(),
             prefix: path
                 .file_stem()
                 .and_then(|os_str| os_str.to_str())
@@ -110,7 +110,7 @@ impl FileEntry {
         let metadata = entry.metadata().unwrap();
         Self {
             path: entry.path(),
-            name: entry.file_name().into_string().unwrap(),
+            name: entry.file_name().into_string().unwrap_or_default(),
             prefix: entry
                 .path()
                 .file_stem()
@@ -214,80 +214,81 @@ impl FileEntry {
             return false;
         }
 
-        if self.size == other.size {
-            if self.hash.is_some() && self.hash == other.hash && other.hash.is_some() {
-                // check the full file
-                if config.hasher_config.full_hash {
-                    if self.full_hash.is_some()
-                        && other.full_hash.is_some()
-                        && self.full_hash == other.full_hash
-                    {
-                        return true;
-                    }
-                } else {
-                    return true;
-                }
-            }
-        }
-
-        if config.image_config.compare && self.mime_type.is_some() && other.mime_type.is_some() {
-            if self.mime_type.as_ref().unwrap().contains("image")
-                && other.mime_type.as_ref().unwrap().contains("image")
-                && self.image_hash.is_some()
-                && other.image_hash.is_some()
-            {
-                let this_image = self.image_hash.as_ref().unwrap();
-                let other_image = other.image_hash.as_ref().unwrap();
-
-                let distance = this_image.dist(other_image);
-                debug!(
-                    "{} and {} hamming distance: {}",
-                    self.name, other.name, distance
-                );
-                if distance <= config.image_config.threshold as u32 {
-                    return true;
-                }
-            }
-        }
-
-        if config.audio_config.compare && self.mime_type.is_some() && other.mime_type.is_some() {
-            if self.mime_type.as_ref().unwrap().contains("audio")
-                && other.mime_type.as_ref().unwrap().contains("audio")
-                && self.audio_hash.is_some()
-                && other.audio_hash.is_some()
-            {
-                let this_audio = self.audio_hash.clone().unwrap();
-                let other_audio = other.audio_hash.clone().unwrap();
-                let chroma_config = Configuration::preset_test1();
-
-                let segments = rusty_chromaprint::match_fingerprints(
-                    &this_audio,
-                    &other_audio,
-                    &chroma_config,
-                )
-                .unwrap();
-
-                // find average score
-                let score = if !segments.is_empty() {
-                    segments.iter().map(|s| s.score).sum::<f64>() / segments.len() as f64
-                } else {
-                    32.0 // is the maximum fingerprint score
-                };
-
-                debug!(
-                    "{} and {} matching segments {} with score {}",
-                    self.name,
-                    other.name,
-                    segments.len(),
-                    score
-                );
-
-                if !segments.is_empty()
-                    && segments.len() <= config.audio_config.segments_limit as usize
-                    && score <= config.audio_config.threshold
+        if self.size == other.size
+            && self.hash.is_some()
+            && self.hash == other.hash
+            && other.hash.is_some()
+        {
+            // check the full file
+            if config.hasher_config.full_hash {
+                if self.full_hash.is_some()
+                    && other.full_hash.is_some()
+                    && self.full_hash == other.full_hash
                 {
                     return true;
                 }
+            } else {
+                return true;
+            }
+        }
+
+        if config.image_config.compare
+            && self.mime_type.is_some()
+            && other.mime_type.is_some()
+            && self.mime_type.as_ref().unwrap().contains("image")
+            && other.mime_type.as_ref().unwrap().contains("image")
+            && self.image_hash.is_some()
+            && other.image_hash.is_some()
+        {
+            let this_image = self.image_hash.as_ref().unwrap();
+            let other_image = other.image_hash.as_ref().unwrap();
+
+            let distance = this_image.dist(other_image);
+            debug!(
+                "{} and {} hamming distance: {}",
+                self.name, other.name, distance
+            );
+            if distance <= config.image_config.threshold as u32 {
+                return true;
+            }
+        }
+
+        if config.audio_config.compare
+            && self.mime_type.is_some()
+            && other.mime_type.is_some()
+            && self.mime_type.as_ref().unwrap().contains("audio")
+            && other.mime_type.as_ref().unwrap().contains("audio")
+            && self.audio_hash.is_some()
+            && other.audio_hash.is_some()
+        {
+            let this_audio = self.audio_hash.clone().unwrap();
+            let other_audio = other.audio_hash.clone().unwrap();
+            let chroma_config = Configuration::preset_test1();
+
+            let segments =
+                rusty_chromaprint::match_fingerprints(&this_audio, &other_audio, &chroma_config)
+                    .unwrap();
+
+            // find average score
+            let score = if !segments.is_empty() {
+                segments.iter().map(|s| s.score).sum::<f64>() / segments.len() as f64
+            } else {
+                32.0 // is the maximum fingerprint score
+            };
+
+            debug!(
+                "{} and {} matching segments {} with score {}",
+                self.name,
+                other.name,
+                segments.len(),
+                score
+            );
+
+            if !segments.is_empty()
+                && segments.len() <= config.audio_config.segments_limit as usize
+                && score <= config.audio_config.threshold
+            {
+                return true;
             }
         }
 

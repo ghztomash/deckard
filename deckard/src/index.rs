@@ -19,7 +19,6 @@ use tracing::{debug, error, trace, warn};
 #[derive(Debug, Default, Clone)]
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
-    // TODO: Try BTreeMap
     pub files: HashMap<PathBuf, FileEntry>,
     pub duplicates: HashMap<PathBuf, HashSet<PathBuf>>,
     pub config: SearchConfig,

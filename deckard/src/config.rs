@@ -200,7 +200,7 @@ impl SearchConfig {
             Self::default().save(config_name)?;
         }
 
-        eprintln!("Opening configuration file: {:?}", config_path);
+        eprintln!("Opening configuration file: {config_path:?}");
         open::that_detached(config_path)?;
         Ok(())
     }
