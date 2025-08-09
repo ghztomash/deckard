@@ -28,7 +28,6 @@ pub struct FileEntry {
     pub image_hash: Option<ImageHash>,
     pub audio_hash: Option<Vec<u32>>,
     pub audio_tags: Option<AudioTags>,
-    pub processed: bool,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -61,11 +60,10 @@ impl FileEntry {
             image_hash: None,
             audio_hash: None,
             audio_tags: None,
-            processed: false,
         })
     }
 
-    pub fn process(&mut self, config: &SearchConfig) {
+    pub fn process(&mut self, config: &SearchConfig) -> Result<(), DeckardError> {
         if config.hasher_config.full_hash {
             self.hash = Some(hasher::get_full_hash(
                 &config.hasher_config.hash_algorithm,
@@ -102,14 +100,6 @@ impl FileEntry {
             }
         }
 
-        if config.audio_config.read_tags {
-            if let Some(mime) = self.mime_type.as_ref() {
-                if mime.contains("audio") {
-                    self.audio_tags = get_id3_tags(&self.path);
-                }
-            }
-        }
-
         if config.audio_config.compare {
             if let Some(mime) = self.mime_type.as_ref() {
                 if mime.contains("audio") {
@@ -119,29 +109,24 @@ impl FileEntry {
             }
         }
 
-        self.processed = true;
+        Ok(())
     }
 
     pub fn compare(&self, other: &Self, config: &SearchConfig) -> bool {
         if self.size == other.size {
-            if let (Some(a), Some(b)) = (self.hash.as_deref(), other.hash.as_deref()) {
-                if a == b {
+            if let (Some(this_hash), Some(other_hash)) =
+                (self.hash.as_deref(), other.hash.as_deref())
+            {
+                if this_hash == other_hash {
                     return true;
                 }
             }
         }
 
         if config.image_config.compare
-            && self.mime_type.is_some()
-            && other.mime_type.is_some()
-            && self.mime_type.as_ref().unwrap().contains("image")
-            && other.mime_type.as_ref().unwrap().contains("image")
-            && self.image_hash.is_some()
-            && other.image_hash.is_some()
+            && let (Some(this_image), Some(other_image)) =
+                (self.image_hash.as_ref(), other.image_hash.as_ref())
         {
-            let this_image = self.image_hash.as_ref().unwrap();
-            let other_image = other.image_hash.as_ref().unwrap();
-
             let distance = this_image.dist(other_image);
             debug!(
                 "{} and {} hamming distance: {}",
@@ -155,26 +140,28 @@ impl FileEntry {
         }
 
         if config.audio_config.compare
-            && self.mime_type.is_some()
-            && other.mime_type.is_some()
-            && self.mime_type.as_ref().unwrap().contains("audio")
-            && other.mime_type.as_ref().unwrap().contains("audio")
-            && self.audio_hash.is_some()
-            && other.audio_hash.is_some()
+            && let (Some(this_audio), Some(other_audio)) =
+                (self.audio_hash.as_ref(), other.audio_hash.as_ref())
         {
-            let this_audio = self.audio_hash.clone().unwrap();
-            let other_audio = other.audio_hash.clone().unwrap();
             let chroma_config = Configuration::preset_test1();
 
-            let segments =
-                rusty_chromaprint::match_fingerprints(&this_audio, &other_audio, &chroma_config)
-                    .unwrap();
+            let segments = match rusty_chromaprint::match_fingerprints(
+                this_audio,
+                other_audio,
+                &chroma_config,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Error matching fingerprints {}", e);
+                    vec![]
+                }
+            };
 
             // find average score
-            let score = if !segments.is_empty() {
-                segments.iter().map(|s| s.score).sum::<f64>() / segments.len() as f64
-            } else {
+            let score = if segments.is_empty() {
                 32.0 // is the maximum fingerprint score
+            } else {
+                segments.iter().map(|s| s.score).sum::<f64>() / (segments.len() as f64)
             };
 
             debug!(
@@ -194,6 +181,17 @@ impl FileEntry {
         }
 
         false
+    }
+
+    // TODO: maybe move it to deckard-tui
+    pub fn read_audio_tags(&mut self) -> Result<(), DeckardError> {
+        if let Some(mime) = self.mime_type.as_ref() {
+            if mime.contains("audio") {
+                self.audio_tags = get_id3_tags(&self.path);
+            }
+        }
+
+        Ok(())
     }
 }
 

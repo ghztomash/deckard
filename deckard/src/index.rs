@@ -170,7 +170,9 @@ impl FileIndex {
                         return Err(());
                     }
                 }
-                f.process(&self.config);
+                if let Err(e) = f.process(&self.config) {
+                    error!("Error processing file {}", e);
+                }
                 if let Some(ref callback) = callback {
                     let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
                     callback(count, total);
