@@ -1,4 +1,3 @@
-use chrono::{DateTime, Local};
 use dashmap::DashMap;
 use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
@@ -8,7 +7,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 use std::ffi::OsString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::config::SearchConfig;
 use crate::file::FileEntry;
@@ -279,12 +278,12 @@ impl FileIndex {
         self.files.get(file).map(|f| f.size)
     }
 
-    pub fn file_date_modified(&self, file: &PathBuf) -> Option<DateTime<Local>> {
-        self.files.get(file).map(|f| f.modified)
+    pub fn file_date_modified(&self, file: &PathBuf) -> Option<SystemTime> {
+        self.files.get(file).map(|f| f.modified)?
     }
 
-    pub fn file_date_created(&self, file: &PathBuf) -> Option<DateTime<Local>> {
-        self.files.get(file).map(|f| f.created)
+    pub fn file_date_created(&self, file: &PathBuf) -> Option<SystemTime> {
+        self.files.get(file).map(|f| f.created)?
     }
 
     /// Get number of duplicates a file has

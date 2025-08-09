@@ -15,6 +15,7 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     sync::{Arc, RwLock},
+    time::SystemTime,
 };
 
 #[derive(Debug, Default, Clone)]
@@ -22,7 +23,7 @@ pub struct FileTableEntry {
     path: PathBuf,
     display_path: String,
     size: u64,
-    date: DateTime<Local>,
+    date: Option<SystemTime>,
     clone_count: usize,
 }
 
@@ -83,7 +84,7 @@ impl FileTable {
             let mut entries_vec = Vec::with_capacity(paths.len());
             for path in paths {
                 let size = fi.file_size(path).unwrap_or_default();
-                let date = fi.file_date_modified(path).unwrap_or_default(); // or created
+                let date = fi.file_date_modified(path); // or created
                 let display_path = format_path(path, &fi.dirs);
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
                 total_size_acc += size;
@@ -206,7 +207,10 @@ impl FileTable {
 
         let rows = self.entries.clone().into_iter().map(|e| {
             let size = humansize::format_size(e.size, humansize::DECIMAL);
-            let date = e.date.format("%d/%m/%Y");
+            let date = e
+                .date
+                .map(|d| DateTime::<Local>::from(d).format("%d/%m/%Y").to_string())
+                .unwrap_or_default();
             let is_marked = marked_files.contains(&e.path);
 
             let path_style = if self.mark_marked && is_marked {
@@ -222,7 +226,7 @@ impl FileTable {
                     " "
                 })),
                 Cell::from(Text::from(e.display_path.set_style(path_style))),
-                Cell::from(Text::from(format!("{date}"))),
+                Cell::from(Text::from(date)),
                 Cell::from(Text::from(size)),
             ];
             if self.show_clone_count {

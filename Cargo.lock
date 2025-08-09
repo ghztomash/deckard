@@ -908,7 +908,6 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "chksum",
- "chrono",
  "clap",
  "common-path",
  "confy",

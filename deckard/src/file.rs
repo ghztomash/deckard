@@ -1,5 +1,4 @@
 use crate::{config::SearchConfig, error::DeckardError, hasher};
-use chrono::prelude::*;
 use image_hasher::ImageHash;
 use lofty::{
     file::{AudioFile, TaggedFileExt},
@@ -11,6 +10,7 @@ use std::{
     fs::{File, Metadata},
     io::Read,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 use tracing::{debug, trace, warn};
 
@@ -20,8 +20,8 @@ const MAGIC_SIZE: usize = 8;
 pub struct FileEntry {
     pub path: PathBuf,
     pub name: OsString,
-    pub created: DateTime<Local>,
-    pub modified: DateTime<Local>,
+    pub created: Option<SystemTime>,
+    pub modified: Option<SystemTime>,
     pub mime_type: Option<String>,
     pub size: u64,
     pub hash: Option<String>,
@@ -52,8 +52,8 @@ impl FileEntry {
                 .file_name()
                 .ok_or(DeckardError::FileNameMissing)?
                 .into(),
-            created: metadata.created()?.into(),
-            modified: metadata.modified()?.into(),
+            created: metadata.created().ok(),
+            modified: metadata.modified().ok(),
             mime_type: None,
             size: metadata.len(),
             hash: None,

@@ -1,6 +1,7 @@
 use crate::constants;
 use crate::table::FileTable;
 use arboard::Clipboard;
+use chrono::{DateTime, Local};
 use color_eyre::eyre::{Result, WrapErr};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use deckard::config::SearchConfig;
@@ -607,16 +608,20 @@ impl App {
                     "created: ".into(),
                     file_entry
                         .created
-                        .format("%d/%m/%Y %H:%M:%S %Z")
-                        .to_string()
+                        .map(|t| {
+                            DateTime::<Local>::from(t).format("%d/%m/%Y %H:%M:%S %Z").to_string()
+                        })
+                        .unwrap_or_default()
                         .red(),
                 ]),
                 Line::from(vec![
                     "modified: ".into(),
                     file_entry
                         .modified
-                        .format("%d/%m/%Y %H:%M:%S %Z")
-                        .to_string()
+                         .map(|t| {
+                            DateTime::<Local>::from(t).format("%d/%m/%Y %H:%M:%S %Z").to_string()
+                        })
+                        .unwrap_or_default()
                         .red(),
                 ]),
                 Line::from(vec![
