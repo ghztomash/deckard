@@ -10,7 +10,6 @@ open.workspace = true
 
 chksum = "0.4"
 base64 = "0.22"
-once_cell = "1.21"
 tree_magic = { version = "0.2", features = ["staticmime"] }
 mime_guess = "2.0"
 thiserror = "2.0"

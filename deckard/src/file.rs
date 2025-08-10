@@ -8,7 +8,6 @@ use lofty::{
     file::{AudioFile, TaggedFileExt},
     tag::Accessor,
 };
-use once_cell::sync::Lazy;
 use rusty_chromaprint::Configuration;
 use std::{
     ffi::OsString,
@@ -19,7 +18,6 @@ use std::{
 };
 use tracing::{debug, warn};
 
-static CHROMA_CFG: Lazy<Configuration> = Lazy::new(Configuration::preset_test1);
 const MAGIC_SIZE: usize = 8;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -116,7 +114,7 @@ impl FileEntry {
                     );
                 }
                 MediaType::Audio if config.audio_config.compare => {
-                    self.audio_hash = hasher::get_audio_hash(&self.path, &mut file, &CHROMA_CFG);
+                    self.audio_hash = hasher::get_audio_hash(&self.path, &mut file);
                 }
                 _ => {}
             }

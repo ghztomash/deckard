@@ -163,7 +163,6 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
 pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
     path: P,
     file: &mut File,
-    config: &Configuration,
 ) -> Option<Vec<u32>> {
     // let file = std::fs::File::open(path.as_ref()).ok()?;
 
@@ -213,7 +212,7 @@ pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
         .expect("missing audio channels")
         .count() as u32;
 
-    let mut printer = Fingerprinter::new(config);
+    let mut printer = Fingerprinter::new(&Configuration::preset_test1());
     printer
         .start(sample_rate, channels)
         .expect("initializing audio fingerprinter");
