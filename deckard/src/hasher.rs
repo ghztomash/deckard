@@ -87,11 +87,12 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
     path: &P,
     file: &mut R,
 ) -> Option<ImageHash> {
+    file.rewind().unwrap();
     let reader = BufReader::new(file);
     let reader = match ImageFormat::from_path(path) {
         Ok(format) => ImageReader::with_format(reader, format),
         Err(e) => {
-            warn!("Failed reading image format {}", e);
+            warn!("Failed reading image format: {}", e);
             ImageReader::new(reader)
         }
     };
@@ -129,6 +130,7 @@ pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
         }
     }
 
+    file.rewind().unwrap();
     let mss = MediaSourceStream::new(Box::new(file.try_clone().ok()?), Default::default());
 
     // guess the format

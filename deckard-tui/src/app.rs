@@ -609,7 +609,9 @@ impl App {
                     file_entry
                         .created
                         .map(|t| {
-                            DateTime::<Local>::from(t).format("%d/%m/%Y %H:%M:%S %Z").to_string()
+                            DateTime::<Local>::from(t)
+                                .format("%d/%m/%Y %H:%M:%S %Z")
+                                .to_string()
                         })
                         .unwrap_or_default()
                         .red(),
@@ -618,21 +620,23 @@ impl App {
                     "modified: ".into(),
                     file_entry
                         .modified
-                         .map(|t| {
-                            DateTime::<Local>::from(t).format("%d/%m/%Y %H:%M:%S %Z").to_string()
+                        .map(|t| {
+                            DateTime::<Local>::from(t)
+                                .format("%d/%m/%Y %H:%M:%S %Z")
+                                .to_string()
                         })
                         .unwrap_or_default()
                         .red(),
                 ]),
-                Line::from(vec![
-                    "mime: ".into(),
-                    file_entry
-                        .mime_type
-                        .as_ref()
-                        .unwrap_or(&"none".to_string())
-                        .to_string()
-                        .cyan(),
-                ]),
+                // Line::from(vec![
+                //     "mime: ".into(),
+                //     file_entry
+                //         .mime_type
+                //         .as_ref()
+                //         .unwrap_or(&"none".to_string())
+                //         .to_string()
+                //         .cyan(),
+                // ]),
                 Line::from(vec![
                     "hash: ".into(),
                     file_entry

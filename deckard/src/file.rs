@@ -4,6 +4,7 @@ use lofty::{
     file::{AudioFile, TaggedFileExt},
     tag::Accessor,
 };
+use once_cell::sync::Lazy;
 use rusty_chromaprint::Configuration;
 use std::{
     ffi::OsString,
@@ -14,6 +15,7 @@ use std::{
 };
 use tracing::{debug, trace, warn};
 
+static CHROMA_CFG: Lazy<Configuration> = Lazy::new(Configuration::preset_test1);
 const MAGIC_SIZE: usize = 8;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -23,7 +25,6 @@ pub struct FileEntry {
     pub size: u64,
     pub created: Option<SystemTime>,
     pub modified: Option<SystemTime>,
-    pub mime_type: Option<String>, // TODO: data type as enum
     pub hash: Option<String>, // TODO: hasher as bytes
     pub image_hash: Option<ImageHash>,
     pub audio_hash: Option<Vec<u32>>,
@@ -44,6 +45,28 @@ pub struct AudioTags {
     pub comment: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MediaType {
+    Image,
+    Audio,
+    Text,
+    Other,
+}
+
+impl From<&str> for MediaType {
+    fn from(value: &str) -> Self {
+        if value.starts_with("image") {
+            Self::Image
+        } else if value.starts_with("audio") {
+            Self::Audio
+        } else if value.starts_with("text") {
+            Self::Text
+        } else {
+            Self::Other
+        }
+    }
+}
+
 impl FileEntry {
     pub fn new(path: &PathBuf, metadata: &Metadata) -> Result<Self, DeckardError> {
         Ok(Self {
@@ -55,7 +78,6 @@ impl FileEntry {
             size: metadata.len(),
             created: metadata.created().ok(),
             modified: metadata.modified().ok(),
-            mime_type: None,
             hash: None,
             image_hash: None,
             audio_hash: None,
@@ -81,17 +103,8 @@ impl FileEntry {
         }
 
         if config.image_config.compare || config.audio_config.compare {
-            self.mime_type = read_mime_type(&self.path, &mut file).ok();
-            trace!(
-                "{} found mime type {:?}",
-                self.name.to_string_lossy(),
-                self.mime_type
-            );
-        }
-
-        if config.image_config.compare {
-            if let Some(mime) = self.mime_type.as_ref() {
-                if mime.contains("image") {
+            match MediaType::from(get_mime_type(&self.path, &mut file).unwrap_or_default()) {
+                MediaType::Image if config.image_config.compare => {
                     self.image_hash = hasher::get_image_hash(
                         &config.image_config.hash_algorithm,
                         &config.image_config.filter_algorithm,
@@ -100,15 +113,10 @@ impl FileEntry {
                         &mut file,
                     );
                 }
-            }
-        }
-
-        if config.audio_config.compare {
-            if let Some(mime) = self.mime_type.as_ref() {
-                if mime.contains("audio") {
-                    let chroma_config = Configuration::preset_test1();
-                    self.audio_hash = hasher::get_audio_hash(&self.path, &mut file, &chroma_config);
+                MediaType::Audio if config.audio_config.compare => {
+                    self.audio_hash = hasher::get_audio_hash(&self.path, &mut file, &CHROMA_CFG);
                 }
+                _ => {}
             }
         }
 
@@ -133,8 +141,8 @@ impl FileEntry {
             let distance = this_image.dist(other_image);
             debug!(
                 "{} and {} hamming distance: {}",
-                self.name.to_string_lossy(),
-                other.name.to_string_lossy(),
+                self.name.display(),
+                other.name.display(),
                 distance
             );
             if distance <= config.image_config.threshold as u32 {
@@ -169,8 +177,8 @@ impl FileEntry {
 
             debug!(
                 "{} and {} matching segments {} with score {}",
-                self.name.to_string_lossy(),
-                other.name.to_string_lossy(),
+                self.name.display(),
+                other.name.display(),
                 segments.len(),
                 score
             );
@@ -185,26 +193,16 @@ impl FileEntry {
 
         false
     }
-
-    // TODO: maybe move it to deckard-tui
-    pub fn read_audio_tags(&mut self, file: &mut File) -> Result<(), DeckardError> {
-        if let Some(mime) = self.mime_type.as_ref() {
-            if mime.contains("audio") {
-                self.audio_tags = read_id3_tags(file);
-            }
-        }
-
-        Ok(())
-    }
 }
 
-pub fn read_mime_type<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
+#[inline]
+pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
     path: P,
     file: &mut R,
-) -> Result<String, DeckardError> {
-    let mime = mime_guess::from_path(&path).first();
+) -> Result<&'static str, DeckardError> {
+    let mime = mime_guess::from_path(&path).first_raw();
     match mime {
-        Some(mime_type) => Ok(mime_type.to_string()),
+        Some(mime_type) => Ok(mime_type),
         None => {
             let mut magic = [0; MAGIC_SIZE];
             file.rewind()?;
