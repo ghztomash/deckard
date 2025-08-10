@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn};
 
 static CHROMA_CFG: Lazy<Configuration> = Lazy::new(Configuration::preset_test1);
 const MAGIC_SIZE: usize = 8;
@@ -25,10 +25,9 @@ pub struct FileEntry {
     pub size: u64,
     pub created: Option<SystemTime>,
     pub modified: Option<SystemTime>,
-    pub hash: Option<String>, // TODO: hasher as bytes
+    pub hash: Option<String>,
     pub image_hash: Option<ImageHash>,
     pub audio_hash: Option<Vec<u32>>,
-    pub audio_tags: Option<AudioTags>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -81,7 +80,6 @@ impl FileEntry {
             hash: None,
             image_hash: None,
             audio_hash: None,
-            audio_tags: None,
         })
     }
 
@@ -238,8 +236,6 @@ pub fn read_id3_tags(file: &mut File) -> Option<AudioTags> {
     tags.bitrate = properties.overall_bitrate().map(|b| b.to_string());
     tags.sample_rate = properties.sample_rate().map(|b| b.to_string());
     tags.duration = Some(properties.duration().as_secs_f32());
-
-    trace!("{:?}", tags);
 
     Some(tags)
 }
