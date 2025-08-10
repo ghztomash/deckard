@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     let target_paths = deckard::collect_paths(target_dirs);
 
     if !json {
-        println!("Paths: {}", format!("{:?}", target_paths).yellow());
+        println!("Paths: {}", format!("{target_paths:?}").yellow());
     }
 
     let now = Instant::now();
@@ -54,7 +54,7 @@ fn main() -> Result<()> {
     info!(
         "Indexed {} files in {}",
         file_index.files_len().to_string().green(),
-        format!("{:.2?}", elapsed).blue()
+        format!("{elapsed:.2?}").blue()
     );
 
     let now = Instant::now();
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
     info!(
         "Processed {} files in {}",
         file_index.files_len().to_string().green(),
-        format!("{:.2?}", elapsed).blue()
+        format!("{elapsed:.2?}").blue()
     );
 
     let now = Instant::now();
@@ -78,7 +78,7 @@ fn main() -> Result<()> {
     info!(
         "Found {} matches in {}",
         file_index.duplicates_len().to_string().green(),
-        format!("{:.2?}", elapsed).blue()
+        format!("{elapsed:.2?}").blue()
     );
 
     if json {
@@ -91,13 +91,13 @@ fn main() -> Result<()> {
             let mut match_names = Vec::new();
 
             for file_copy in file_copies {
-                match_names.push(file_copy.to_string_lossy());
+                match_names.push(file_copy.display());
             }
 
             println!(
                 "{} matches {}",
-                name.to_string_lossy().green(),
-                format!("{:#?}", match_names).yellow()
+                format!("{}", name.display()).green(),
+                format!("{match_names:#?}").yellow()
             );
         }
     }
