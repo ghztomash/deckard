@@ -21,55 +21,36 @@ use symphonia::core::{
 };
 use tracing::{error, trace, warn};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Hash {
-    Md5([u8; md5::hash::DIGEST_LENGTH_BYTES]),
-    Sha1([u8; sha1::hash::DIGEST_LENGTH_BYTES]),
-    Sha256([u8; sha2_256::hash::DIGEST_LENGTH_BYTES]),
-    Sha512([u8; sha2_512::hash::DIGEST_LENGTH_BYTES]),
-}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Hash(Vec<u8>);
 
 impl From<md5::Digest> for Hash {
     fn from(d: md5::Digest) -> Self {
-        let mut arr = [0u8; md5::hash::DIGEST_LENGTH_BYTES];
-        arr.copy_from_slice(d.as_bytes());
-        Hash::Md5(arr)
+        Hash(d.as_bytes().to_owned())
     }
 }
 
 impl From<sha1::Digest> for Hash {
     fn from(d: sha1::Digest) -> Self {
-        let mut arr = [0u8; sha1::hash::DIGEST_LENGTH_BYTES];
-        arr.copy_from_slice(d.as_bytes());
-        Hash::Sha1(arr)
+        Hash(d.as_bytes().to_owned())
     }
 }
 
 impl From<sha2_256::Digest> for Hash {
     fn from(d: sha2_256::Digest) -> Self {
-        let mut arr = [0u8; sha2_256::hash::DIGEST_LENGTH_BYTES];
-        arr.copy_from_slice(d.as_bytes());
-        Hash::Sha256(arr)
+        Hash(d.as_bytes().to_owned())
     }
 }
 
 impl From<sha2_512::Digest> for Hash {
     fn from(d: sha2_512::Digest) -> Self {
-        let mut arr = [0u8; sha2_512::hash::DIGEST_LENGTH_BYTES];
-        arr.copy_from_slice(d.as_bytes());
-        Hash::Sha512(arr)
+        Hash(d.as_bytes().to_owned())
     }
 }
 
 impl Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bytes = match self {
-            Self::Md5(d) => d.as_slice(),
-            Self::Sha1(d) => d.as_slice(),
-            Self::Sha256(d) => d.as_slice(),
-            Self::Sha512(d) => d.as_slice(),
-        };
-        for b in bytes {
+        for b in self.0.as_slice() {
             write!(f, "{b:02x}")?;
         }
         Ok(())
