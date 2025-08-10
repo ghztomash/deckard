@@ -11,4 +11,6 @@ pub enum DeckardError {
     ConfigPathNotFound,
     #[error("File name missing")]
     FileNameMissing,
+    #[error(transparent)]
+    HashingFailed(#[from] chksum::Error),
 }

@@ -640,12 +640,10 @@ impl App {
                 // ]),
                 Line::from(vec![
                     "hash: ".into(),
-                    file_entry
-                        .hash
-                        .as_ref()
-                        .unwrap_or(&"none".to_string())
-                        .to_string()
-                        .cyan(),
+                    match &file_entry.hash {
+                        Some(h) => h.to_string().cyan(),
+                        None => "none".into(),
+                    },
                 ]),
                 Line::from(vec![
                     "path: ".into(),

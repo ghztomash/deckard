@@ -1,4 +1,8 @@
-use crate::{config::SearchConfig, error::DeckardError, hasher};
+use crate::{
+    config::SearchConfig,
+    error::DeckardError,
+    hasher::{self, Hash},
+};
 use image_hasher::ImageHash;
 use lofty::{
     file::{AudioFile, TaggedFileExt},
@@ -25,7 +29,7 @@ pub struct FileEntry {
     pub size: u64,
     pub created: Option<SystemTime>,
     pub modified: Option<SystemTime>,
-    pub hash: Option<String>,
+    pub hash: Option<Hash>,
     pub image_hash: Option<ImageHash>,
     pub audio_hash: Option<Vec<u32>>,
 }
@@ -90,14 +94,14 @@ impl FileEntry {
             self.hash = Some(hasher::get_full_hash(
                 &config.hasher_config.hash_algorithm,
                 &mut file,
-            ))
+            )?);
         } else {
             self.hash = Some(hasher::get_quick_hash(
                 &config.hasher_config.hash_algorithm,
                 config.hasher_config.size,
                 config.hasher_config.splits,
                 &mut file,
-            ))
+            )?)
         }
 
         if config.image_config.compare || config.audio_config.compare {
@@ -123,9 +127,7 @@ impl FileEntry {
 
     pub fn compare(&self, other: &Self, config: &SearchConfig) -> bool {
         if self.size == other.size {
-            if let (Some(this_hash), Some(other_hash)) =
-                (self.hash.as_deref(), other.hash.as_deref())
-            {
+            if let (Some(this_hash), Some(other_hash)) = (self.hash.as_ref(), other.hash.as_ref()) {
                 if this_hash == other_hash {
                     return true;
                 }

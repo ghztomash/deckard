@@ -1,9 +1,13 @@
-use crate::config::{HashAlgorithm, ImageFilterAlgorithm, ImageHashAlgorithm};
+use crate::{
+    config::{HashAlgorithm, ImageFilterAlgorithm, ImageHashAlgorithm},
+    error::DeckardError,
+};
 use chksum::{md5, sha1, sha2_256, sha2_512};
 use image::{ImageFormat, io::Reader as ImageReader};
 use image_hasher::{HasherConfig, ImageHash};
 use rusty_chromaprint::{Configuration, Fingerprinter};
 use std::{
+    fmt::Display,
     fs::File,
     io::{BufReader, Read, Seek},
     path::Path,
@@ -17,19 +21,79 @@ use symphonia::core::{
 };
 use tracing::{error, trace, warn};
 
-#[inline]
-pub fn get_full_hash(hash: &HashAlgorithm, file: &mut File) -> String {
-    file.rewind().unwrap();
-    match hash {
-        HashAlgorithm::MD5 => md5::chksum(file).unwrap().to_hex_lowercase(),
-        HashAlgorithm::SHA1 => sha1::chksum(file).unwrap().to_hex_lowercase(),
-        HashAlgorithm::SHA256 => sha2_256::chksum(file).unwrap().to_hex_lowercase(),
-        HashAlgorithm::SHA512 => sha2_512::chksum(file).unwrap().to_hex_lowercase(),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Hash {
+    Md5([u8; md5::hash::DIGEST_LENGTH_BYTES]),
+    Sha1([u8; sha1::hash::DIGEST_LENGTH_BYTES]),
+    Sha256([u8; sha2_256::hash::DIGEST_LENGTH_BYTES]),
+    Sha512([u8; sha2_512::hash::DIGEST_LENGTH_BYTES]),
+}
+
+impl From<md5::Digest> for Hash {
+    fn from(d: md5::Digest) -> Self {
+        let mut arr = [0u8; md5::hash::DIGEST_LENGTH_BYTES];
+        arr.copy_from_slice(d.as_bytes());
+        Hash::Md5(arr)
+    }
+}
+
+impl From<sha1::Digest> for Hash {
+    fn from(d: sha1::Digest) -> Self {
+        let mut arr = [0u8; sha1::hash::DIGEST_LENGTH_BYTES];
+        arr.copy_from_slice(d.as_bytes());
+        Hash::Sha1(arr)
+    }
+}
+
+impl From<sha2_256::Digest> for Hash {
+    fn from(d: sha2_256::Digest) -> Self {
+        let mut arr = [0u8; sha2_256::hash::DIGEST_LENGTH_BYTES];
+        arr.copy_from_slice(d.as_bytes());
+        Hash::Sha256(arr)
+    }
+}
+
+impl From<sha2_512::Digest> for Hash {
+    fn from(d: sha2_512::Digest) -> Self {
+        let mut arr = [0u8; sha2_512::hash::DIGEST_LENGTH_BYTES];
+        arr.copy_from_slice(d.as_bytes());
+        Hash::Sha512(arr)
+    }
+}
+
+impl Display for Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bytes = match self {
+            Self::Md5(d) => d.as_slice(),
+            Self::Sha1(d) => d.as_slice(),
+            Self::Sha256(d) => d.as_slice(),
+            Self::Sha512(d) => d.as_slice(),
+        };
+        for b in bytes {
+            write!(f, "{b:02x}")?;
+        }
+        Ok(())
     }
 }
 
 #[inline]
-pub fn get_quick_hash(hash: &HashAlgorithm, size: u64, splits: u64, file: &mut File) -> String {
+pub fn get_full_hash(hash: &HashAlgorithm, file: &mut File) -> Result<Hash, DeckardError> {
+    file.rewind()?;
+    Ok(match hash {
+        HashAlgorithm::MD5 => md5::chksum(file).map(Hash::from)?,
+        HashAlgorithm::SHA1 => sha1::chksum(file).map(Hash::from)?,
+        HashAlgorithm::SHA256 => sha2_256::chksum(file).map(Hash::from)?,
+        HashAlgorithm::SHA512 => sha2_512::chksum(file).map(Hash::from)?,
+    })
+}
+
+#[inline]
+pub fn get_quick_hash(
+    hash: &HashAlgorithm,
+    size: u64,
+    splits: u64,
+    file: &mut File,
+) -> Result<Hash, DeckardError> {
     let mut size = size;
     let mut total_buffer = vec![0; 0];
 
@@ -71,12 +135,12 @@ pub fn get_quick_hash(hash: &HashAlgorithm, size: u64, splits: u64, file: &mut F
         total_buffer.append(&mut file_len.to_le_bytes().to_vec());
     }
 
-    match hash {
-        HashAlgorithm::MD5 => md5::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-        HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-        HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-        HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).unwrap().to_hex_lowercase(),
-    }
+    Ok(match hash {
+        HashAlgorithm::MD5 => md5::chksum(&total_buffer).map(Hash::from)?,
+        HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).map(Hash::from)?,
+        HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).map(Hash::from)?,
+        HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).map(Hash::from)?,
+    })
 }
 
 #[inline]
