@@ -1,11 +1,11 @@
 use crate::config::{HashAlgorithm, ImageFilterAlgorithm, ImageHashAlgorithm};
 use chksum::{md5, sha1, sha2_256, sha2_512};
-use image::io::Reader as ImageReader;
+use image::{ImageFormat, io::Reader as ImageReader};
 use image_hasher::{HasherConfig, ImageHash};
 use rusty_chromaprint::{Configuration, Fingerprinter};
 use std::{
     fs::File,
-    io::{Read, Seek},
+    io::{BufReader, Read, Seek},
     path::Path,
 };
 use symphonia::core::{
@@ -18,8 +18,8 @@ use symphonia::core::{
 use tracing::{error, trace, warn};
 
 #[inline]
-pub fn get_full_hash<P: AsRef<Path>>(hash: &HashAlgorithm, path: P) -> String {
-    let file = File::open(path).unwrap();
+pub fn get_full_hash(hash: &HashAlgorithm, file: &mut File) -> String {
+    file.rewind().unwrap();
     match hash {
         HashAlgorithm::MD5 => md5::chksum(file).unwrap().to_hex_lowercase(),
         HashAlgorithm::SHA1 => sha1::chksum(file).unwrap().to_hex_lowercase(),
@@ -29,14 +29,8 @@ pub fn get_full_hash<P: AsRef<Path>>(hash: &HashAlgorithm, path: P) -> String {
 }
 
 #[inline]
-pub fn get_quick_hash<P: AsRef<Path>>(
-    hash: &HashAlgorithm,
-    size: u64,
-    splits: u64,
-    path: P,
-) -> String {
+pub fn get_quick_hash(hash: &HashAlgorithm, size: u64, splits: u64, file: &mut File) -> String {
     let mut size = size;
-    let mut file = File::open(path).unwrap();
     let mut total_buffer = vec![0; 0];
 
     let file_len = file.metadata().unwrap().len();
@@ -46,6 +40,7 @@ pub fn get_quick_hash<P: AsRef<Path>>(
         file_len == 0 || size == 0 || splits == 0 || splits >= file_len || file_len / splits < size;
 
     if read_whole_file {
+        file.rewind().unwrap();
         file.read_to_end(&mut total_buffer).unwrap();
     } else {
         let mut index_step = file_len / splits;
@@ -85,41 +80,46 @@ pub fn get_quick_hash<P: AsRef<Path>>(
 }
 
 #[inline]
-pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug>(
+pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
     hash: &ImageHashAlgorithm,
     filter: &ImageFilterAlgorithm,
     size: u64,
     path: &P,
+    file: &mut R,
 ) -> Option<ImageHash> {
-    match ImageReader::open(path) {
-        Ok(r) => match r.decode() {
-            Ok(img) => {
-                let hasher = HasherConfig::new()
-                    .hash_size(size as u32, size as u32)
-                    .resize_filter(filter.into_filter_type())
-                    .hash_alg(hash.into_hash_alg())
-                    .to_hasher();
-                let hash = hasher.hash_image(&img);
-                trace!("Image {:?} hash: {}", path, hash.to_base64());
-                return Some(hash);
-            }
-            Err(e) => {
-                warn!("Decoding image {:?} failed: {}", path, e);
-            }
-        },
+    let reader = BufReader::new(file);
+    let reader = match ImageFormat::from_path(path) {
+        Ok(format) => ImageReader::with_format(reader, format),
         Err(e) => {
-            warn!("Reading image {:?} failed: {}", path, e);
+            warn!("Failed reading image format {}", e);
+            ImageReader::new(reader)
         }
     };
+    match reader.decode() {
+        Ok(img) => {
+            let hasher = HasherConfig::new()
+                .hash_size(size as u32, size as u32)
+                .resize_filter(filter.into_filter_type())
+                .hash_alg(hash.into_hash_alg())
+                .to_hasher();
+            let hash = hasher.hash_image(&img);
+            trace!("Image {:?} hash: {}", path, hash.to_base64());
+            return Some(hash);
+        }
+        Err(e) => {
+            error!("Decoding image {:?} failed: {}", path, e);
+        }
+    }
     None
 }
 
 #[inline]
-pub fn get_audio_hash(
-    path: impl AsRef<Path> + std::fmt::Debug,
+pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
+    path: P,
+    file: &mut File,
     config: &Configuration,
 ) -> Option<Vec<u32>> {
-    let file = std::fs::File::open(path.as_ref()).ok()?;
+    // let file = std::fs::File::open(path.as_ref()).ok()?;
 
     let mut hint = Hint::new();
     // Provide the file extension as a hint.
@@ -129,7 +129,7 @@ pub fn get_audio_hash(
         }
     }
 
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mss = MediaSourceStream::new(Box::new(file.try_clone().ok()?), Default::default());
 
     // guess the format
     let probe = match symphonia::default::get_probe().format(

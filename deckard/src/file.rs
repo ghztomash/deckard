@@ -8,7 +8,7 @@ use rusty_chromaprint::Configuration;
 use std::{
     ffi::OsString,
     fs::{File, Metadata},
-    io::Read,
+    io::{Read, Seek},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -20,11 +20,11 @@ const MAGIC_SIZE: usize = 8;
 pub struct FileEntry {
     pub path: PathBuf,
     pub name: OsString,
+    pub size: u64,
     pub created: Option<SystemTime>,
     pub modified: Option<SystemTime>,
-    pub mime_type: Option<String>,
-    pub size: u64,
-    pub hash: Option<String>,
+    pub mime_type: Option<String>, // TODO: data type as enum
+    pub hash: Option<String>, // TODO: hasher as bytes
     pub image_hash: Option<ImageHash>,
     pub audio_hash: Option<Vec<u32>>,
     pub audio_tags: Option<AudioTags>,
@@ -52,10 +52,10 @@ impl FileEntry {
                 .file_name()
                 .ok_or(DeckardError::FileNameMissing)?
                 .into(),
+            size: metadata.len(),
             created: metadata.created().ok(),
             modified: metadata.modified().ok(),
             mime_type: None,
-            size: metadata.len(),
             hash: None,
             image_hash: None,
             audio_hash: None,
@@ -64,22 +64,24 @@ impl FileEntry {
     }
 
     pub fn process(&mut self, config: &SearchConfig) -> Result<(), DeckardError> {
+        let mut file = File::open(&self.path)?;
+
         if config.hasher_config.full_hash {
             self.hash = Some(hasher::get_full_hash(
                 &config.hasher_config.hash_algorithm,
-                &self.path,
+                &mut file,
             ))
         } else {
             self.hash = Some(hasher::get_quick_hash(
                 &config.hasher_config.hash_algorithm,
                 config.hasher_config.size,
                 config.hasher_config.splits,
-                &self.path,
+                &mut file,
             ))
         }
 
         if config.image_config.compare || config.audio_config.compare {
-            self.mime_type = get_mime_type(&self.path).ok();
+            self.mime_type = read_mime_type(&self.path, &mut file).ok();
             trace!(
                 "{} found mime type {:?}",
                 self.name.to_string_lossy(),
@@ -95,6 +97,7 @@ impl FileEntry {
                         &config.image_config.filter_algorithm,
                         config.image_config.size,
                         &self.path,
+                        &mut file,
                     );
                 }
             }
@@ -104,7 +107,7 @@ impl FileEntry {
             if let Some(mime) = self.mime_type.as_ref() {
                 if mime.contains("audio") {
                     let chroma_config = Configuration::preset_test1();
-                    self.audio_hash = hasher::get_audio_hash(&self.path, &chroma_config);
+                    self.audio_hash = hasher::get_audio_hash(&self.path, &mut file, &chroma_config);
                 }
             }
         }
@@ -184,10 +187,10 @@ impl FileEntry {
     }
 
     // TODO: maybe move it to deckard-tui
-    pub fn read_audio_tags(&mut self) -> Result<(), DeckardError> {
+    pub fn read_audio_tags(&mut self, file: &mut File) -> Result<(), DeckardError> {
         if let Some(mime) = self.mime_type.as_ref() {
             if mime.contains("audio") {
-                self.audio_tags = get_id3_tags(&self.path);
+                self.audio_tags = read_id3_tags(file);
             }
         }
 
@@ -195,33 +198,27 @@ impl FileEntry {
     }
 }
 
-#[inline]
-pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<String, DeckardError> {
+pub fn read_mime_type<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
+    path: P,
+    file: &mut R,
+) -> Result<String, DeckardError> {
     let mime = mime_guess::from_path(&path).first();
     match mime {
         Some(mime_type) => Ok(mime_type.to_string()),
         None => {
-            let mut file = File::open(&path)?;
-
             let mut magic = [0; MAGIC_SIZE];
-            if file.metadata()?.len() >= MAGIC_SIZE as u64 {
-                file.read_exact(&mut magic)
-                    .unwrap_or_else(|e| warn!("read magic: {:?} for {:?}", e, path));
-            }
+            file.rewind()?;
+            let n = file.read(&mut magic)?;
             // Find the MIME type
-            Ok(tree_magic::from_u8(&magic))
+            Ok(tree_magic::from_u8(&magic[..n]))
         }
     }
 }
 
-#[inline]
-pub fn get_id3_tags<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Option<AudioTags> {
+pub fn read_id3_tags(file: &mut File) -> Option<AudioTags> {
     let mut tags = AudioTags::default();
 
-    trace!("Reading id3 tags for file {:?}", path);
-
-    let mut file = File::open(&path).ok()?;
-    let tagged_file = lofty::read_from(&mut file).ok()?;
+    let tagged_file = lofty::read_from(file).ok()?;
 
     let file_tag = match tagged_file.primary_tag() {
         Some(primary_tag) => primary_tag,
