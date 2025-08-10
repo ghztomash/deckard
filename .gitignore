@@ -2,6 +2,7 @@
 /target
 /test_files/big_files
 /test_files/audio
+*.zst
 *.mp3
 *.wav
 *.ogg
