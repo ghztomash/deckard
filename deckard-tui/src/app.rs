@@ -663,6 +663,15 @@ impl App {
                 ]));
             }
 
+            if let Some(image_hash) = &file_entry.image_hash {
+                let mut hasher = DefaultHasher::new();
+                image_hash.hash(&mut hasher);
+                lines.push(Line::from(vec![
+                    "image_hash: ".into(),
+                    format!("{:x}", hasher.finish()).to_string().cyan(),
+                ]));
+            }
+
             // TODO: Read audio tags
             // if let Some(audio_tags) = &file_entry.audio_tags {
             //     let mut tag_lines = vec![];
