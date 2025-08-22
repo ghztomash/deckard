@@ -71,27 +71,24 @@ pub fn get_full_hash(hash: &HashAlgorithm, file: &mut File) -> Result<Hash, Deck
 #[inline]
 pub fn get_quick_hash(
     hash: &HashAlgorithm,
-    size: u64,
+    chunk_size: u64,
     splits: u64,
     file: &mut File,
 ) -> Result<Hash, DeckardError> {
-    let mut size = size;
-    let mut total_buffer = vec![0; 0];
-
     let file_len = file.metadata()?.len();
     // Decide if we need to read the whole file
-    let read_whole_file =
-        file_len == 0 || size == 0 || splits == 0 || splits >= file_len || file_len / splits < size;
+    let read_whole_file = file_len == 0
+        || chunk_size == 0
+        || splits == 0
+        || splits >= file_len
+        || (file_len / splits) < chunk_size;
 
     if read_whole_file {
-        file.rewind()?;
-        file.read_to_end(&mut total_buffer)?;
+        get_full_hash(hash, file)
     } else {
-        let mut index_step = file_len / splits;
-        if index_step == 0 {
-            // println!("index_step too small {}", index_step);
-            index_step = 1;
-        }
+        let mut size = chunk_size;
+        let mut total_buffer = Vec::with_capacity((chunk_size * splits) as usize + 8);
+        let index_step = std::cmp::max(1, file_len / splits);
         // println!("index_step {}", index_step);
 
         if (index_step * (splits - 1) + size) > file_len {
@@ -102,24 +99,24 @@ pub fn get_quick_hash(
         }
 
         for i in 0..splits {
-            let mut buffer = vec![0; size as usize];
+            let mut temp = vec![0; size as usize];
             let index = i * index_step;
             // println!("reading {} bytes at {} of {}", size, index, file_len);
 
             file.seek(std::io::SeekFrom::Start(index))?;
-            file.read_exact(&mut buffer)?;
-            total_buffer.append(&mut buffer);
+            file.read_exact(&mut temp)?;
+            total_buffer.extend_from_slice(&temp);
         }
         // append size to the hash, otherwise files that start with the same bytes match
-        total_buffer.append(&mut file_len.to_le_bytes().to_vec());
-    }
+        total_buffer.extend_from_slice(&file_len.to_le_bytes());
 
-    Ok(match hash {
-        HashAlgorithm::MD5 => md5::chksum(&total_buffer).map(Hash::from)?,
-        HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).map(Hash::from)?,
-        HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).map(Hash::from)?,
-        HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).map(Hash::from)?,
-    })
+        Ok(match hash {
+            HashAlgorithm::MD5 => md5::chksum(&total_buffer).map(Hash::from)?,
+            HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).map(Hash::from)?,
+            HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).map(Hash::from)?,
+            HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).map(Hash::from)?,
+        })
+    }
 }
 
 #[inline]
