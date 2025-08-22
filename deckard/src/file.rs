@@ -124,12 +124,11 @@ impl FileEntry {
     }
 
     pub fn compare(&self, other: &Self, config: &SearchConfig) -> bool {
-        if self.size == other.size {
-            if let (Some(this_hash), Some(other_hash)) = (self.hash.as_ref(), other.hash.as_ref()) {
-                if this_hash == other_hash {
-                    return true;
-                }
-            }
+        if self.size == other.size
+            && let (Some(this_hash), Some(other_hash)) = (self.hash.as_ref(), other.hash.as_ref())
+            && this_hash == other_hash
+        {
+            return true;
         }
 
         if config.image_config.compare

@@ -76,11 +76,11 @@ impl FileIndex {
                 .skip_hidden(self.config.skip_hidden)
                 .into_iter()
                 .filter_map(|entry| {
-                    if let Some(cancel) = cancel.as_ref() {
-                        if cancel.load(Ordering::Relaxed) {
-                            // TODO: this doesn't really short circuit the parallel iterator
-                            return None;
-                        }
+                    if let Some(cancel) = cancel.as_ref()
+                        && cancel.load(Ordering::Relaxed)
+                    {
+                        // TODO: this doesn't really short circuit the parallel iterator
+                        return None;
                     }
                     match entry {
                         Ok(entry) => {
@@ -89,17 +89,16 @@ impl FileIndex {
                             if path.is_file() && !path.is_symlink() {
                                 // Check filename filter
                                 let file_name = entry.file_name().to_string_lossy();
-                                if let Some(exclude_filter) = self.config.exclude_filter.as_ref() {
-                                    if file_name
+                                if let Some(exclude_filter) = self.config.exclude_filter.as_ref()
+                                    && file_name
                                         .to_lowercase()
                                         .contains(&exclude_filter.to_lowercase())
-                                    {
-                                        trace!(
-                                            "File '{}' matches exclude filter pattern '{}'",
-                                            file_name, exclude_filter
-                                        );
-                                        return None;
-                                    }
+                                {
+                                    trace!(
+                                        "File '{}' matches exclude filter pattern '{}'",
+                                        file_name, exclude_filter
+                                    );
+                                    return None;
                                 }
                                 if let Some(include_filter) = self.config.include_filter.as_ref() {
                                     if !file_name
@@ -162,13 +161,14 @@ impl FileIndex {
 
         let mut process_op = || {
             let _ = self.files.values_mut().par_bridge().try_for_each(|f| {
-                if let Some(cancel) = cancel.as_ref() {
-                    if cancel.load(Ordering::Relaxed) {
-                        // short circit the parallel iterator
-                        // TODO: this still doesn't cancel ongoing processing
-                        return Err(());
-                    }
+                if let Some(cancel) = cancel.as_ref()
+                    && cancel.load(Ordering::Relaxed)
+                {
+                    // short circit the parallel iterator
+                    // TODO: this still doesn't cancel ongoing processing
+                    return Err(());
                 }
+
                 if let Err(e) = f.process(&self.config) {
                     error!("Error processing file {}", e);
                 }
@@ -217,12 +217,13 @@ impl FileIndex {
                 .with_min_len(min_len)
                 .enumerate()
                 .try_for_each(|(i, this_file)| {
-                    if let Some(cancel) = cancel.as_ref() {
-                        if cancel.load(Ordering::Relaxed) {
-                            // short circit the parallel iterator
-                            return Err(());
-                        }
+                    if let Some(cancel) = cancel.as_ref()
+                        && cancel.load(Ordering::Relaxed)
+                    {
+                        // short circit the parallel iterator
+                        return Err(());
                     }
+
                     for other_file in vec_files.iter().skip(i + 1) {
                         // Check if the files are matching
                         if this_file.compare(other_file, &self.config) {

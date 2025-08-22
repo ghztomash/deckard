@@ -168,10 +168,10 @@ pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
 
     let mut hint = Hint::new();
     // Provide the file extension as a hint.
-    if let Some(extension) = path.as_ref().extension() {
-        if let Some(extension_str) = extension.to_str() {
-            hint.with_extension(extension_str);
-        }
+    if let Some(extension) = path.as_ref().extension()
+        && let Some(extension_str) = extension.to_str()
+    {
+        hint.with_extension(extension_str);
     }
 
     file.rewind().unwrap();
