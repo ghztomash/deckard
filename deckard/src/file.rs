@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 const MAGIC_SIZE: usize = 8;
 
@@ -111,10 +111,16 @@ impl FileEntry {
                         config.image_config.size,
                         &self.path,
                         &mut file,
-                    );
+                    )
+                    .inspect_err(|e| error!("failed get image hash for {:?}: {:?}", self.path, e))
+                    .ok();
                 }
                 MediaType::Audio if config.audio_config.compare => {
-                    self.audio_hash = hasher::get_audio_hash(&self.path, &mut file);
+                    self.audio_hash = hasher::get_audio_hash(&self.path, &mut file)
+                        .inspect_err(|e| {
+                            error!("failed get audio hash for {:?}: {:?}", self.path, e)
+                        })
+                        .ok();
                 }
                 _ => {}
             }

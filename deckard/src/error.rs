@@ -13,4 +13,12 @@ pub enum DeckardError {
     FileNameMissing,
     #[error(transparent)]
     HashingFailed(#[from] chksum::Error),
+    #[error(transparent)]
+    ImageError(#[from] image::ImageError),
+    #[error(transparent)]
+    AudioError(#[from] symphonia::core::errors::Error),
+    #[error("Audio track missing")]
+    AudioTrackMissing,
+    #[error(transparent)]
+    AudioFingerprintError(#[from] rusty_chromaprint::ResetError),
 }

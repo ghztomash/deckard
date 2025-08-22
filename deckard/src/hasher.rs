@@ -19,7 +19,7 @@ use symphonia::core::{
     io::MediaSourceStream,
     probe::Hint,
 };
-use tracing::{error, trace, warn};
+use tracing::warn;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Hash(Vec<u8>);
@@ -78,22 +78,20 @@ pub fn get_quick_hash(
     let mut size = size;
     let mut total_buffer = vec![0; 0];
 
-    let file_len = file.metadata().unwrap().len();
-
+    let file_len = file.metadata()?.len();
     // Decide if we need to read the whole file
     let read_whole_file =
         file_len == 0 || size == 0 || splits == 0 || splits >= file_len || file_len / splits < size;
 
     if read_whole_file {
-        file.rewind().unwrap();
-        file.read_to_end(&mut total_buffer).unwrap();
+        file.rewind()?;
+        file.read_to_end(&mut total_buffer)?;
     } else {
         let mut index_step = file_len / splits;
         if index_step == 0 {
             // println!("index_step too small {}", index_step);
             index_step = 1;
         }
-
         // println!("index_step {}", index_step);
 
         if (index_step * (splits - 1) + size) > file_len {
@@ -108,8 +106,8 @@ pub fn get_quick_hash(
             let index = i * index_step;
             // println!("reading {} bytes at {} of {}", size, index, file_len);
 
-            file.seek(std::io::SeekFrom::Start(index)).unwrap();
-            file.read_exact(&mut buffer).unwrap();
+            file.seek(std::io::SeekFrom::Start(index))?;
+            file.read_exact(&mut buffer)?;
             total_buffer.append(&mut buffer);
         }
         // append size to the hash, otherwise files that start with the same bytes match
@@ -131,8 +129,8 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
     size: u64,
     path: &P,
     file: &mut R,
-) -> Option<ImageHash> {
-    file.rewind().unwrap();
+) -> Result<ImageHash, DeckardError> {
+    file.rewind()?;
     let reader = BufReader::new(file);
     let reader = match ImageFormat::from_path(path) {
         Ok(format) => ImageReader::with_format(reader, format),
@@ -141,31 +139,21 @@ pub fn get_image_hash<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
             ImageReader::new(reader)
         }
     };
-    match reader.decode() {
-        Ok(img) => {
-            let hasher = HasherConfig::new()
-                .hash_size(size as u32, size as u32)
-                .resize_filter(filter.into_filter_type())
-                .hash_alg(hash.into_hash_alg())
-                .to_hasher();
-            let hash = hasher.hash_image(&img);
-            trace!("Image {:?} hash: {}", path, hash.to_base64());
-            return Some(hash);
-        }
-        Err(e) => {
-            error!("Decoding image {:?} failed: {}", path, e);
-        }
-    }
-    None
+    reader.decode().map(|img| {
+        let hasher = HasherConfig::new()
+            .hash_size(size as u32, size as u32)
+            .resize_filter(filter.into_filter_type())
+            .hash_alg(hash.into_hash_alg())
+            .to_hasher();
+        Ok(hasher.hash_image(&img))
+    })?
 }
 
 #[inline]
 pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
     path: P,
     file: &mut File,
-) -> Option<Vec<u32>> {
-    // let file = std::fs::File::open(path.as_ref()).ok()?;
-
+) -> Result<Vec<u32>, DeckardError> {
     let mut hint = Hint::new();
     // Provide the file extension as a hint.
     if let Some(extension) = path.as_ref().extension()
@@ -174,34 +162,26 @@ pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
         hint.with_extension(extension_str);
     }
 
-    file.rewind().unwrap();
-    let mss = MediaSourceStream::new(Box::new(file.try_clone().ok()?), Default::default());
+    file.rewind()?;
+    let mss = MediaSourceStream::new(Box::new(file.try_clone()?), Default::default());
 
     // guess the format
-    let probe = match symphonia::default::get_probe().format(
+    let probe = symphonia::default::get_probe().format(
         &hint,
         mss,
         &Default::default(),
         &Default::default(),
-    ) {
-        Ok(br) => br,
-        Err(e) => {
-            error!("failed to prove audio format for file {:?}: {:?}", path, e);
-            return None;
-        }
-    };
+    )?;
     let mut format = probe.format;
 
     let track = format
         .tracks()
         .iter()
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .expect("no supported audio tracks");
+        .ok_or(DeckardError::AudioTrackMissing)?;
 
     let dec_opts: DecoderOptions = Default::default();
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &dec_opts)
-        .expect("unsupported codec");
+    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &dec_opts)?;
 
     let track_id = track.id;
 
@@ -209,13 +189,11 @@ pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
     let channels = track
         .codec_params
         .channels
-        .expect("missing audio channels")
+        .ok_or(DeckardError::AudioTrackMissing)?
         .count() as u32;
 
     let mut printer = Fingerprinter::new(&Configuration::preset_test1());
-    printer
-        .start(sample_rate, channels)
-        .expect("initializing audio fingerprinter");
+    printer.start(sample_rate, channels)?;
 
     let mut sample_buf = None;
 
@@ -244,5 +222,5 @@ pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
 
     printer.finish();
 
-    Some(printer.fingerprint().to_vec())
+    Ok(printer.fingerprint().to_vec())
 }
