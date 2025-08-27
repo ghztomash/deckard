@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     let target_paths = deckard::collect_paths(target_dirs);
 
     if !json {
-        println!("Paths: {}", format!("{target_paths:?}").yellow());
+        eprintln!("Paths: {}", format!("{target_paths:?}").yellow());
     }
 
     let now = Instant::now();

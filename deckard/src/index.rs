@@ -27,17 +27,20 @@ pub struct FileIndex {
 
 impl FileIndex {
     pub fn new(dirs: HashSet<PathBuf>, config: SearchConfig) -> Self {
-        // Build a local thread pool
-        debug!(
-            "Building local Rayon thread pool with {} threads",
+        let target_threads = if config.threads == 0 {
             rayon::current_num_threads()
-        );
+        } else {
+            config.threads
+        };
+        debug!("Building local Rayon thread pool with {target_threads} threads",);
+
+        // Build a local thread pool
         let pool = ThreadPoolBuilder::new()
             .num_threads(config.threads)
             .thread_name(|i| format!("deckard-pool-{i}"))
             .build()
             .or_else(|e| {
-                error!("Error building local thread pool: {:?}", e);
+                error!("Error building local thread pool: {e}");
                 // fallback to default
                 ThreadPoolBuilder::default().build()
             })
