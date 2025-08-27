@@ -84,39 +84,37 @@ pub fn get_quick_hash(
         || (file_len / splits) < chunk_size;
 
     if read_whole_file {
-        get_full_hash(hash, file)
-    } else {
-        let mut size = chunk_size;
-        let mut total_buffer = Vec::with_capacity((chunk_size * splits) as usize + 8);
-        let index_step = std::cmp::max(1, file_len / splits);
-        // println!("index_step {}", index_step);
-
-        if (index_step * (splits - 1) + size) > file_len {
-            let remaining = file_len - index_step * (splits - 1);
-            // println!("file is too small {}", file_len);
-            // println!("remaining {} b", remaining);
-            size = remaining;
-        }
-
-        for i in 0..splits {
-            let mut temp = vec![0; size as usize];
-            let index = i * index_step;
-            // println!("reading {} bytes at {} of {}", size, index, file_len);
-
-            file.seek(std::io::SeekFrom::Start(index))?;
-            file.read_exact(&mut temp)?;
-            total_buffer.extend_from_slice(&temp);
-        }
-        // append size to the hash, otherwise files that start with the same bytes match
-        total_buffer.extend_from_slice(&file_len.to_le_bytes());
-
-        Ok(match hash {
-            HashAlgorithm::MD5 => md5::chksum(&total_buffer).map(Hash::from)?,
-            HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).map(Hash::from)?,
-            HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).map(Hash::from)?,
-            HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).map(Hash::from)?,
-        })
+        return get_full_hash(hash, file);
     }
+
+    let step = std::cmp::max(1, file_len / splits);
+    // println!("step {}", step);
+
+    let mut total_buffer = Vec::with_capacity((chunk_size * splits) as usize + 8);
+    let mut temp = vec![0u8; chunk_size as usize];
+
+    for i in 0..splits {
+        let offset = i * step;
+        if offset >= file_len {
+            break;
+        }
+
+        let to_read = std::cmp::min(chunk_size, file_len - offset) as usize;
+        // println!("reading {} bytes at {} of {}", to_read, offset, file_len);
+
+        file.seek(std::io::SeekFrom::Start(offset))?;
+        file.read_exact(&mut temp[..to_read])?;
+        total_buffer.extend_from_slice(&temp[..to_read]);
+    }
+    // append size to the hash, otherwise files that start with the same bytes match
+    total_buffer.extend_from_slice(&file_len.to_le_bytes());
+
+    Ok(match hash {
+        HashAlgorithm::MD5 => md5::chksum(&total_buffer).map(Hash::from)?,
+        HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).map(Hash::from)?,
+        HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).map(Hash::from)?,
+        HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).map(Hash::from)?,
+    })
 }
 
 #[inline]
