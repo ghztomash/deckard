@@ -21,4 +21,6 @@ pub enum DeckardError {
     AudioTrackMissing,
     #[error(transparent)]
     AudioFingerprintError(#[from] rusty_chromaprint::ResetError),
+    #[error("No valid paths provided")]
+    NoValidPaths,
 }

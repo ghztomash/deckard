@@ -42,6 +42,7 @@ fn main() -> Result<()> {
         None => vec!["."],
     };
     let target_paths = deckard::collect_paths(target_dirs);
+    deckard::validate_paths(&target_paths)?;
 
     if !json {
         eprintln!("Paths: {}", format!("{target_paths:?}").yellow());
