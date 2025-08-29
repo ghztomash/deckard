@@ -53,7 +53,10 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let config = deckard::cli::augment_config(constants::CONFIG_NAME, &args);
+    let config = deckard::cli::augment_config(
+        deckard::config::SearchConfig::load(constants::CONFIG_NAME),
+        &args,
+    );
 
     let dry_run = args.get_flag("dry_run");
     let remove_dirs = args.get_flag("remove_dirs");

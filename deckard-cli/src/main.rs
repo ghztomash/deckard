@@ -28,7 +28,7 @@ fn main() -> Result<()> {
         .without_time()
         .init();
 
-    let config = deckard::cli::augment_config(CONFIG_NAME, &args);
+    let config = deckard::cli::augment_config(SearchConfig::load(CONFIG_NAME), &args);
 
     if args.get_flag("open_config") {
         SearchConfig::edit_config(CONFIG_NAME)?;

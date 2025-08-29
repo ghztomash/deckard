@@ -1,6 +1,6 @@
 use crate::SearchConfig;
 use clap::{Arg, ArgAction, ArgMatches, Command, command, value_parser};
-use tracing::{Level, debug, trace};
+use tracing::{Level, debug};
 
 pub fn commands() -> Command {
     command!()
@@ -93,11 +93,7 @@ pub fn commands() -> Command {
         )
 }
 
-pub fn augment_config(config_name: &str, args: &ArgMatches) -> SearchConfig {
-    let mut config = SearchConfig::load(config_name);
-
-    trace!("loaded {:#?}", config);
-
+pub fn augment_config(mut config: SearchConfig, args: &ArgMatches) -> SearchConfig {
     let include_filter = args
         .get_one::<String>("include_filter")
         .map(|v| v.to_owned());
@@ -153,5 +149,51 @@ pub fn log_level(count: u8) -> Level {
         1 => Level::INFO,
         2 => Level::DEBUG,
         _ => Level::TRACE,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_log_level_conversion() {
+        assert_eq!(log_level(0), Level::ERROR);
+        assert_eq!(log_level(1), Level::INFO);
+        assert_eq!(log_level(2), Level::DEBUG);
+        assert_eq!(log_level(3), Level::TRACE);
+        assert_eq!(log_level(100), Level::TRACE);
+    }
+
+    #[test]
+    fn test_augment_config_sets_expected_fields() {
+        let cmd = commands();
+        let matches = cmd
+            .get_matches_from(vec![
+                "app",
+                "--include_filter",
+                "foo",
+                "--exclude_filter",
+                "bar",
+                "--skip_hidden",
+                "--check_image",
+                "--check_audio",
+                "--full_hash",
+                "--threads",
+                "4",
+                "--min_size",
+                "1024",
+            ]);
+
+        let config = augment_config(SearchConfig::default(), &matches);
+
+        assert_eq!(config.include_filter, Some("foo".into()));
+        assert_eq!(config.exclude_filter, Some("bar".into()));
+        assert!(config.skip_hidden);
+        assert_eq!(config.min_size, 1024);
+        assert_eq!(config.threads, 4);
+        assert!(config.image_config.compare);
+        assert!(config.audio_config.compare);
+        assert!(config.hasher_config.full_hash);
     }
 }
