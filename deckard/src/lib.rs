@@ -5,7 +5,6 @@ pub mod file;
 mod hasher;
 pub mod index;
 
-use crate::error::DeckardError;
 use config::SearchConfig;
 use std::collections::HashSet;
 use std::{env, fs, path::Path, path::PathBuf};
@@ -41,21 +40,20 @@ pub fn find_common_path(target_paths: &HashSet<PathBuf>) -> Option<PathBuf> {
     common_path::common_path_all(paths)
 }
 
-/// Validate if all provided paths exist
-pub fn validate_paths(target_paths: &HashSet<PathBuf>) -> Result<(), DeckardError> {
-    let mut all_paths_valid = true;
+/// Validate at least one of the provided paths exist
+pub fn validate_paths(target_paths: &HashSet<PathBuf>) -> bool {
+    if target_paths.is_empty() {
+        return true;
+    }
 
+    let mut atleast_one_path_valid = false;
     for path in target_paths {
-        if !path.exists() {
-            all_paths_valid = false;
+        if path.exists() {
+            atleast_one_path_valid = true;
         }
     }
 
-    if all_paths_valid {
-        Ok(())
-    } else {
-        Err(DeckardError::NoValidPaths)
-    }
+    atleast_one_path_valid
 }
 
 pub fn to_relative_path(path: &PathBuf) -> PathBuf {

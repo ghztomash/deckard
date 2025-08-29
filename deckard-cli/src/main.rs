@@ -42,7 +42,10 @@ fn main() -> Result<()> {
         None => vec!["."],
     };
     let target_paths = deckard::collect_paths(target_dirs);
-    deckard::validate_paths(&target_paths)?;
+    if !deckard::validate_paths(&target_paths) {
+        eprintln!("No valid paths provided");
+        std::process::exit(1);
+    }
 
     if !json {
         eprintln!("Paths: {}", format!("{target_paths:?}").yellow());
