@@ -2,6 +2,7 @@ use crate::SearchConfig;
 use clap::{Arg, ArgAction, ArgMatches, Command, command, value_parser};
 use tracing::{Level, debug};
 
+/// Common CLI arguments
 pub fn commands() -> Command {
     command!()
         .about("Find file duplicates")
@@ -93,6 +94,7 @@ pub fn commands() -> Command {
         )
 }
 
+/// Update provided `SearchConfig` based on CLI arguments from `ArgMatches`.
 pub fn augment_config(mut config: SearchConfig, args: &ArgMatches) -> SearchConfig {
     let include_filter = args
         .get_one::<String>("include_filter")
@@ -142,7 +144,7 @@ pub fn augment_config(mut config: SearchConfig, args: &ArgMatches) -> SearchConf
     config
 }
 
-/// Convert verbose counts to log Level
+/// Convert verbose counts from cli (`-v`, `-vv`, etc.) to a log `tracing::Level`
 pub fn log_level(count: u8) -> Level {
     match count {
         0 => Level::ERROR,

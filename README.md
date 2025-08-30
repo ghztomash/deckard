@@ -14,5 +14,14 @@ cargo run --bin deckard-tui -- test_files
 - [ ] Reduce memory use
 - [ ] Reduce CPU use
 - [ ] Better error handling
-- [ ] Better logging - use tracing
+- [x] Better logging - use tracing
 - [ ] Gradual comparison (process stuff only when needed?)
+- [ ] Better error handling
+- [ ] optimize `get_image_hash`
+- [ ] optimize `get_audio_hash`
+- [ ] Hasher integration tests
+- [ ] optimize `file::compare`
+- [ ] File unit tests
+- [ ] File integration tests
+- [ ] Index unit tests
+- [ ] Index integration tests
