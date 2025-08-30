@@ -1,5 +1,12 @@
 # Deckard
 
+## Install
+
+```sh
+ cargo install --path=deckard-cli 
+ cargo install --path=deckard-tui 
+```
+
 ## Running
 
 ```sh
@@ -25,3 +32,5 @@ cargo run --bin deckard-tui -- test_files
 - [ ] File integration tests
 - [ ] Index unit tests
 - [ ] Index integration tests
+- [ ] Mark all matching path
+- [ ] Filter view (:command mode)
