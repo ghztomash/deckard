@@ -21,3 +21,6 @@ tokio-stream = "0.1"
 futures = "0.3"
 tracing-appender = "0.2"
 arboard = { version = "3.6", features = [] }
+
+[dev-dependencies]
+pretty_assertions = "1.4"

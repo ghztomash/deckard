@@ -1,3 +1,4 @@
+use crate::command::{Command, CommandProcessor};
 use crate::constants;
 use crate::table::FileTable;
 use arboard::Clipboard;
@@ -36,6 +37,32 @@ enum FocusedWindow {
     Clones,
     Marked,
     Popup,
+}
+
+#[derive(Debug, Default)]
+pub enum Mode {
+    #[default]
+    Normal,
+    Command,
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let result = match self {
+            Self::Normal => "Normal",
+            Self::Command => "Command",
+        };
+        write!(f, "{result}")
+    }
+}
+
+impl Mode {
+    fn get_color(&self) -> Color {
+        match self {
+            Self::Normal => Color::Blue,
+            Self::Command => Color::Yellow,
+        }
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,6 +114,8 @@ pub struct App {
     show_more_keys: bool,
     current_state: State,
     sort_by: Sorting,
+    mode: Mode,
+    command_processor: CommandProcessor,
     clipboard: Option<Clipboard>,
     cancel_flag: Arc<AtomicBool>,
     abort_handle: Option<AbortHandle>,
@@ -152,6 +181,29 @@ impl App {
             Some,
         );
 
+        let commands = vec![
+            Command {
+                command: "quit",
+                alias: Some("q"),
+            },
+            Command {
+                command: "help",
+                alias: Some("h"),
+            },
+            Command {
+                command: "filter",
+                alias: Some("f"),
+            },
+            Command {
+                command: "mark_filter",
+                alias: Some("m"),
+            },
+            Command {
+                command: "mark_all",
+                alias: Some("a"),
+            },
+        ];
+
         Self {
             focused_window: FocusedWindow::Files,
             should_exit: false,
@@ -169,6 +221,8 @@ impl App {
             abort_handle: None,
             clipboard,
             sort_by: Sorting::default(),
+            mode: Mode::Normal,
+            command_processor: CommandProcessor::new(commands, 16),
             dry_run,
             remove_dirs,
         }
@@ -207,6 +261,10 @@ impl App {
         while !self.should_exit {
             tokio::select! {
                 _ = interval.tick() => {
+                    // if matches!(self.mode, Mode::Command) {
+                    //     terminal.show_cursor()?;
+                    //     terminal.set_cursor(1, 1)?;
+                    // }
                     terminal.draw(|frame| self.render_ui(frame.area(), frame.buffer_mut()))?;
                 },
                 Some(Ok(event)) = events.next() => self.handle_events(event)?,
@@ -243,42 +301,79 @@ impl App {
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
-        match key_event.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.exit(),
+        match self.mode {
+            Mode::Normal => {
+                match key_event.code {
+                    // page move
+                    KeyCode::Char('J') | KeyCode::Down
+                        if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        self.next_file(true)
+                    }
+                    KeyCode::Char('K') | KeyCode::Up
+                        if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        self.previous_file(true)
+                    }
+                    // regular move
+                    KeyCode::Char('j') | KeyCode::Down => self.next_file(false),
+                    KeyCode::Char('k') | KeyCode::Up => self.previous_file(false),
 
-            // page move
-            KeyCode::Char('J') | KeyCode::Down
-                if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
-            {
-                self.next_file(true)
+                    KeyCode::Char('q') | KeyCode::Esc => self.exit(),
+                    KeyCode::Char('i') => self.toggle_info(),
+                    KeyCode::Char('o') => self.open_file(),
+                    KeyCode::Char('p') => self.open_path(),
+                    KeyCode::Char('D') | KeyCode::Delete => self.delete(),
+                    KeyCode::Char('T') | KeyCode::Backspace => self.trash(),
+                    KeyCode::Char('c') => self.toggle_show_clones_table(),
+                    KeyCode::Char(' ') => self.mark(),
+                    KeyCode::Char('a') => self.mark_all_clones(),
+                    KeyCode::Char('A') => self.clear_marked(),
+                    KeyCode::Char('m') => self.toggle_show_marked_table(),
+                    KeyCode::Char('y') => self.copy_path(),
+                    KeyCode::Char('.') => self.toggle_more_keys(),
+                    KeyCode::Char('?') => self.toggle_about(),
+                    KeyCode::Char('s') => self.cycle_sort_by(),
+                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
+                    KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
+                        self.focus_previus_table()
+                    }
+                    KeyCode::Char(':') => self.enter_command_mode(),
+                    _ => {}
+                }
             }
-            KeyCode::Char('K') | KeyCode::Up
-                if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
-            {
-                self.previous_file(true)
+            Mode::Command => {
+                match key_event.code {
+                    KeyCode::Esc => {
+                        self.command_processor.reset_command();
+                        self.exit_command_mode();
+                    }
+                    KeyCode::Enter => {
+                        self.handle_command();
+                    } // process
+                    KeyCode::Backspace => {
+                        self.command_processor.delete_char();
+                    } // delete
+                    KeyCode::Tab => {} // complete
+                    KeyCode::Up => {
+                        self.command_processor.last_command();
+                    } // last command
+                    KeyCode::Down => {
+                        self.command_processor.next_command();
+                    } // next command
+                    KeyCode::Left => {
+                        self.command_processor.move_cursor_left();
+                    } // last char
+                    KeyCode::Right => {
+                        self.command_processor.move_cursor_right();
+                    } // next char
+                    KeyCode::Char(c) => {
+                        self.command_processor.enter_char(c);
+                    }
+                    _ => {}
+                }
             }
-            // regular move
-            KeyCode::Char('j') | KeyCode::Down => self.next_file(false),
-            KeyCode::Char('k') | KeyCode::Up => self.previous_file(false),
-
-            KeyCode::Char('i') => self.toggle_info(),
-            KeyCode::Char('o') => self.open_file(),
-            KeyCode::Char('p') => self.open_path(),
-            KeyCode::Char('D') | KeyCode::Delete => self.delete(),
-            KeyCode::Char('T') | KeyCode::Backspace => self.trash(),
-            KeyCode::Char('c') => self.toggle_show_clones_table(),
-            KeyCode::Char(' ') => self.mark(),
-            KeyCode::Char('a') => self.mark_all(),
-            KeyCode::Char('A') => self.clear_marked(),
-            KeyCode::Char('m') => self.toggle_show_marked_table(),
-            KeyCode::Char('y') => self.copy_path(),
-            KeyCode::Char('.') => self.toggle_more_keys(),
-            KeyCode::Char('?') => self.toggle_about(),
-            KeyCode::Char('s') => self.cycle_sort_by(),
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
-            KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => self.focus_previus_table(),
-            _ => {}
-        }
+        };
         Ok(())
     }
 
@@ -298,6 +393,35 @@ impl App {
         self.should_exit = true;
     }
 
+    fn enter_command_mode(&mut self) {
+        if matches!(self.mode, Mode::Normal)
+            && matches!(self.current_state, State::Done)
+            && !matches!(self.focused_window, FocusedWindow::Popup)
+        {
+            self.mode = Mode::Command;
+        }
+    }
+
+    fn exit_command_mode(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    fn handle_command(&mut self) {
+        if let Some(command) = self.command_processor.submit_command() {
+            match command.name.as_str() {
+                "quit" => {
+                    self.exit();
+                }
+                "help" => {
+                    self.toggle_about();
+                }
+                "filter" if !command.args.is_empty() => {}
+                _ => {}
+            }
+        }
+        self.exit_command_mode();
+    }
+
     fn mark(&mut self) {
         if let Some(path) = self.active_selected_file() {
             if !self.marked_files.insert(path.clone()) {
@@ -311,7 +435,7 @@ impl App {
         }
     }
 
-    fn mark_all(&mut self) {
+    fn mark_all_clones(&mut self) {
         for p in self.clone_table.paths() {
             self.marked_files.insert(p);
             let v = self.marked_files.clone().into_iter().collect();
@@ -376,10 +500,10 @@ impl App {
     }
 
     fn open_path(&mut self) {
-        if let Some(selected_file) = self.active_selected_file() {
-            if let Some(path) = selected_file.parent() {
-                _ = open::that_detached(path);
-            }
+        if let Some(selected_file) = self.active_selected_file()
+            && let Some(path) = selected_file.parent()
+        {
+            _ = open::that_detached(path);
         }
     }
 
@@ -821,15 +945,25 @@ impl App {
 
         let dir_joined = dir_lines.join(" ");
 
+        let path_line = match self.mode {
+            Mode::Normal => Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
+            Mode::Command => Line::from(vec![
+                ":".into(),
+                self.command_processor.input.clone().into(),
+            ]),
+        };
+
         let summary_lines = vec![
             Line::from(vec![
-                "Sort by: ".into(),
-                format!("{:?}", self.sort_by).blue(),
+                "Mode: ".into(),
+                format!("{}", self.mode).set_style(Style::default().fg(self.mode.get_color())),
                 " State: ".into(),
                 format!("{}", self.current_state)
                     .set_style(Style::default().fg(self.current_state.get_color())),
+                " Sort by: ".into(),
+                format!("{}", self.sort_by).blue(),
             ]),
-            Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
+            path_line,
         ];
 
         let summary_text = Text::from(summary_lines);

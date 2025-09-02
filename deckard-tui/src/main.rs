@@ -5,6 +5,7 @@ use color_eyre::eyre::Result;
 use tracing_appender::non_blocking::WorkerGuard;
 
 mod app;
+mod command;
 mod constants;
 mod table;
 mod tui;
