@@ -119,6 +119,7 @@ pub struct App {
     clipboard: Option<Clipboard>,
     cancel_flag: Arc<AtomicBool>,
     abort_handle: Option<AbortHandle>,
+    display_filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -195,12 +196,20 @@ impl App {
                 alias: Some("f"),
             },
             Command {
+                command: "clear_filter",
+                alias: Some("cf"),
+            },
+            Command {
                 command: "mark_filter",
-                alias: Some("m"),
+                alias: Some("mf"),
             },
             Command {
                 command: "mark_all",
-                alias: Some("a"),
+                alias: Some("ma"),
+            },
+            Command {
+                command: "clear_marked",
+                alias: Some("cm"),
             },
         ];
 
@@ -225,6 +234,7 @@ impl App {
             command_processor: CommandProcessor::new(commands, 16),
             dry_run,
             remove_dirs,
+            display_filter: None,
         }
     }
 
@@ -415,11 +425,39 @@ impl App {
                 "help" => {
                     self.toggle_about();
                 }
-                "filter" if !command.args.is_empty() => {}
+                "mark_all" => {
+                    self.mark_all();
+                }
+                "clear_marked" => {
+                    self.clear_marked();
+                }
+                "mark_filter" => {
+                    if let Some(filter) = command.args.first() {
+                        self.mark_filter(filter);
+                    }
+                }
+                "clear_filter" => {
+                    self.clear_filter();
+                }
+                "filter" => {
+                    if let Some(filter) = command.args.first() {
+                        self.set_filter(filter);
+                    }
+                }
                 _ => {}
             }
         }
         self.exit_command_mode();
+    }
+
+    fn set_filter(&mut self, filter: &str) {
+        self.display_filter = Some(filter.to_string());
+        self.update_tables();
+    }
+
+    fn clear_filter(&mut self) {
+        self.display_filter = None;
+        self.update_tables();
     }
 
     fn mark(&mut self) {
@@ -435,12 +473,29 @@ impl App {
         }
     }
 
+    fn mark_all(&mut self) {
+        self.marked_files.extend(self.file_table.paths());
+
+        let v = self.marked_files.clone().into_iter().collect();
+        self.marked_table.update_table(&v, &self.file_index, None);
+    }
+
     fn mark_all_clones(&mut self) {
-        for p in self.clone_table.paths() {
-            self.marked_files.insert(p);
-            let v = self.marked_files.clone().into_iter().collect();
-            self.marked_table.update_table(&v, &self.file_index, None);
+        self.marked_files.extend(self.clone_table.paths());
+
+        let v = self.marked_files.clone().into_iter().collect();
+        self.marked_table.update_table(&v, &self.file_index, None);
+    }
+
+    fn mark_filter(&mut self, filter: &str) {
+        for p in self.file_table.paths() {
+            if p.to_string_lossy().contains(filter) {
+                self.marked_files.insert(p);
+            }
         }
+
+        let v = self.marked_files.clone().into_iter().collect();
+        self.marked_table.update_table(&v, &self.file_index, None);
     }
 
     fn clear_marked(&mut self) {
@@ -657,6 +712,13 @@ impl App {
             .unwrap()
             .duplicates
             .keys()
+            .filter(|k| {
+                if let Some(filter) = self.display_filter.as_ref() {
+                    k.to_string_lossy().contains(filter)
+                } else {
+                    true
+                }
+            })
             .cloned()
             .collect();
 
@@ -962,6 +1024,16 @@ impl App {
                     .set_style(Style::default().fg(self.current_state.get_color())),
                 " Sort by: ".into(),
                 format!("{}", self.sort_by).blue(),
+                " Filter: ".into(),
+                self.display_filter
+                    .as_ref()
+                    .unwrap_or(&"None".to_string())
+                    .to_string()
+                    .set_style(Style::default().fg(if self.display_filter.is_none() {
+                        Color::DarkGray
+                    } else {
+                        Color::LightMagenta
+                    })),
             ]),
             path_line,
         ];
