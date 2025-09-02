@@ -954,6 +954,7 @@ dependencies = [
  "color-eyre",
  "colored",
  "deckard",
+ "humansize",
  "predicates",
  "serde_json",
  "tracing",

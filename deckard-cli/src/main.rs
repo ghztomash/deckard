@@ -1,9 +1,9 @@
-use clap::Arg;
+use clap::{Arg, value_parser};
 use color_eyre::eyre::Result;
 use colored::*;
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
-use std::{io::stderr, time::Instant};
+use std::{io::stderr, path::PathBuf, time::Instant};
 use tracing::info;
 
 const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -11,14 +11,31 @@ const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let cli = deckard::cli::commands().arg(
-        Arg::new("json")
-            .short('j')
-            .long("json")
-            .action(clap::ArgAction::SetTrue)
-            .help("Output in JSON format"),
-    );
+    let cli = deckard::cli::commands()
+        .arg(
+            Arg::new("json")
+                .short('j')
+                .long("json")
+                .action(clap::ArgAction::SetTrue)
+                .help("Output in JSON format"),
+        )
+        .arg(
+            Arg::new("lines_number")
+                .short('n')
+                .long("lines_number")
+                .value_parser(value_parser!(usize))
+                .help("Number of lines of output to show")
+                .num_args(1),
+        )
+        .arg(
+            Arg::new("reverse")
+                .short('r')
+                .long("reverse")
+                .action(clap::ArgAction::SetTrue)
+                .help("Display the biggest directories at the top in descending order"),
+        );
     let args = cli.get_matches();
+    let disk_usage_mode = args.get_flag("disk_usage");
 
     // setup logging
     let log_level = deckard::cli::log_level(args.get_count("verbose"));
@@ -61,48 +78,88 @@ fn main() -> Result<()> {
         format!("{elapsed:.2?}").blue()
     );
 
-    let now = Instant::now();
-    file_index.process_files(None, None);
-    // file_index.process_files(Some(Arc::new(|count, total| {
-    //     info!("processing file {}/{}", count, total);
-    // })));
-    let elapsed = now.elapsed();
-    info!(
-        "Processed {} files in {}",
-        file_index.files_len().to_string().green(),
-        format!("{elapsed:.2?}").blue()
-    );
+    // Only display the size
+    if disk_usage_mode {
+        let now = Instant::now();
+        let mut files: Vec<(PathBuf, u64)> = file_index
+            .files
+            .iter()
+            .map(|(path, info)| (path.clone(), info.size))
+            .collect();
 
-    let now = Instant::now();
-    file_index.find_duplicates(None, None);
-    // file_index.find_duplicates(Some(Arc::new(|count, total| {
-    //     info!("comparing file {}/{}", count, total);
-    // })));
-    let elapsed = now.elapsed();
-    info!(
-        "Found {} matches in {}",
-        file_index.duplicates_len().to_string().green(),
-        format!("{elapsed:.2?}").blue()
-    );
+        files.sort_by(|a, b| b.1.cmp(&a.1));
 
-    if json {
-        let serialized = serde_json::to_string_pretty(&file_index.duplicates)?;
-        println!("{serialized}");
-    } else {
-        println!("\n{}", "Matches:".bold());
-        for (file, file_copies) in &file_index.duplicates {
-            let name = file_index.file_name(file).unwrap_or_default();
-            let mut match_names = Vec::new();
+        if let Some(lines) = args.get_one::<usize>("lines_number") {
+            files = files.into_iter().take(*lines).collect();
+        }
 
-            for file_copy in file_copies {
-                match_names.push(file_copy.display());
+        let reverse = args.get_flag("reverse");
+        if reverse {
+            files.reverse();
+        }
+
+        let elapsed = now.elapsed();
+        info!(
+            "Sorted {} files in {}",
+            file_index.files_len().to_string().green(),
+            format!("{elapsed:.2?}").blue()
+        );
+
+        if json {
+            let serialized = serde_json::to_string_pretty(&files)?;
+            println!("{serialized}");
+        } else {
+            println!("\n{}", "Size:".bold());
+
+            for (name, size) in files {
+                println!(
+                    "{}: {}",
+                    name.display(),
+                    humansize::format_size(size, humansize::DECIMAL).yellow()
+                );
             }
+        }
+    } else {
+        // perform normal comparison
+        let now = Instant::now();
+        file_index.process_files(None, None);
 
-            println!(
-                "{} matches {}",
-                format!("{}", name.display()).green(),
-                format!("{match_names:#?}").yellow()
-            );
+        let elapsed = now.elapsed();
+        info!(
+            "Processed {} files in {}",
+            file_index.files_len().to_string().green(),
+            format!("{elapsed:.2?}").blue()
+        );
+
+        let now = Instant::now();
+        file_index.find_duplicates(None, None);
+
+        let elapsed = now.elapsed();
+        info!(
+            "Found {} matches in {}",
+            file_index.duplicates_len().to_string().green(),
+            format!("{elapsed:.2?}").blue()
+        );
+
+        if json {
+            let serialized = serde_json::to_string_pretty(&file_index.duplicates)?;
+            println!("{serialized}");
+        } else {
+            println!("\n{}", "Matches:".bold());
+            for (file, file_copies) in &file_index.duplicates {
+                let name = file_index.file_name(file).unwrap_or_default();
+                let mut match_names = Vec::new();
+
+                for file_copy in file_copies {
+                    match_names.push(file_copy.display());
+                }
+
+                println!(
+                    "{} matches {}",
+                    format!("{}", name.display()).green(),
+                    format!("{match_names:#?}").yellow()
+                );
+            }
         }
     }
 

@@ -37,6 +37,13 @@ pub fn commands() -> Command {
                 .help("Do not check empty files"),
         )
         .arg(
+            Arg::new("disk_usage")
+                .short('d')
+                .long("disk_usage")
+                .action(ArgAction::SetTrue)
+                .help("Index the files only and display the size"),
+        )
+        .arg(
             Arg::new("check_image")
                 .short('i')
                 .long("check_image")
@@ -170,22 +177,21 @@ mod tests {
     #[test]
     fn test_augment_config_sets_expected_fields() {
         let cmd = commands();
-        let matches = cmd
-            .get_matches_from(vec![
-                "app",
-                "--include_filter",
-                "foo",
-                "--exclude_filter",
-                "bar",
-                "--skip_hidden",
-                "--check_image",
-                "--check_audio",
-                "--full_hash",
-                "--threads",
-                "4",
-                "--min_size",
-                "1024",
-            ]);
+        let matches = cmd.get_matches_from(vec![
+            "app",
+            "--include_filter",
+            "foo",
+            "--exclude_filter",
+            "bar",
+            "--skip_hidden",
+            "--check_image",
+            "--check_audio",
+            "--full_hash",
+            "--threads",
+            "4",
+            "--min_size",
+            "1024",
+        ]);
 
         let config = augment_config(SearchConfig::default(), &matches);
 

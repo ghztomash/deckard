@@ -10,12 +10,12 @@ clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 open.workspace = true
+humansize.workspace = true
 
 crossterm = { version = "0.29", features = ["event-stream"] }
 ratatui = "0.29"
 trash = "5.2"
 chrono = "0.4"
-humansize = "2.1"
 tokio = { version = "1.44", features = ["full"] }
 tokio-stream = "0.1"
 futures = "0.3"
