@@ -4,7 +4,7 @@ use colored::*;
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
 use std::{io::stderr, path::PathBuf, time::Instant};
-use tracing::info;
+use tracing::Level;
 
 const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -72,11 +72,14 @@ fn main() -> Result<()> {
     let mut file_index = FileIndex::new(target_paths, config);
     file_index.index_dirs(None, None);
     let elapsed = now.elapsed();
-    info!(
-        "Indexed {} files in {}",
-        file_index.files_len().to_string().green(),
-        format!("{elapsed:.2?}").blue()
-    );
+
+    if log_level >= Level::INFO {
+        eprintln!(
+            "Indexed {} files in {}",
+            file_index.files_len().to_string().green(),
+            format!("{elapsed:.2?}").blue()
+        );
+    }
 
     // Only display the size
     if disk_usage_mode {
@@ -99,11 +102,13 @@ fn main() -> Result<()> {
         }
 
         let elapsed = now.elapsed();
-        info!(
-            "Sorted {} files in {}",
-            file_index.files_len().to_string().green(),
-            format!("{elapsed:.2?}").blue()
-        );
+        if log_level >= Level::INFO {
+            eprintln!(
+                "Sorted {} files in {}",
+                file_index.files_len().to_string().green(),
+                format!("{elapsed:.2?}").blue()
+            );
+        }
 
         if json {
             let serialized = serde_json::to_string_pretty(&files)?;
@@ -125,21 +130,25 @@ fn main() -> Result<()> {
         file_index.process_files(None, None);
 
         let elapsed = now.elapsed();
-        info!(
-            "Processed {} files in {}",
-            file_index.files_len().to_string().green(),
-            format!("{elapsed:.2?}").blue()
-        );
+        if log_level >= Level::INFO {
+            eprintln!(
+                "Processed {} files in {}",
+                file_index.files_len().to_string().green(),
+                format!("{elapsed:.2?}").blue()
+            );
+        }
 
         let now = Instant::now();
         file_index.find_duplicates(None, None);
 
         let elapsed = now.elapsed();
-        info!(
-            "Found {} matches in {}",
-            file_index.duplicates_len().to_string().green(),
-            format!("{elapsed:.2?}").blue()
-        );
+        if log_level >= Level::INFO {
+            eprintln!(
+                "Found {} matches in {}",
+                file_index.duplicates_len().to_string().green(),
+                format!("{elapsed:.2?}").blue()
+            );
+        }
 
         if json {
             let serialized = serde_json::to_string_pretty(&file_index.duplicates)?;

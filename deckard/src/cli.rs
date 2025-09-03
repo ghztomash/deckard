@@ -1,6 +1,6 @@
 use crate::SearchConfig;
 use clap::{Arg, ArgAction, ArgMatches, Command, command, value_parser};
-use tracing::{Level, debug};
+use tracing::{Level, trace};
 
 /// Common CLI arguments
 pub fn commands() -> Command {
@@ -146,7 +146,7 @@ pub fn augment_config(mut config: SearchConfig, args: &ArgMatches) -> SearchConf
         config.threads = *t;
     }
 
-    debug!("with arguments {:#?}", config);
+    trace!("with arguments {:#?}", config);
 
     config
 }
