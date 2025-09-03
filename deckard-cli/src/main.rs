@@ -8,6 +8,24 @@ use tracing::Level;
 
 const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 
+fn collect_sorted_files<'a>(
+    entries: impl Iterator<Item = (&'a PathBuf, u64)>,
+    reverse: bool,
+    limit: Option<&usize>,
+) -> Vec<(&'a PathBuf, u64)> {
+    let mut vec: Vec<_> = entries.collect();
+    vec.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+
+    if let Some(limit) = limit {
+        vec.truncate(*limit);
+    }
+
+    if reverse {
+        vec.reverse();
+    }
+    vec
+}
+
 fn main() -> Result<()> {
     color_eyre::install()?;
 
@@ -83,23 +101,16 @@ fn main() -> Result<()> {
 
     // Only display the size
     if disk_usage_mode {
+        // Sort indexed files by size
         let now = Instant::now();
-        let mut files: Vec<(PathBuf, u64)> = file_index
-            .files
-            .iter()
-            .map(|(path, info)| (path.clone(), info.size))
-            .collect();
-
-        files.sort_by(|a, b| b.1.cmp(&a.1));
-
-        if let Some(lines) = args.get_one::<usize>("lines_number") {
-            files = files.into_iter().take(*lines).collect();
-        }
-
-        let reverse = args.get_flag("reverse");
-        if reverse {
-            files.reverse();
-        }
+        let files = collect_sorted_files(
+            file_index
+                .files
+                .iter()
+                .map(|(path, info)| (path, info.size)),
+            args.get_flag("reverse"),
+            args.get_one::<usize>("lines_number"),
+        );
 
         let elapsed = now.elapsed();
         if log_level >= Level::INFO {
@@ -116,11 +127,11 @@ fn main() -> Result<()> {
         } else {
             println!("\n{}", "Size:".bold());
 
-            for (name, size) in files {
+            for (name, size) in files.iter().rev() {
                 println!(
                     "{}: {}",
                     name.display(),
-                    humansize::format_size(size, humansize::DECIMAL).yellow()
+                    humansize::format_size(*size, humansize::DECIMAL).blue()
                 );
             }
         }
@@ -150,22 +161,44 @@ fn main() -> Result<()> {
             );
         }
 
+        // Sort duplicate files by size
+        let now = Instant::now();
+        let duplicates = collect_sorted_files(
+            file_index
+                .duplicates
+                .keys()
+                .map(|path| (path, file_index.files[path].size)),
+            args.get_flag("reverse"),
+            args.get_one::<usize>("lines_number"),
+        );
+
+        let elapsed = now.elapsed();
+        if log_level >= Level::INFO {
+            eprintln!(
+                "Sorted {} files in {}",
+                file_index.duplicates_len().to_string().green(),
+                format!("{elapsed:.2?}").blue()
+            );
+        }
+
         if json {
             let serialized = serde_json::to_string_pretty(&file_index.duplicates)?;
             println!("{serialized}");
         } else {
             println!("\n{}", "Matches:".bold());
-            for (file, file_copies) in &file_index.duplicates {
+            for (file, size) in duplicates.iter().rev() {
+                let file_copies = &file_index.duplicates[*file];
                 let name = file_index.file_name(file).unwrap_or_default();
-                let mut match_names = Vec::new();
+                let mut match_names = Vec::with_capacity(file_copies.len());
 
                 for file_copy in file_copies {
                     match_names.push(file_copy.display());
                 }
 
                 println!(
-                    "{} matches {}",
+                    "{}: {} matches {}",
                     format!("{}", name.display()).green(),
+                    humansize::format_size(*size, humansize::DECIMAL).blue(),
                     format!("{match_names:#?}").yellow()
                 );
             }
