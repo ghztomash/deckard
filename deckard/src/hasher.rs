@@ -3,7 +3,7 @@ use crate::{
     error::DeckardError,
 };
 use chksum::{md5, sha1, sha2_256, sha2_512};
-use image::{ImageFormat, io::Reader as ImageReader};
+use image::{ImageFormat, ImageReader};
 use image_hasher::{HasherConfig, ImageHash};
 use rusty_chromaprint::{Configuration, Fingerprinter};
 use std::{
