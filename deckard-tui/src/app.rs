@@ -108,6 +108,7 @@ pub struct App {
     clone_table: FileTable,
     marked_table: FileTable,
     marked_files: HashSet<PathBuf>,
+    disk_usage_mode: bool,
     show_clones_table: bool,
     show_marked_table: bool,
     show_file_info: bool,
@@ -173,6 +174,7 @@ impl App {
         config: SearchConfig,
         dry_run: bool,
         remove_dirs: bool,
+        disk_usage: bool,
     ) -> Self {
         let clipboard = Clipboard::new().map_or_else(
             |e| {
@@ -213,16 +215,24 @@ impl App {
             },
         ];
 
+        // don't show clone count for disk_usage mode
+        let file_table = if disk_usage {
+            FileTable::new(vec![" ", "File", "Date", "Size"], true, false)
+        } else {
+            FileTable::new(vec![" ", "File", "Date", "Size", "Clones"], true, true)
+        };
+
         Self {
             focused_window: FocusedWindow::Files,
             should_exit: false,
             file_index: Arc::new(RwLock::new(FileIndex::new(target_paths, config))),
-            file_table: FileTable::new(vec![" ", "File", "Date", "Size", "Clones"], true, true),
+            file_table,
             clone_table: FileTable::new(vec![" ", "Clone", "Date", "Size"], true, false),
             marked_table: FileTable::new(vec![" ", "Marked"], false, false),
             marked_files: HashSet::new(),
+            disk_usage_mode: disk_usage,
             show_marked_table: true,
-            show_clones_table: true,
+            show_clones_table: !disk_usage,
             show_file_info: true,
             show_more_keys: false,
             current_state: State::Idle,
@@ -248,21 +258,24 @@ impl App {
         let (tx, mut rx) = unbounded_channel::<State>();
         let file_index = self.file_index.clone();
         let task_cancel_flag = self.cancel_flag.clone();
+        let disk_usage_mode = self.disk_usage_mode;
         let task_handle = tokio::spawn(async move {
             if let Err(e) =
                 index_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
             {
                 let _ = tx.send(State::Error(format!("index_files error: {e}")));
             }
-            if let Err(e) =
-                process_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
-            {
-                let _ = tx.send(State::Error(format!("process_files error: {e}")));
-            }
-            if let Err(e) =
-                find_duplicates(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
-            {
-                let _ = tx.send(State::Error(format!("find_duplicates error: {e}")));
+            if !disk_usage_mode {
+                if let Err(e) =
+                    process_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
+                {
+                    let _ = tx.send(State::Error(format!("process_files error: {e}")));
+                }
+                if let Err(e) =
+                    find_duplicates(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
+                {
+                    let _ = tx.send(State::Error(format!("find_duplicates error: {e}")));
+                }
             }
             let _ = tx.send(State::Done);
         });
@@ -706,21 +719,35 @@ impl App {
     }
 
     fn update_file_table(&mut self) {
-        let paths: Vec<PathBuf> = self
-            .file_index
-            .read()
-            .unwrap()
-            .duplicates
-            .keys()
-            .filter(|k| {
-                if let Some(filter) = self.display_filter.as_ref() {
-                    k.to_string_lossy().contains(filter)
-                } else {
-                    true
-                }
-            })
-            .cloned()
-            .collect();
+        let paths: Vec<PathBuf> = if self.disk_usage_mode {
+            // use files map for disk usage mode
+            self.file_index
+                .read()
+                .unwrap()
+                .files
+                .keys()
+                .filter(|k| {
+                    self.display_filter
+                        .as_ref()
+                        .is_none_or(|filter| k.to_string_lossy().contains(filter))
+                })
+                .cloned()
+                .collect()
+        } else {
+            // use duplicates map for regular mode
+            self.file_index
+                .read()
+                .unwrap()
+                .duplicates
+                .keys()
+                .filter(|k| {
+                    self.display_filter
+                        .as_ref()
+                        .is_none_or(|filter| k.to_string_lossy().contains(filter))
+                })
+                .cloned()
+                .collect()
+        };
 
         if !paths.is_empty() {
             self.file_table
@@ -1022,7 +1049,7 @@ impl App {
                 " State: ".into(),
                 format!("{}", self.current_state)
                     .set_style(Style::default().fg(self.current_state.get_color())),
-                " Sort by: ".into(),
+                " Sort: ".into(),
                 format!("{}", self.sort_by).blue(),
                 " Filter: ".into(),
                 self.display_filter

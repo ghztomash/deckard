@@ -20,6 +20,7 @@ cargo run --bin deckard-tui -- test_files
 - [ ] Delete empty directories
 - [ ] Reduce memory use
 - [ ] Reduce CPU use
+- [ ] Reduce lock time
 - [ ] Better error handling
 - [x] Better logging - use tracing
 - [ ] Gradual comparison (process stuff only when needed?)
@@ -33,4 +34,5 @@ cargo run --bin deckard-tui -- test_files
 - [ ] Index unit tests
 - [ ] Index integration tests
 - [ ] Mark all matching path
-- [ ] Filter view (:command mode)
+- [x] Filter view (:command mode)
+- [x] Disk usage mode

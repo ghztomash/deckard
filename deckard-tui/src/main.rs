@@ -61,6 +61,7 @@ async fn main() -> Result<()> {
 
     let dry_run = args.get_flag("dry_run");
     let remove_dirs = args.get_flag("remove_dirs");
+    let disk_usage = args.get_flag("disk_usage");
 
     let target_dirs = match args.get_many::<String>("params") {
         Some(values) => values.map(|v| v.as_str()).collect::<Vec<&str>>(),
@@ -73,7 +74,7 @@ async fn main() -> Result<()> {
     }
 
     let mut terminal = tui::init()?;
-    let app_result = app::App::new(target_paths, config, dry_run, remove_dirs)
+    let app_result = app::App::new(target_paths, config, dry_run, remove_dirs, disk_usage)
         .run(&mut terminal)
         .await;
 
