@@ -1,4 +1,4 @@
-use std::{fs::File, path::PathBuf};
+use std::{fs::{create_dir_all, File}, path::PathBuf};
 
 use clap::Arg;
 use color_eyre::eyre::Result;
@@ -92,7 +92,14 @@ async fn main() -> Result<()> {
 
 /// Initialize the tracing subscriber to log to a file
 fn init_tracing(log_level: tracing::Level) -> Result<WorkerGuard> {
-    let file = File::create(log_path()?)?;
+    let path = log_path()?;
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        create_dir_all(parent)?;
+    }
+
+    let file = File::create(path)?;
     let (non_blocking, guard) = tracing_appender::non_blocking(file);
 
     tracing_subscriber::fmt()

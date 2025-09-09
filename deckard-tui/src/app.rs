@@ -121,6 +121,7 @@ pub struct App {
     cancel_flag: Arc<AtomicBool>,
     abort_handle: Option<AbortHandle>,
     display_filter: Option<String>,
+    warning_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -245,6 +246,7 @@ impl App {
             dry_run,
             remove_dirs,
             display_filter: None,
+            warning_message: None,
         }
     }
 
@@ -364,6 +366,7 @@ impl App {
                     KeyCode::Char(':') => self.enter_command_mode(),
                     _ => {}
                 }
+                self.clear_warning();
             }
             Mode::Command => {
                 match key_event.code {
@@ -457,8 +460,12 @@ impl App {
                         self.set_filter(filter);
                     }
                 }
-                _ => {}
+                _ => {
+                    self.set_warning(format!("Failed to match command: {}", command.name));
+                }
             }
+        } else {
+            self.set_warning("Unknown command".to_string());
         }
         self.exit_command_mode();
     }
@@ -471,6 +478,14 @@ impl App {
     fn clear_filter(&mut self) {
         self.display_filter = None;
         self.update_tables();
+    }
+
+    fn set_warning(&mut self, message: String) {
+        self.warning_message = Some(message);
+    }
+
+    fn clear_warning(&mut self) {
+        self.warning_message = None;
     }
 
     fn mark(&mut self) {
@@ -520,12 +535,14 @@ impl App {
         }
     }
 
-    fn remove_marked(&mut self, remove_callback: fn(&PathBuf)) {
+    fn remove_marked(&mut self, remove_callback: fn(&PathBuf) -> Result<(), ()>) {
         {
             let mut index = self.file_index.write().unwrap();
             for file in &self.marked_files {
                 if !self.dry_run {
-                    remove_callback(file);
+                    if remove_callback(file).is_err() {
+                        self.warning_message = Some("Delete failed".to_string());
+                    }
                     if self.remove_dirs {
                         // TODO: Delete any empty dirs
                     }
@@ -576,14 +593,22 @@ impl App {
     }
 
     fn delete(&mut self) {
-        self.remove_marked(|f| {
-            fs::remove_file(f).unwrap();
+        self.remove_marked(|f| match fs::remove_file(f) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("Error deleting file {f:?}: {e}");
+                Err(())
+            }
         });
     }
 
     fn trash(&mut self) {
-        self.remove_marked(|f| {
-            trash::delete(f).unwrap();
+        self.remove_marked(|f| match trash::delete(f) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("Error deleting file {f:?}: {e}");
+                Err(())
+            }
         });
     }
 
@@ -1035,7 +1060,21 @@ impl App {
         let dir_joined = dir_lines.join(" ");
 
         let path_line = match self.mode {
-            Mode::Normal => Line::from(vec!["Paths: ".into(), dir_joined.yellow()]),
+            Mode::Normal => Line::from(if self.warning_message.is_none() {
+                vec!["Paths: ".into(), dir_joined.yellow()]
+            } else {
+                vec![
+                    self.warning_message
+                        .as_ref()
+                        .unwrap_or(&"".to_string())
+                        .to_string()
+                        .set_style(Style::default().fg(if self.warning_message.is_none() {
+                            Color::default()
+                        } else {
+                            Color::Red
+                        })),
+                ]
+            }),
             Mode::Command => Line::from(vec![
                 ":".into(),
                 self.command_processor.input.clone().into(),
