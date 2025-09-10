@@ -23,7 +23,6 @@ const MAGIC_SIZE: usize = 8;
 #[derive(Debug, PartialEq, Clone)]
 pub struct FileEntry {
     pub path: PathBuf,
-    pub name: OsString,
     pub size: u64,
     pub created: Option<SystemTime>,
     pub modified: Option<SystemTime>,
@@ -72,10 +71,6 @@ impl FileEntry {
     pub fn new(path: &PathBuf, metadata: &Metadata) -> Result<Self, DeckardError> {
         Ok(Self {
             path: path.to_owned(),
-            name: path
-                .file_name()
-                .ok_or(DeckardError::FileNameMissing)?
-                .into(),
             size: metadata.len(),
             created: metadata.created().ok(),
             modified: metadata.modified().ok(),
@@ -83,6 +78,13 @@ impl FileEntry {
             image_hash: None,
             audio_hash: None,
         })
+    }
+
+    pub fn name(&self) -> Option<OsString> {
+        Some(self
+            .path
+            .file_name()?
+            .into())
     }
 
     pub fn process(&mut self, config: &SearchConfig) -> Result<(), DeckardError> {
@@ -144,8 +146,8 @@ impl FileEntry {
             let distance = this_image.dist(other_image);
             debug!(
                 "{} and {} hamming distance: {}",
-                self.name.display(),
-                other.name.display(),
+                self.name().unwrap_or_default().display(),
+                other.name().unwrap_or_default().display(),
                 distance
             );
             if distance <= config.image_config.threshold as u32 {
@@ -180,8 +182,8 @@ impl FileEntry {
 
             debug!(
                 "{} and {} matching segments {} with score {}",
-                self.name.display(),
-                other.name.display(),
+                self.name().unwrap_or_default().display(),
+                other.name().unwrap_or_default().display(),
                 segments.len(),
                 score
             );

@@ -271,7 +271,7 @@ impl FileIndex {
     }
 
     pub fn file_name(&self, file: &PathBuf) -> Option<OsString> {
-        self.files.get(file).map(|f| f.name.to_owned())
+        self.files.get(file).map(|f| f.name())?
     }
 
     pub fn file_entry(&self, file: &PathBuf) -> Option<FileEntry> {

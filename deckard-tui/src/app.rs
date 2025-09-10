@@ -831,7 +831,12 @@ impl App {
             let mut lines = vec![
                 Line::from(vec![
                     "name: ".into(),
-                    file_entry.name.to_string_lossy().to_string().yellow(),
+                    file_entry
+                        .name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string()
+                        .yellow(),
                 ]),
                 Line::from(vec![
                     "size: ".into(),
