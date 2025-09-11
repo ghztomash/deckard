@@ -28,21 +28,42 @@ pub struct FileTableEntry {
 }
 
 #[derive(Debug, Default)]
-pub struct FileTable {
+pub struct FileTable<'a> {
     pub table_state: TableState,
     pub table_len: usize,
     entries: Vec<FileTableEntry>,
     selected_path: Option<Arc<PathBuf>>,
     scroll_state: ScrollbarState,
-    header: Vec<&'static str>,
     mark_marked: bool,
     show_clone_count: bool,
     total_size: u64,
-    // callback function that populates rows
+    // from draw
+    table: Table<'a>,
+    footer: Row<'a>,
 }
 
-impl FileTable {
-    pub fn new(header: Vec<&'static str>, mark_marked: bool, show_clone_count: bool) -> Self {
+impl FileTable<'_> {
+    pub fn new(header_str: Vec<&'static str>, mark_marked: bool, show_clone_count: bool) -> Self {
+        let header_style = Style::default().dark_gray();
+        let header = header_str
+            .into_iter()
+            .map(Cell::from)
+            .collect::<Row>()
+            .style(header_style);
+
+        let mut widths = vec![
+            // + 1 is for padding.
+            Constraint::Max(1),
+            Constraint::Min(10),
+            Constraint::Max(11),
+            Constraint::Max(11),
+        ];
+        if show_clone_count {
+            widths.push(Constraint::Max(7));
+        }
+
+        let table = Table::default().widths(widths).header(header);
+
         Self {
             table_state: TableState::new(),
             table_len: 0,
@@ -50,9 +71,10 @@ impl FileTable {
             entries: Vec::new(),
             selected_path: None,
             scroll_state: ScrollbarState::new(0),
-            header,
             mark_marked,
             show_clone_count,
+            table,
+            footer: Row::default(),
         }
     }
 
@@ -115,6 +137,18 @@ impl FileTable {
         self.table_len = self.entries.len();
         self.total_size = total_size;
         self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
+
+        // from draw
+        let footer_style = Style::default().dark_gray();
+        let total_size_str = humansize::format_size(total_size, humansize::DECIMAL);
+
+        self.footer = Row::new(vec![
+            Cell::from(Text::from("")),
+            Cell::from(Text::from(format!("Files: {}", self.table_len))),
+            Cell::from(Text::from("Total:")),
+            Cell::from(Text::from(total_size_str)),
+        ])
+        .style(footer_style);
     }
 
     pub fn select_entry(&mut self, index: usize) {
@@ -187,23 +221,6 @@ impl FileTable {
         focused: bool,
         marked_files: &HashSet<Arc<PathBuf>>,
     ) {
-        let header_style = Style::default().dark_gray();
-        let selected_style = if focused {
-            Style::default().fg(Color::Black).bg(Color::White)
-        } else {
-            Style::default().fg(Color::Black).bg(Color::DarkGray)
-        };
-        let footer_style = Style::default().dark_gray();
-
-        let header = self
-            .header
-            .clone()
-            .into_iter()
-            .map(Cell::from)
-            .collect::<Row>()
-            .style(header_style);
-
-        let total_size = humansize::format_size(self.total_size, humansize::DECIMAL);
 
         let rows = self.entries.clone().into_iter().map(|e| {
             let size = humansize::format_size(e.size, humansize::DECIMAL);
@@ -234,6 +251,7 @@ impl FileTable {
             }
             cells.into_iter().collect::<Row>().style(Style::new())
         });
+
         let block = if focused {
             Block::bordered()
                 .border_type(BorderType::Thick)
@@ -244,31 +262,19 @@ impl FileTable {
                 .border_style(Style::new().dark_gray())
         };
 
-        let footer = Row::new(vec![
-            Cell::from(Text::from("")),
-            Cell::from(Text::from(format!("Files: {}", self.table_len))),
-            Cell::from(Text::from("Total:")),
-            Cell::from(Text::from(total_size.to_string())),
-        ])
-        .style(footer_style);
+        let selected_style = if focused {
+            Style::default().fg(Color::Black).bg(Color::White)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::DarkGray)
+        };
 
-        let mut widths = vec![
-            // + 1 is for padding.
-            Constraint::Max(1),
-            Constraint::Min(10),
-            Constraint::Max(11),
-            Constraint::Max(11),
-        ];
-        if self.show_clone_count {
-            widths.push(Constraint::Max(7));
-        }
-
-        let table = Table::new(rows, widths)
-            .header(header)
-            .footer(footer)
+        let table = self
+            .table
+            .clone()
+            .rows(rows)
+            .footer(self.footer.clone())
             .row_highlight_style(selected_style)
             .block(block);
-
         StatefulWidget::render(table, area, buf, &mut self.table_state);
 
         let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);

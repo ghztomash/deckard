@@ -98,15 +98,15 @@ impl fmt::Display for Sorting {
 }
 
 #[derive(Default)]
-pub struct App {
+pub struct App<'a> {
     focused_window: FocusedWindow,
     should_exit: bool,
     dry_run: bool,
     remove_dirs: bool,
     file_index: Arc<RwLock<FileIndex>>,
-    file_table: FileTable,
-    clone_table: FileTable,
-    marked_table: FileTable,
+    file_table: FileTable<'a>,
+    clone_table: FileTable<'a>,
+    marked_table: FileTable<'a>,
     marked_files: HashSet<Arc<PathBuf>>,
     disk_usage_mode: bool,
     show_clones_table: bool,
@@ -167,7 +167,7 @@ impl fmt::Display for State {
     }
 }
 
-impl App {
+impl App<'_> {
     const FRAMES_PER_SECOND: f32 = 30.0;
 
     pub fn new(
