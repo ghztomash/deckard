@@ -6,9 +6,29 @@ mod hasher;
 pub mod index;
 
 use config::SearchConfig;
+use serde::{Serialize, Serializer};
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::{env, fs, path::Path, path::PathBuf};
 use tracing::{error, warn};
+
+#[derive(Clone, Debug)]
+pub struct SerializablePath(Arc<PathBuf>);
+
+impl From<&Arc<PathBuf>> for SerializablePath {
+    fn from(arc: &Arc<PathBuf>) -> Self {
+        SerializablePath(arc.clone())
+    }
+}
+
+impl Serialize for SerializablePath {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.to_string_lossy().serialize(serializer)
+    }
+}
 
 pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
     let mut paths: HashSet<PathBuf> = HashSet::with_capacity(target_paths.len());

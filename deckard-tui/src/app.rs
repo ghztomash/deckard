@@ -107,7 +107,7 @@ pub struct App {
     file_table: FileTable,
     clone_table: FileTable,
     marked_table: FileTable,
-    marked_files: HashSet<PathBuf>,
+    marked_files: HashSet<Arc<PathBuf>>,
     disk_usage_mode: bool,
     show_clones_table: bool,
     show_marked_table: bool,
@@ -554,7 +554,7 @@ impl App {
         self.update_tables();
     }
 
-    fn active_selected_file(&self) -> Option<PathBuf> {
+    fn active_selected_file(&self) -> Option<Arc<PathBuf>> {
         let active_table = match self.focused_window {
             FocusedWindow::Files => &self.file_table,
             FocusedWindow::Clones => &self.clone_table,
@@ -580,7 +580,7 @@ impl App {
 
     fn open_file(&mut self) {
         if let Some(selected_file) = self.active_selected_file() {
-            _ = open::that_detached(selected_file);
+            _ = open::that_detached(selected_file.as_ref());
         }
     }
 
@@ -744,7 +744,7 @@ impl App {
     }
 
     fn update_file_table(&mut self) {
-        let paths: Vec<PathBuf> = if self.disk_usage_mode {
+        let paths: Vec<Arc<PathBuf>> = if self.disk_usage_mode {
             // use files map for disk usage mode
             self.file_index
                 .read()

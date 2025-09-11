@@ -20,7 +20,7 @@ use std::{
 
 #[derive(Debug, Default, Clone)]
 pub struct FileTableEntry {
-    path: PathBuf,
+    path: Arc<PathBuf>,
     display_path: String,
     size: u64,
     date: Option<SystemTime>,
@@ -32,7 +32,7 @@ pub struct FileTable {
     pub table_state: TableState,
     pub table_len: usize,
     entries: Vec<FileTableEntry>,
-    selected_path: Option<PathBuf>,
+    selected_path: Option<Arc<PathBuf>>,
     scroll_state: ScrollbarState,
     header: Vec<&'static str>,
     mark_marked: bool,
@@ -64,13 +64,13 @@ impl FileTable {
         self.scroll_state = ScrollbarState::new(0);
     }
 
-    pub fn paths(&self) -> Vec<PathBuf> {
+    pub fn paths(&self) -> Vec<Arc<PathBuf>> {
         self.entries.iter().map(|e| e.path.clone()).collect()
     }
 
     pub fn update_table(
         &mut self,
-        paths: &Vec<PathBuf>,
+        paths: &Vec<Arc<PathBuf>>,
         file_index: &Arc<RwLock<FileIndex>>,
         sort_by: Option<&Sorting>,
     ) {
@@ -176,7 +176,7 @@ impl FileTable {
         self.selected_path = None;
     }
 
-    pub fn selected_path(&self) -> Option<PathBuf> {
+    pub fn selected_path(&self) -> Option<Arc<PathBuf>> {
         self.selected_path.clone()
     }
 
@@ -185,7 +185,7 @@ impl FileTable {
         buf: &mut Buffer,
         area: Rect,
         focused: bool,
-        marked_files: &HashSet<PathBuf>,
+        marked_files: &HashSet<Arc<PathBuf>>,
     ) {
         let header_style = Style::default().dark_gray();
         let selected_style = if focused {

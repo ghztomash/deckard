@@ -1,18 +1,18 @@
 use clap::{Arg, value_parser};
 use color_eyre::eyre::Result;
 use colored::*;
-use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
-use std::{io::stderr, path::PathBuf, time::Instant};
+use deckard::{SerializablePath, config::SearchConfig};
+use std::{io::stderr, path::PathBuf, sync::Arc, time::Instant};
 use tracing::Level;
 
 const CONFIG_NAME: &str = env!("CARGO_PKG_NAME");
 
-fn collect_sorted_files<'a>(
-    entries: impl Iterator<Item = (&'a PathBuf, u64)>,
+fn collect_sorted_files(
+    entries: impl Iterator<Item = (Arc<PathBuf>, u64)>,
     reverse: bool,
     limit: Option<&usize>,
-) -> Vec<(&'a PathBuf, u64)> {
+) -> Vec<(Arc<PathBuf>, u64)> {
     let mut vec: Vec<_> = entries.collect();
     vec.sort_unstable_by(|a, b| b.1.cmp(&a.1));
 
@@ -107,7 +107,7 @@ fn main() -> Result<()> {
             file_index
                 .files
                 .iter()
-                .map(|(path, info)| (path, info.size)),
+                .map(|(path, info)| (path.clone(), info.size)),
             args.get_flag("reverse"),
             args.get_one::<usize>("lines_number"),
         );
@@ -122,6 +122,8 @@ fn main() -> Result<()> {
         }
 
         if json {
+            let files: Vec<(SerializablePath, u64)> =
+                files.iter().map(|(k, v)| (k.into(), *v)).collect();
             let serialized = serde_json::to_string_pretty(&files)?;
             println!("{serialized}");
         } else {
@@ -167,7 +169,7 @@ fn main() -> Result<()> {
             file_index
                 .duplicates
                 .keys()
-                .map(|path| (path, file_index.files[path].size)),
+                .map(|path| (path.clone(), file_index.files[path].size)),
             args.get_flag("reverse"),
             args.get_one::<usize>("lines_number"),
         );
@@ -182,12 +184,17 @@ fn main() -> Result<()> {
         }
 
         if json {
-            let serialized = serde_json::to_string_pretty(&file_index.duplicates)?;
+            let duplicates: Vec<(SerializablePath, Vec<SerializablePath>)> = file_index
+                .duplicates
+                .iter()
+                .map(|(k, v)| (k.into(), v.iter().map(SerializablePath::from).collect()))
+                .collect();
+            let serialized = serde_json::to_string_pretty(&duplicates)?;
             println!("{serialized}");
         } else {
             println!("\n{}", "Matches:".bold());
             for (file, size) in duplicates.iter().rev() {
-                let file_copies = &file_index.duplicates[*file];
+                let file_copies = &file_index.duplicates[file];
                 let name = file_index.file_name(file).unwrap_or_default();
                 let mut match_names = Vec::with_capacity(file_copies.len());
 

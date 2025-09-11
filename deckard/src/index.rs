@@ -19,8 +19,8 @@ use tracing::{debug, error, trace, warn};
 #[derive(Debug, Default, Clone)]
 pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
-    pub files: HashMap<PathBuf, FileEntry>,
-    pub duplicates: HashMap<PathBuf, HashSet<PathBuf>>,
+    pub files: HashMap<Arc<PathBuf>, FileEntry>,
+    pub duplicates: HashMap<Arc<PathBuf>, HashSet<Arc<PathBuf>>>,
     pub config: SearchConfig,
     pub pool: Option<Arc<ThreadPool>>,
 }
@@ -73,7 +73,7 @@ impl FileIndex {
             }
         };
         for dir in &self.dirs {
-            let index: HashMap<PathBuf, FileEntry> = jwalk::WalkDir::new(dir)
+            let index: HashMap<Arc<PathBuf>, FileEntry> = jwalk::WalkDir::new(dir)
                 .parallelism(parallelism.to_owned())
                 .sort(false)
                 .skip_hidden(self.config.skip_hidden)
@@ -131,6 +131,7 @@ impl FileIndex {
                                     return None;
                                 }
 
+                                let path = Arc::new(path);
                                 let file = FileEntry::new(&path, &metadata)
                                     .inspect_err(|e| error!("Error reading File Entry {}", e))
                                     .ok()?;

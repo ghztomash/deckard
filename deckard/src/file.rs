@@ -14,6 +14,7 @@ use std::{
     fs::{File, Metadata},
     io::{Read, Seek},
     path::{Path, PathBuf},
+    sync::Arc,
     time::SystemTime,
 };
 use tracing::{debug, error, warn};
@@ -22,7 +23,7 @@ const MAGIC_SIZE: usize = 8;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FileEntry {
-    pub path: PathBuf,
+    pub path: Arc<PathBuf>,
     pub size: u64,
     pub created: Option<SystemTime>,
     pub modified: Option<SystemTime>,
@@ -68,9 +69,9 @@ impl From<&str> for MediaType {
 }
 
 impl FileEntry {
-    pub fn new(path: &PathBuf, metadata: &Metadata) -> Result<Self, DeckardError> {
+    pub fn new(path: &Arc<PathBuf>, metadata: &Metadata) -> Result<Self, DeckardError> {
         Ok(Self {
-            path: path.to_owned(),
+            path: path.clone(),
             size: metadata.len(),
             created: metadata.created().ok(),
             modified: metadata.modified().ok(),
@@ -81,14 +82,11 @@ impl FileEntry {
     }
 
     pub fn name(&self) -> Option<OsString> {
-        Some(self
-            .path
-            .file_name()?
-            .into())
+        Some(self.path.file_name()?.into())
     }
 
     pub fn process(&mut self, config: &SearchConfig) -> Result<(), DeckardError> {
-        let mut file = File::open(&self.path)?;
+        let mut file = File::open(self.path.as_ref())?;
 
         if config.hasher_config.full_hash {
             self.hash = Some(hasher::get_full_hash(
@@ -105,20 +103,21 @@ impl FileEntry {
         }
 
         if config.image_config.compare || config.audio_config.compare {
-            match MediaType::from(get_mime_type(&self.path, &mut file).unwrap_or_default()) {
+            match MediaType::from(get_mime_type(self.path.as_ref(), &mut file).unwrap_or_default())
+            {
                 MediaType::Image if config.image_config.compare => {
                     self.image_hash = hasher::get_image_hash(
                         &config.image_config.hash_algorithm,
                         &config.image_config.filter_algorithm,
                         config.image_config.size,
-                        &self.path,
+                        self.path.as_ref(),
                         &mut file,
                     )
                     .inspect_err(|e| error!("failed get image hash for {:?}: {:?}", self.path, e))
                     .ok();
                 }
                 MediaType::Audio if config.audio_config.compare => {
-                    self.audio_hash = hasher::get_audio_hash(&self.path, &mut file)
+                    self.audio_hash = hasher::get_audio_hash(self.path.as_ref(), &mut file)
                         .inspect_err(|e| {
                             error!("failed get audio hash for {:?}: {:?}", self.path, e)
                         })
