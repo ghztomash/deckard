@@ -891,7 +891,7 @@ impl App<'_> {
                 Line::from(vec![
                     "path: ".into(),
                     deckard::to_relative_path(&file_entry.path)
-                        .to_string_lossy()
+                        .display()
                         .to_string()
                         .yellow(),
                 ]),
@@ -1051,15 +1051,7 @@ impl App<'_> {
 
         let dir_lines: Vec<String> = dirs
             .iter()
-            .map(|d| {
-                format!(
-                    "./{}",
-                    deckard::to_relative_path(d)
-                        .to_string_lossy()
-                        .to_string()
-                        .yellow(),
-                )
-            })
+            .map(|d| format!("./{}", deckard::to_relative_path(d).display()))
             .collect();
 
         let dir_joined = dir_lines.join(" ");
