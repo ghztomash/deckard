@@ -253,10 +253,10 @@ impl FileTable<'_> {
         let height = area.height.saturating_sub(3) as usize;
         let offset = self.table_state.offset();
 
-        let mut index: usize = 0;
-        let rows = self.entries.iter().map(|e| {
-            index += 1;
-            if index >= offset.saturating_sub(height) && index < offset.saturating_add(height * 2) {
+        let rows = self.entries.iter().enumerate().map(|(i, e)| {
+            if i >= offset.saturating_sub(height)
+                && i < offset.saturating_add(height.saturating_mul(2))
+            {
                 let is_marked = marked_files.contains(&e.path);
                 e.to_row(self.mark_marked, is_marked, self.show_clone_count)
             } else {
