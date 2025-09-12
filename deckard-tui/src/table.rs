@@ -27,6 +27,35 @@ pub struct FileTableEntry {
     clone_count: usize,
 }
 
+impl FileTableEntry {
+    fn to_row(&self, mark_marked: bool, is_marked: bool, show_clone_count: bool) -> Row<'_> {
+        let size = humansize::format_size(self.size, humansize::DECIMAL);
+        let date = self
+            .date
+            .map(|d| DateTime::<Local>::from(d).format("%d/%m/%Y").to_string())
+            .unwrap_or_default();
+
+        let path_style = if mark_marked && is_marked {
+            Style::new().yellow()
+        } else {
+            Style::new()
+        };
+
+        let mut cells = vec![
+            Cell::from(Text::from(if mark_marked && is_marked { "*" } else { " " })),
+            Cell::from(Text::from(self.display_path.clone().set_style(path_style))),
+            Cell::from(Text::from(date)),
+            Cell::from(Text::from(size)),
+        ];
+
+        if show_clone_count {
+            cells.push(Cell::from(Text::from(self.clone_count.to_string())));
+        }
+
+        Row::new(cells).style(Style::new())
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct FileTable<'a> {
     pub table_state: TableState,
@@ -221,35 +250,18 @@ impl FileTable<'_> {
         focused: bool,
         marked_files: &HashSet<Arc<PathBuf>>,
     ) {
+        let height = area.height.saturating_sub(3) as usize;
+        let offset = self.table_state.offset();
 
-        let rows = self.entries.clone().into_iter().map(|e| {
-            let size = humansize::format_size(e.size, humansize::DECIMAL);
-            let date = e
-                .date
-                .map(|d| DateTime::<Local>::from(d).format("%d/%m/%Y").to_string())
-                .unwrap_or_default();
-            let is_marked = marked_files.contains(&e.path);
-
-            let path_style = if self.mark_marked && is_marked {
-                Style::new().yellow()
+        let mut index: usize = 0;
+        let rows = self.entries.iter().map(|e| {
+            index += 1;
+            if index >= offset.saturating_sub(height) && index < offset.saturating_add(height * 2) {
+                let is_marked = marked_files.contains(&e.path);
+                e.to_row(self.mark_marked, is_marked, self.show_clone_count)
             } else {
-                Style::new()
-            };
-
-            let mut cells = vec![
-                Cell::from(Text::from(if self.mark_marked && is_marked {
-                    "*"
-                } else {
-                    " "
-                })),
-                Cell::from(Text::from(e.display_path.set_style(path_style))),
-                Cell::from(Text::from(date)),
-                Cell::from(Text::from(size)),
-            ];
-            if self.show_clone_count {
-                cells.push(Cell::from(Text::from(e.clone_count.to_string())));
+                Row::new::<Vec<Cell>>(vec![]).style(Style::new())
             }
-            cells.into_iter().collect::<Row>().style(Style::new())
         });
 
         let block = if focused {
