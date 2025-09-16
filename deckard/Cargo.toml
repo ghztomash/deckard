@@ -2,6 +2,12 @@
 name = "deckard"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tomash Ghz <ghz.tomash@hotmail.com>"]
+description = "Duplicate file finder and disk usage library"
+repository = "https://github.com/ghztomash/deckard"
+keywords = ["duplicate", "dupe", "disk", "disk-usage"]
+categories = ["filesystem"]
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 tracing.workspace = true

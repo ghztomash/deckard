@@ -18,13 +18,12 @@ cargo run --bin deckard-tui -- test_files
 
 - [x] Remove files from index that are not in duplicates list
 - [ ] Delete empty directories
-- [ ] Reduce memory use
-- [ ] Reduce CPU use
+- [x] Reduce memory use
+- [x] Reduce CPU use
 - [ ] Reduce lock time
 - [ ] Better error handling
 - [x] Better logging - use tracing
 - [ ] Gradual comparison (process stuff only when needed?)
-- [ ] Better error handling
 - [ ] optimize `get_image_hash`
 - [ ] optimize `get_audio_hash`
 - [ ] Hasher integration tests
@@ -33,6 +32,6 @@ cargo run --bin deckard-tui -- test_files
 - [ ] File integration tests
 - [ ] Index unit tests
 - [ ] Index integration tests
-- [ ] Mark all matching path
+- [x] Mark all matching path
 - [x] Filter view (:command mode)
 - [x] Disk usage mode

@@ -2,6 +2,12 @@
 name = "deckard-tui"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tomash Ghz <ghz.tomash@hotmail.com>"]
+description = "Duplicate file finder and disk usage TUI"
+repository = "https://github.com/ghztomash/deckard"
+keywords = ["duplicate", "dupe", "cleaner", "disk", "disk-usage"]
+categories = ["command-line-utilities", "filesystem"]
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 deckard = { path = "../deckard" }
