@@ -8,6 +8,7 @@ use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyM
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
 use futures::StreamExt;
+use ratatui::widgets::Padding;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Flex, Layout, Rect},
@@ -1021,6 +1022,7 @@ impl App<'_> {
             .title(title)
             .title_style(Style::new().bold().white())
             .title_bottom(Line::from(vec![" Hide ".into(), "<?> ".blue().bold()]).right_aligned())
+            .padding(Padding::horizontal(1))
             .borders(Borders::ALL)
             .border_type(BorderType::Thick)
             .border_style(Color::LightMagenta);
