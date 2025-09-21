@@ -567,7 +567,33 @@ impl App<'_> {
                         self.warning_message = Some("Delete failed".to_string());
                     }
                     if self.remove_dirs {
-                        // TODO: Delete any empty dirs
+                        // Delete any empty dirs
+                        let mut path = file.parent();
+                        loop {
+                            if let Some(parent) = path
+                                && parent.is_dir()
+                                && parent.components().count() > 2
+                            {
+                                match fs::read_dir(parent) {
+                                    Ok(dir) => {
+                                        if dir.count() == 0 {
+                                            debug!("directory empty, deleting: {parent:?}");
+                                            if remove_callback(&parent.to_path_buf()).is_err() {
+                                                warn!("failed deleting: {parent:?}");
+                                                break;
+                                            }
+                                            path = parent.parent();
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("failed reading parent directory: {e}");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 index.remove_from_index(file);

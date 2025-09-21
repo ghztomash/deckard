@@ -17,7 +17,7 @@ cargo run --bin deckard-tui -- test_files
 ## To-do
 
 - [x] Remove files from index that are not in duplicates list
-- [ ] Delete empty directories
+- [x] Delete empty directories
 - [x] Reduce memory use
 - [x] Reduce CPU use
 - [ ] Reduce lock time

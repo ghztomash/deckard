@@ -1,4 +1,7 @@
-use std::{fs::{create_dir_all, File}, path::PathBuf};
+use std::{
+    fs::{File, create_dir_all},
+    path::PathBuf,
+};
 
 use clap::Arg;
 use color_eyre::eyre::Result;
@@ -23,11 +26,11 @@ async fn main() -> Result<()> {
                 .help("Open logs file"),
         )
         .arg(
-            Arg::new("remove_dirs")
-                .short('E')
-                .long("remove_dirs")
-                .action(clap::ArgAction::SetTrue)
-                .help("Remove empty directories"),
+            Arg::new("no_remove_dirs")
+                .short('R')
+                .long("no_remove_dirs")
+                .action(clap::ArgAction::SetFalse)
+                .help("Do not remove empty directories"),
         )
         .arg(
             Arg::new("dry_run")
@@ -60,7 +63,7 @@ async fn main() -> Result<()> {
     );
 
     let dry_run = args.get_flag("dry_run");
-    let remove_dirs = args.get_flag("remove_dirs");
+    let remove_dirs = args.get_flag("no_remove_dirs");
     let disk_usage = args.get_flag("disk_usage");
 
     let target_dirs = match args.get_many::<String>("params") {
