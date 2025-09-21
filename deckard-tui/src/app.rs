@@ -200,12 +200,20 @@ impl App<'_> {
                 alias: Some("f"),
             },
             Command {
+                command: "parent_filter",
+                alias: Some("pf"),
+            },
+            Command {
                 command: "clear_filter",
                 alias: Some("cf"),
             },
             Command {
                 command: "mark_filter",
                 alias: Some("mf"),
+            },
+            Command {
+                command: "mark_parent",
+                alias: Some("mp"),
             },
             Command {
                 command: "mark_all",
@@ -451,6 +459,20 @@ impl App<'_> {
                 "mark_filter" => {
                     if let Some(filter) = command.args.first() {
                         self.mark_filter(filter);
+                    }
+                }
+                "mark_parent" => {
+                    if let Some(file) = self.active_selected_file()
+                        && let Some(parent) = file.parent()
+                    {
+                        self.mark_filter(&parent.to_string_lossy());
+                    }
+                }
+                "parent_filter" => {
+                    if let Some(file) = self.active_selected_file()
+                        && let Some(parent) = file.parent()
+                    {
+                        self.set_filter(&parent.to_string_lossy());
                     }
                 }
                 "clear_filter" => {
