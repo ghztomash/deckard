@@ -994,6 +994,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "trash",
+ "tui-tree-widget",
 ]
 
 [[package]]
@@ -3345,6 +3346,16 @@ dependencies = [
  "nom 3.2.1",
  "parking_lot 0.10.2",
  "petgraph",
+]
+
+[[package]]
+name = "tui-tree-widget"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c14c4488e071617f5b5922222193cdf6725835e492c6229557af85d3c1a4e903"
+dependencies = [
+ "ratatui",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

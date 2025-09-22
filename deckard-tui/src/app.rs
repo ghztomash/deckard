@@ -1,6 +1,7 @@
 use crate::command::{Command, CommandProcessor};
 use crate::constants;
 use crate::table::FileTable;
+use crate::tree::FileTree;
 use arboard::Clipboard;
 use chrono::{DateTime, Local};
 use color_eyre::eyre::{Result, WrapErr};
@@ -105,6 +106,7 @@ pub struct App<'a> {
     dry_run: bool,
     remove_dirs: bool,
     file_index: Arc<RwLock<FileIndex>>,
+    file_tree: FileTree<'a>,
     file_table: FileTable<'a>,
     clone_table: FileTable<'a>,
     marked_table: FileTable<'a>,
@@ -236,6 +238,7 @@ impl App<'_> {
             focused_window: FocusedWindow::Files,
             should_exit: false,
             file_index: Arc::new(RwLock::new(FileIndex::new(target_paths, config))),
+            file_tree: FileTree::default(),
             file_table,
             clone_table: FileTable::new(vec![" ", "Clone", "Date", "Size"], true, false),
             marked_table: FileTable::new(vec![" ", "Marked"], false, false),
@@ -371,6 +374,9 @@ impl App<'_> {
                     KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
                     KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
                         self.focus_previus_table()
+                    }
+                    KeyCode::Enter => {
+                        self.file_tree.select_enter();
                     }
                     KeyCode::Char(':') => self.enter_command_mode(),
                     _ => {}
@@ -762,6 +768,7 @@ impl App<'_> {
         match self.focused_window {
             FocusedWindow::Files => {
                 self.file_table.select_next(step);
+                self.file_tree.select_next();
                 self.update_clone_table();
             }
             FocusedWindow::Clones => {
@@ -780,6 +787,7 @@ impl App<'_> {
         match self.focused_window {
             FocusedWindow::Files => {
                 self.file_table.select_previous(step);
+                self.file_tree.select_previous();
                 self.update_clone_table();
             }
             FocusedWindow::Clones => {
@@ -827,6 +835,7 @@ impl App<'_> {
             self.file_table
                 .update_table(&paths, &self.file_index, Some(&self.sort_by));
             self.file_table.select_first();
+            self.file_tree.update_tree(&paths, &self.file_index);
         } else {
             self.file_table.clear();
         }
@@ -1283,7 +1292,7 @@ impl App<'_> {
             .constraints(main_horiozntal_bottom_constrains)
             .split(main_sub_area[1]);
 
-        self.file_table.render(
+        self.file_tree.render(
             buf,
             main_sub_area_top[0], // top left
             matches!(self.focused_window, FocusedWindow::Files),

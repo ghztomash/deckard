@@ -11,6 +11,7 @@ mod app;
 mod command;
 mod constants;
 mod table;
+mod tree;
 mod tui;
 
 #[tokio::main]
