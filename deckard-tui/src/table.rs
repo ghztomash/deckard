@@ -4,7 +4,7 @@ use deckard::index::FileIndex;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Margin, Rect},
-    style::{Color, Style, Styled, Stylize},
+    style::{Color, Modifier, Style, Styled, Stylize},
     text::Text,
     widgets::{
         Block, BorderType, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -275,7 +275,7 @@ impl FileTable<'_> {
         };
 
         let selected_style = if focused {
-            Style::default().fg(Color::Black).bg(Color::White)
+            Style::default().fg(Color::Black).bg(Color::LightGreen).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Black).bg(Color::DarkGray)
         };

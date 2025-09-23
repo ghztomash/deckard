@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 
 use deckard::find_common_path;
 use deckard::index::FileIndex;
@@ -8,7 +9,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, StatefulWidget};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Scrollbar, ScrollbarOrientation, StatefulWidget,
+};
 
 use tracing::warn;
 use tui_tree_widget::{Tree, TreeItem, TreeState};
@@ -18,24 +21,26 @@ use crate::app::{Sorting, format_path};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum TreeNode {
     File {
+        display_path: PathBuf,
         path: Arc<PathBuf>,
-        full_path: Arc<PathBuf>,
         size: u64,
+        date: Option<SystemTime>,
         clone_count: usize,
     },
     Directory {
-        path: Arc<PathBuf>,
-        children: BTreeMap<Arc<PathBuf>, TreeNode>,
+        display_path: PathBuf,
+        children: BTreeMap<PathBuf, TreeNode>,
         total_size: u64,
+        date: Option<SystemTime>,
         num_files: usize,
     },
 }
 
 impl TreeNode {
-    fn path(&self) -> Arc<PathBuf> {
+    fn path(&self) -> PathBuf {
         match self {
-            TreeNode::File { path, .. } => path.clone(),
-            TreeNode::Directory { path, .. } => path.clone(),
+            TreeNode::File { display_path, .. } => display_path.clone(),
+            TreeNode::Directory { display_path, .. } => display_path.clone(),
         }
     }
 
@@ -53,26 +58,18 @@ impl TreeNode {
         }
     }
 
-    fn date(&self) -> usize {
+    fn date(&self) -> Option<SystemTime> {
         match self {
-            TreeNode::File { clone_count, .. } => 0,
-            TreeNode::Directory { num_files, .. } => 0,
+            TreeNode::File { date, .. } => *date,
+            TreeNode::Directory { date, .. } => *date,
         }
     }
 
-    fn new_root() -> Self {
+    fn new_dir(path: PathBuf) -> Self {
         TreeNode::Directory {
-            path: Arc::new(PathBuf::new()),
+            display_path: path,
             children: BTreeMap::new(),
-            total_size: 0,
-            num_files: 0,
-        }
-    }
-
-    fn new_dir(path: Arc<PathBuf>) -> Self {
-        TreeNode::Directory {
-            path,
-            children: BTreeMap::new(),
+            date: None,
             total_size: 0,
             num_files: 0,
         }
@@ -80,35 +77,37 @@ impl TreeNode {
 
     fn new_file(
         path: Arc<PathBuf>,
-        full_path: Arc<PathBuf>,
+        display_path: PathBuf,
         size: u64,
+        date: Option<SystemTime>,
         clone_count: usize,
     ) -> Self {
         TreeNode::File {
             path,
-            full_path,
+            display_path,
             size,
+            date,
             clone_count,
         }
     }
 
     /// Insert a new file node into this tree
     fn insert(&mut self, node: TreeNode) {
-        let path = match &node {
-            TreeNode::File { path, .. } => Arc::clone(path),
+        let display_path = match &node {
+            TreeNode::File { display_path, .. } => display_path.clone(),
             TreeNode::Directory { .. } => {
                 warn!("Inserting directories directly is not supported");
                 return;
             }
         };
 
-        let mut components = path.components().peekable();
+        let mut components = display_path.components().peekable();
 
         if let TreeNode::Directory {
-            path,
             children,
             total_size,
             num_files,
+            ..
         } = self
         {
             Self::insert_recursive(PathBuf::new(), children, &mut components, node);
@@ -123,16 +122,16 @@ impl TreeNode {
 
     fn insert_recursive(
         mut prefix: PathBuf,
-        children: &mut BTreeMap<Arc<PathBuf>, TreeNode>,
+        children: &mut BTreeMap<PathBuf, TreeNode>,
         components: &mut std::iter::Peekable<std::path::Components<'_>>,
         node: TreeNode,
     ) {
         if let Some(component) = components.next() {
             prefix.push(component); // extend prefix
-            let comp_path = Arc::new(prefix.clone());
+            let comp_path = prefix.clone();
 
             if components.peek().is_none() {
-                // Leaf level → insert the file
+                // Leaf level -> insert the file
                 children.insert(comp_path, node);
             } else {
                 // Intermediate directory
@@ -141,10 +140,10 @@ impl TreeNode {
                     .or_insert_with(|| TreeNode::new_dir(comp_path.clone()));
 
                 if let TreeNode::Directory {
-                    path: _,
                     children,
                     total_size,
                     num_files,
+                    ..
                 } = entry
                 {
                     Self::insert_recursive(prefix, children, components, node);
@@ -171,19 +170,19 @@ impl TreeNode {
     }
 
     /// Convert a `TreeNode` into a `TreeItem` for rendering
-    fn to_tree_item(&self) -> TreeItem<'static, Arc<PathBuf>> {
+    fn to_tree_item(&self) -> TreeItem<'static, PathBuf> {
         match self {
             TreeNode::File {
                 size,
                 clone_count,
-                path,
-                full_path,
+                display_path,
+                ..
             } => TreeItem::new_leaf(
-                path.clone(),
+                display_path.clone(),
                 Line::from(vec![
                     Span::raw(format!(
                         "{} ",
-                        path.file_name().unwrap_or_default().display(),
+                        display_path.file_name().unwrap_or_default().display(),
                     )),
                     Span::styled(
                         format!(
@@ -196,15 +195,16 @@ impl TreeNode {
                 ]),
             ),
             TreeNode::Directory {
-                path,
+                display_path,
                 children,
                 total_size,
                 num_files,
+                ..
             } => {
                 let label = Line::from(vec![
                     Span::raw(format!(
                         "{} ",
-                        path.file_name().unwrap_or_default().display(),
+                        display_path.file_name().unwrap_or_default().display(),
                     )),
                     Span::styled(
                         format!(
@@ -215,11 +215,13 @@ impl TreeNode {
                         Style::default().dark_gray(),
                     ),
                 ]);
-                let child_items: Vec<TreeItem<Arc<PathBuf>>> = children
-                    .iter()
-                    .map(|(child_name, child_node)| child_node.to_tree_item())
+
+                let child_items: Vec<TreeItem<PathBuf>> = children
+                    .values()
+                    .map(|child_node| child_node.to_tree_item())
                     .collect();
-                TreeItem::new(path.clone(), label, child_items).expect("reason")
+
+                TreeItem::new(display_path.clone(), label, child_items).expect("reason")
             }
         }
     }
@@ -227,10 +229,11 @@ impl TreeNode {
 
 #[derive(Debug, Default)]
 pub struct FileTree<'a> {
-    tree_state: TreeState<Arc<PathBuf>>,
+    tree_state: TreeState<PathBuf>,
     pub table_len: usize,
     selected_path: Option<Arc<PathBuf>>,
-    entries: Vec<TreeItem<'a, Arc<PathBuf>>>,
+    entries: Vec<TreeItem<'a, PathBuf>>,
+    common_path: Option<PathBuf>,
 }
 
 impl FileTree<'_> {
@@ -245,19 +248,20 @@ impl FileTree<'_> {
             let fi = file_index.read().unwrap();
 
             // Pre-calculate file metadata for each path we display,
-            // including size & date. Also track a sum to show total size.
+            // including size & date.
             let common_path = deckard::find_common_path(&fi.dirs);
-
             let mut entries_vec = Vec::with_capacity(paths.len());
             for path in paths {
                 let size = fi.file_size(path).unwrap_or_default();
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
+                let date = fi.file_date_modified(path); // or created
                 let display_path = format_path(path, &fi.dirs);
 
                 entries_vec.push(TreeNode::new_file(
-                    Arc::new(display_path),
                     path.clone(),
+                    display_path,
                     size,
+                    date,
                     clone_count,
                 ));
             }
@@ -275,16 +279,23 @@ impl FileTree<'_> {
             });
         }
 
-        let mut root = TreeNode::new_dir(Arc::new(common_path.clone().unwrap_or_default()));
+        let common_display = common_path
+            .clone()
+            .map(|p| PathBuf::from(p.file_name().unwrap_or_default()))
+            .unwrap_or_default();
+
+        let mut root = TreeNode::new_dir(common_display.clone());
         for entry in entries {
             root.insert(entry);
         }
 
         let items = vec![root.to_tree_item()];
-        self.entries = items;
 
-        let mut vecs = vec![Arc::new(common_path.unwrap_or_default())];
-        self.tree_state.open(vecs);
+        self.entries = items;
+        self.common_path = common_path;
+
+        // open the first level
+        self.tree_state.open(vec![common_display]);
     }
 
     pub fn render(
@@ -294,21 +305,35 @@ impl FileTree<'_> {
         focused: bool,
         marked_files: &HashSet<Arc<PathBuf>>,
     ) {
+        let block = if focused {
+            Block::bordered()
+                .border_type(BorderType::Thick)
+                .border_style(Style::new().light_magenta())
+        } else {
+            Block::bordered()
+                .border_type(BorderType::Plain)
+                .border_style(Style::new().dark_gray())
+        };
+
+        let selected_style = if focused {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::DarkGray)
+        };
+
         let widget = Tree::new(&self.entries)
             .expect("all item identifiers are unique")
-            .node_open_symbol("📂")
-            .node_closed_symbol("📁")
-            .node_no_children_symbol("📄")
-            .block(Block::bordered().title_bottom(format!("{:?}", self.tree_state)))
+            // .node_open_symbol("📂")
+            // .node_closed_symbol("📁")
+            // .node_no_children_symbol("📄")
+            .block(block.title_bottom(format!("{:?}", self.tree_state.selected())))
             .experimental_scrollbar(Some(
                 Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
             ))
-            .highlight_style(
-                Style::new()
-                    .fg(Color::Black)
-                    .bg(Color::LightGreen)
-                    .add_modifier(Modifier::BOLD),
-            );
+            .highlight_style(selected_style);
 
         StatefulWidget::render(widget, area, buf, &mut self.tree_state);
     }
@@ -344,7 +369,7 @@ impl FileTree<'_> {
     }
 
     pub fn selected_path(&self) -> Option<Arc<PathBuf>> {
-        self.tree_state.selected();
+        let last = self.tree_state.selected().last();
 
         self.selected_path.clone()
     }
