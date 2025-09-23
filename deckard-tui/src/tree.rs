@@ -32,7 +32,7 @@ enum TreeNode {
 impl TreeNode {
     fn new_root() -> Self {
         TreeNode::Directory {
-            path: Arc::new(PathBuf::new()),
+            path: Arc::new(PathBuf::from(".")),
             children: BTreeMap::new(),
             total_size: 0,
             num_files: 0,
@@ -144,10 +144,10 @@ impl TreeNode {
             } => TreeItem::new_leaf(
                 path.clone(),
                 Line::from(vec![
-                    Span::raw(format!("{}  ", path.to_string_lossy(),)),
+                    Span::raw(format!("{} ", path.to_string_lossy(),)),
                     Span::styled(
                         format!(
-                            "Clones: {}, {}",
+                            "- clones: {}, size: {}",
                             clone_count,
                             humansize::format_size(*size, humansize::DECIMAL),
                         ),
@@ -162,10 +162,10 @@ impl TreeNode {
                 num_files,
             } => {
                 let label = Line::from(vec![
-                    Span::raw(format!("{}  ", path.to_string_lossy(),)),
+                    Span::raw(format!("{} ", path.to_string_lossy(),)),
                     Span::styled(
                         format!(
-                            "Files: {} , {}",
+                            "- files: {}, total: {}",
                             num_files,
                             humansize::format_size(*total_size, humansize::DECIMAL),
                         ),
@@ -220,7 +220,7 @@ impl FileTree<'_> {
 
         self.entries = items;
 
-        let mut vecs = vec![Arc::new(PathBuf::new())];
+        let mut vecs = vec![Arc::new(PathBuf::from("."))];
         self.tree_state.open(vecs);
     }
 
