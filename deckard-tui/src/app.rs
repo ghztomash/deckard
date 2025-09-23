@@ -112,6 +112,7 @@ pub struct App<'a> {
     marked_table: FileTable<'a>,
     marked_files: HashSet<Arc<PathBuf>>,
     disk_usage_mode: bool,
+    show_file_tree: bool,
     show_clones_table: bool,
     show_marked_table: bool,
     show_file_info: bool,
@@ -244,6 +245,7 @@ impl App<'_> {
             marked_table: FileTable::new(vec![" ", "Marked"], false, false),
             marked_files: HashSet::new(),
             disk_usage_mode: disk_usage,
+            show_file_tree: true,
             show_marked_table: true,
             show_clones_table: !disk_usage,
             show_file_info: true,
@@ -358,6 +360,7 @@ impl App<'_> {
 
                     KeyCode::Char('q') | KeyCode::Esc => self.exit(),
                     KeyCode::Char('i') => self.toggle_info(),
+                    KeyCode::Char('e') => self.toggle_show_file_tree(),
                     KeyCode::Char('o') => self.open_file(),
                     KeyCode::Char('p') => self.open_path(),
                     KeyCode::Char('D') | KeyCode::Delete => self.delete(),
@@ -376,7 +379,9 @@ impl App<'_> {
                         self.focus_previus_table()
                     }
                     KeyCode::Enter => {
-                        self.file_tree.select_enter();
+                        if self.show_file_tree {
+                            self.file_tree.key_enter();
+                        }
                     }
                     KeyCode::Char(':') => self.enter_command_mode(),
                     _ => {}
@@ -735,6 +740,12 @@ impl App<'_> {
         }
     }
 
+    fn toggle_show_file_tree(&mut self) {
+        self.show_file_tree = !self.show_file_tree;
+        self.focus_files_table();
+        self.update_tables();
+    }
+
     fn toggle_show_clones_table(&mut self) {
         self.show_clones_table = !self.show_clones_table;
         if !self.show_clones_table && matches!(self.focused_window, FocusedWindow::Clones) {
@@ -767,8 +778,11 @@ impl App<'_> {
 
         match self.focused_window {
             FocusedWindow::Files => {
-                self.file_table.select_next(step);
-                self.file_tree.select_next();
+                if self.show_file_tree {
+                    self.file_tree.select_next();
+                } else {
+                    self.file_table.select_next(step);
+                }
                 self.update_clone_table();
             }
             FocusedWindow::Clones => {
@@ -786,8 +800,11 @@ impl App<'_> {
 
         match self.focused_window {
             FocusedWindow::Files => {
-                self.file_table.select_previous(step);
-                self.file_tree.select_previous();
+                if self.show_file_tree {
+                    self.file_tree.select_previous();
+                } else {
+                    self.file_table.select_previous(step);
+                }
                 self.update_clone_table();
             }
             FocusedWindow::Clones => {
@@ -832,10 +849,14 @@ impl App<'_> {
         };
 
         if !paths.is_empty() {
-            self.file_table
-                .update_table(&paths, &self.file_index, Some(&self.sort_by));
-            self.file_table.select_first();
-            self.file_tree.update_tree(&paths, &self.file_index);
+            if self.show_file_tree {
+                self.file_tree.update_tree(&paths, &self.file_index);
+                self.file_tree.select_first();
+            } else {
+                self.file_table
+                    .update_table(&paths, &self.file_index, Some(&self.sort_by));
+                self.file_table.select_first();
+            }
         } else {
             self.file_table.clear();
         }
@@ -1292,12 +1313,21 @@ impl App<'_> {
             .constraints(main_horiozntal_bottom_constrains)
             .split(main_sub_area[1]);
 
-        self.file_tree.render(
-            buf,
-            main_sub_area_top[0], // top left
-            matches!(self.focused_window, FocusedWindow::Files),
-            &self.marked_files,
-        );
+        if self.show_file_tree {
+            self.file_tree.render(
+                buf,
+                main_sub_area_top[0], // top left
+                matches!(self.focused_window, FocusedWindow::Files),
+                &self.marked_files,
+            );
+        } else {
+            self.file_table.render(
+                buf,
+                main_sub_area_top[0], // top left
+                matches!(self.focused_window, FocusedWindow::Files),
+                &self.marked_files,
+            );
+        }
         if self.show_clones_table {
             self.clone_table.render(
                 buf,
@@ -1421,16 +1451,15 @@ async fn find_duplicates(
     Ok(())
 }
 
-/// Make the path relative to the commont search parth
-pub fn format_path(path: &PathBuf, target_paths: &HashSet<PathBuf>) -> String {
+/// Make the path relative to the common search path
+pub fn format_path(path: &PathBuf, target_paths: &HashSet<PathBuf>) -> PathBuf {
     let common_path = deckard::find_common_path(target_paths);
 
-    let relative_path = if let Some(common_path) = &common_path {
-        path.strip_prefix(common_path).unwrap_or(path)
+    if let Some(common_path) = &common_path {
+        path.strip_prefix(common_path).unwrap_or(path).to_owned()
     } else {
-        path
-    };
-    relative_path.to_string_lossy().to_string()
+        path.to_owned()
+    }
 }
 
 /// helper function to create a centered rect using up certain percentage of the available rect `r`

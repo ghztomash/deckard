@@ -5,12 +5,14 @@ use std::sync::{Arc, RwLock};
 use deckard::index::FileIndex;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, StatefulWidget};
 
 use tracing::warn;
 use tui_tree_widget::{Tree, TreeItem, TreeState};
+
+use crate::app::format_path;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum TreeNode {
@@ -118,39 +120,6 @@ impl TreeNode {
         }
     }
 
-    // fn insert_recursive(
-    //     prefix: Arc<PathBuf>,
-    //     children: &mut BTreeMap<Arc<PathBuf>, TreeNode>,
-    //     components: &mut std::iter::Peekable<std::path::Components<'_>>,
-    //     node: TreeNode,
-    // ) {
-    //     if let Some(component) = components.next() {
-    //         let comp_path = Arc::new(PathBuf::from(component.as_os_str()));
-    //
-    //         if components.peek().is_none() {
-    //             // Leaf level → insert the file
-    //             children.insert(comp_path, node);
-    //         } else {
-    //             // Intermediate directory
-    //             let entry = children
-    //                 .entry(comp_path.clone())
-    //                 .or_insert_with(TreeNode::new_root);
-    //             if let TreeNode::Directory {
-    //                 path,
-    //                 children,
-    //                 total_size,
-    //                 num_files,
-    //             } = entry
-    //             {
-    //                 Self::insert_recursive(prefix, children, components, node);
-    //
-    //                 *total_size = children.values().map(|c| c.total_size()).sum();
-    //                 *num_files = children.values().map(|c| c.num_files()).sum();
-    //             }
-    //         }
-    //     }
-    // }
-
     fn total_size(&self) -> u64 {
         match self {
             TreeNode::File { size, .. } => *size,
@@ -174,12 +143,17 @@ impl TreeNode {
                 path,
             } => TreeItem::new_leaf(
                 path.clone(),
-                Line::from(vec![Span::raw(format!(
-                    "{} [{} bytes, clones: {}]",
-                    path.to_string_lossy(),
-                    size,
-                    clone_count
-                ))]),
+                Line::from(vec![
+                    Span::raw(format!("{}  ", path.to_string_lossy(),)),
+                    Span::styled(
+                        format!(
+                            "Clones: {}, {}",
+                            clone_count,
+                            humansize::format_size(*size, humansize::DECIMAL),
+                        ),
+                        Style::default().dark_gray(),
+                    ),
+                ]),
             ),
             TreeNode::Directory {
                 path,
@@ -187,15 +161,17 @@ impl TreeNode {
                 total_size,
                 num_files,
             } => {
-                let label = Line::from(vec![Span::styled(
-                    format!(
-                        "{} [📁 {} files, {} bytes]",
-                        path.to_string_lossy(),
-                        num_files,
-                        total_size
+                let label = Line::from(vec![
+                    Span::raw(format!("{}  ", path.to_string_lossy(),)),
+                    Span::styled(
+                        format!(
+                            "Files: {} , {}",
+                            num_files,
+                            humansize::format_size(*total_size, humansize::DECIMAL),
+                        ),
+                        Style::default().dark_gray(),
                     ),
-                    Style::default().add_modifier(Modifier::BOLD),
-                )]);
+                ]);
                 let child_items: Vec<TreeItem<Arc<PathBuf>>> = children
                     .iter()
                     .map(|(child_name, child_node)| child_node.to_tree_item())
@@ -227,9 +203,14 @@ impl FileTree<'_> {
             for path in paths {
                 let size = fi.file_size(path).unwrap_or_default();
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
+                let display_path = format_path(path, &fi.dirs);
                 total_size_acc += size;
 
-                entries.insert(TreeNode::new_file(path.clone(), size, clone_count));
+                entries.insert(TreeNode::new_file(
+                    Arc::new(display_path),
+                    size,
+                    clone_count,
+                ));
             }
 
             (entries, total_size_acc)
@@ -238,7 +219,6 @@ impl FileTree<'_> {
         let items = vec![entries.to_tree_item()];
 
         self.entries = items;
-        // self.tree_state.close_all();
 
         let mut vecs = vec![Arc::new(PathBuf::new())];
         self.tree_state.open(vecs);
@@ -253,30 +233,30 @@ impl FileTree<'_> {
     ) {
         let widget = Tree::new(&self.entries)
             .expect("all item identifiers are unique")
-            .block(
-                Block::bordered()
-                    .title("Tree Widget")
-                    .title_bottom(format!("{:?}", self.tree_state)),
-            )
+            .node_open_symbol("📂")
+            .node_closed_symbol("📁")
+            .node_no_children_symbol("📄")
+            .block(Block::bordered().title_bottom(format!("{:?}", self.tree_state)))
             .experimental_scrollbar(Some(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(None)
-                    .track_symbol(None)
-                    .end_symbol(None),
+                Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight),
             ))
             .highlight_style(
                 Style::new()
                     .fg(Color::Black)
                     .bg(Color::LightGreen)
                     .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol(">> ");
+            );
 
         StatefulWidget::render(widget, area, buf, &mut self.tree_state);
     }
 
     pub fn select_none(&mut self) {
         self.tree_state.select(vec![]);
+        self.selected_path = None;
+    }
+
+    pub fn select_first(&mut self) {
+        self.tree_state.select_first();
         self.selected_path = None;
     }
 
@@ -288,7 +268,15 @@ impl FileTree<'_> {
         self.tree_state.key_up();
     }
 
-    pub fn select_enter(&mut self) {
+    pub fn key_right(&mut self) {
         self.tree_state.key_right();
+    }
+
+    pub fn key_left(&mut self) {
+        self.tree_state.key_left();
+    }
+
+    pub fn key_enter(&mut self) {
+        self.tree_state.toggle_selected();
     }
 }

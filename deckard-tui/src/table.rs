@@ -136,7 +136,7 @@ impl FileTable<'_> {
             for path in paths {
                 let size = fi.file_size(path).unwrap_or_default();
                 let date = fi.file_date_modified(path); // or created
-                let display_path = format_path(path, &fi.dirs);
+                let display_path = format_path(path, &fi.dirs).display().to_string();
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
                 total_size_acc += size;
 
