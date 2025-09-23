@@ -850,7 +850,8 @@ impl App<'_> {
 
         if !paths.is_empty() {
             if self.show_file_tree {
-                self.file_tree.update_tree(&paths, &self.file_index);
+                self.file_tree
+                    .update_tree(&paths, &self.file_index, Some(&self.sort_by));
                 self.file_tree.select_first();
             } else {
                 self.file_table
@@ -1131,7 +1132,7 @@ impl App<'_> {
 
         let dir_lines: Vec<String> = dirs
             .iter()
-            .map(|d| format!("./{}", deckard::to_relative_path(d).display()))
+            .map(|d| format!("{}", deckard::to_relative_path(d).display()))
             .collect();
 
         let dir_joined = dir_lines.join(" ");

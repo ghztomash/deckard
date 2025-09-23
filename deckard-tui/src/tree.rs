@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+use deckard::find_common_path;
 use deckard::index::FileIndex;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
@@ -12,12 +13,13 @@ use ratatui::widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, Stateful
 use tracing::warn;
 use tui_tree_widget::{Tree, TreeItem, TreeState};
 
-use crate::app::format_path;
+use crate::app::{Sorting, format_path};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum TreeNode {
     File {
         path: Arc<PathBuf>,
+        full_path: Arc<PathBuf>,
         size: u64,
         clone_count: usize,
     },
@@ -30,9 +32,37 @@ enum TreeNode {
 }
 
 impl TreeNode {
+    fn path(&self) -> Arc<PathBuf> {
+        match self {
+            TreeNode::File { path, .. } => path.clone(),
+            TreeNode::Directory { path, .. } => path.clone(),
+        }
+    }
+
+    fn size(&self) -> u64 {
+        match self {
+            TreeNode::File { size, .. } => *size,
+            TreeNode::Directory { total_size, .. } => *total_size,
+        }
+    }
+
+    fn files(&self) -> usize {
+        match self {
+            TreeNode::File { clone_count, .. } => *clone_count,
+            TreeNode::Directory { num_files, .. } => *num_files,
+        }
+    }
+
+    fn date(&self) -> usize {
+        match self {
+            TreeNode::File { clone_count, .. } => 0,
+            TreeNode::Directory { num_files, .. } => 0,
+        }
+    }
+
     fn new_root() -> Self {
         TreeNode::Directory {
-            path: Arc::new(PathBuf::from(".")),
+            path: Arc::new(PathBuf::new()),
             children: BTreeMap::new(),
             total_size: 0,
             num_files: 0,
@@ -48,9 +78,15 @@ impl TreeNode {
         }
     }
 
-    fn new_file(path: Arc<PathBuf>, size: u64, clone_count: usize) -> Self {
+    fn new_file(
+        path: Arc<PathBuf>,
+        full_path: Arc<PathBuf>,
+        size: u64,
+        clone_count: usize,
+    ) -> Self {
         TreeNode::File {
             path,
+            full_path,
             size,
             clone_count,
         }
@@ -141,10 +177,14 @@ impl TreeNode {
                 size,
                 clone_count,
                 path,
+                full_path,
             } => TreeItem::new_leaf(
                 path.clone(),
                 Line::from(vec![
-                    Span::raw(format!("{} ", path.to_string_lossy(),)),
+                    Span::raw(format!(
+                        "{} ",
+                        path.file_name().unwrap_or_default().display(),
+                    )),
                     Span::styled(
                         format!(
                             "- clones: {}, size: {}",
@@ -162,7 +202,10 @@ impl TreeNode {
                 num_files,
             } => {
                 let label = Line::from(vec![
-                    Span::raw(format!("{} ", path.to_string_lossy(),)),
+                    Span::raw(format!(
+                        "{} ",
+                        path.file_name().unwrap_or_default().display(),
+                    )),
                     Span::styled(
                         format!(
                             "- files: {}, total: {}",
@@ -191,36 +234,56 @@ pub struct FileTree<'a> {
 }
 
 impl FileTree<'_> {
-    pub fn update_tree(&mut self, paths: &Vec<Arc<PathBuf>>, file_index: &Arc<RwLock<FileIndex>>) {
+    pub fn update_tree(
+        &mut self,
+        paths: &Vec<Arc<PathBuf>>,
+        file_index: &Arc<RwLock<FileIndex>>,
+        sort_by: Option<&Sorting>,
+    ) {
         // Lock the FileIndex only once, then copy out the data we need:
-        let (entries, total_size) = {
+        let (mut entries, common_path) = {
             let fi = file_index.read().unwrap();
 
             // Pre-calculate file metadata for each path we display,
             // including size & date. Also track a sum to show total size.
-            let mut total_size_acc = 0u64;
-            let mut entries = TreeNode::new_root();
+            let common_path = deckard::find_common_path(&fi.dirs);
+
+            let mut entries_vec = Vec::with_capacity(paths.len());
             for path in paths {
                 let size = fi.file_size(path).unwrap_or_default();
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
                 let display_path = format_path(path, &fi.dirs);
-                total_size_acc += size;
 
-                entries.insert(TreeNode::new_file(
+                entries_vec.push(TreeNode::new_file(
                     Arc::new(display_path),
+                    path.clone(),
                     size,
                     clone_count,
                 ));
             }
 
-            (entries, total_size_acc)
+            (entries_vec, common_path)
         };
 
-        let items = vec![entries.to_tree_item()];
+        // Sort the paths
+        if let Some(sort_by) = sort_by {
+            entries.sort_by(|a, b| match sort_by {
+                Sorting::Path => a.path().cmp(&b.path()),
+                Sorting::Size => b.size().cmp(&a.size()),
+                Sorting::Date => b.date().cmp(&a.date()),
+                Sorting::Count => b.files().cmp(&a.files()),
+            });
+        }
 
+        let mut root = TreeNode::new_dir(Arc::new(common_path.clone().unwrap_or_default()));
+        for entry in entries {
+            root.insert(entry);
+        }
+
+        let items = vec![root.to_tree_item()];
         self.entries = items;
 
-        let mut vecs = vec![Arc::new(PathBuf::from("."))];
+        let mut vecs = vec![Arc::new(common_path.unwrap_or_default())];
         self.tree_state.open(vecs);
     }
 
@@ -278,5 +341,11 @@ impl FileTree<'_> {
 
     pub fn key_enter(&mut self) {
         self.tree_state.toggle_selected();
+    }
+
+    pub fn selected_path(&self) -> Option<Arc<PathBuf>> {
+        self.tree_state.selected();
+
+        self.selected_path.clone()
     }
 }
