@@ -67,7 +67,7 @@ impl Mode {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Sorting {
     #[default]
     Size,
@@ -615,6 +615,10 @@ impl App<'_> {
     }
 
     fn active_selected_file(&self) -> Option<Arc<PathBuf>> {
+        if self.show_file_tree && matches!(self.focused_window, FocusedWindow::Files) {
+            return self.file_tree.selected_path();
+        }
+
         let active_table = match self.focused_window {
             FocusedWindow::Files => &self.file_table,
             FocusedWindow::Clones => &self.clone_table,
@@ -864,7 +868,13 @@ impl App<'_> {
     }
 
     fn update_clone_table(&mut self) {
-        if let Some(selected_file) = self.file_table.selected_path().as_ref() {
+        let maybe_selected_file = if self.show_file_tree {
+            self.file_tree.selected_path()
+        } else {
+            self.file_table.selected_path()
+        };
+
+        if let Some(selected_file) = maybe_selected_file.as_ref() {
             if let Some(clone_paths) = self
                 .file_index
                 .read()

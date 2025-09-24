@@ -26,6 +26,7 @@ enum TreeNode {
         size: u64,
         date: Option<SystemTime>,
         clone_count: usize,
+        is_marked: bool,
     },
     Directory {
         display_path: PathBuf,
@@ -81,6 +82,7 @@ impl TreeNode {
         size: u64,
         date: Option<SystemTime>,
         clone_count: usize,
+        is_marked: bool,
     ) -> Self {
         TreeNode::File {
             path,
@@ -88,6 +90,7 @@ impl TreeNode {
             size,
             date,
             clone_count,
+            is_marked,
         }
     }
 
@@ -170,7 +173,7 @@ impl TreeNode {
     }
 
     /// Convert a `TreeNode` into a `TreeItem` for rendering
-    fn to_tree_item(&self) -> TreeItem<'static, PathBuf> {
+    fn to_tree_item(&self, sort_by: Option<Sorting>) -> TreeItem<'static, TreeNode> {
         match self {
             TreeNode::File {
                 size,
@@ -178,7 +181,7 @@ impl TreeNode {
                 display_path,
                 ..
             } => TreeItem::new_leaf(
-                display_path.clone(),
+                self.clone(),
                 Line::from(vec![
                     Span::raw(format!(
                         "{} ",
@@ -216,12 +219,12 @@ impl TreeNode {
                     ),
                 ]);
 
-                let child_items: Vec<TreeItem<PathBuf>> = children
+                let child_items: Vec<TreeItem<TreeNode>> = children
                     .values()
-                    .map(|child_node| child_node.to_tree_item())
+                    .map(|child_node| child_node.to_tree_item(sort_by))
                     .collect();
 
-                TreeItem::new(display_path.clone(), label, child_items).expect("reason")
+                TreeItem::new(self.clone(), label, child_items).expect("reason")
             }
         }
     }
@@ -229,11 +232,12 @@ impl TreeNode {
 
 #[derive(Debug, Default)]
 pub struct FileTree<'a> {
-    tree_state: TreeState<PathBuf>,
+    tree_state: TreeState<TreeNode>,
     pub table_len: usize,
     selected_path: Option<Arc<PathBuf>>,
-    entries: Vec<TreeItem<'a, PathBuf>>,
+    entries: Vec<TreeItem<'a, TreeNode>>,
     common_path: Option<PathBuf>,
+    sort_by: Option<Sorting>,
 }
 
 impl FileTree<'_> {
@@ -263,6 +267,7 @@ impl FileTree<'_> {
                     size,
                     date,
                     clone_count,
+                    false,
                 ));
             }
 
@@ -289,13 +294,15 @@ impl FileTree<'_> {
             root.insert(entry);
         }
 
-        let items = vec![root.to_tree_item()];
+        let items = vec![root.to_tree_item(sort_by.cloned())];
 
         self.entries = items;
         self.common_path = common_path;
+        self.sort_by = sort_by.cloned();
 
         // open the first level
-        self.tree_state.open(vec![common_display]);
+        self.tree_state
+            .open(vec![TreeNode::new_dir(common_display.clone())]);
     }
 
     pub fn render(
@@ -369,8 +376,11 @@ impl FileTree<'_> {
     }
 
     pub fn selected_path(&self) -> Option<Arc<PathBuf>> {
-        let last = self.tree_state.selected().last();
-
-        self.selected_path.clone()
+        if let Some(selected) = self.tree_state.selected().last()
+            && let TreeNode::File { path, .. } = selected
+        {
+            return Some(path.clone());
+        }
+        None
     }
 }
