@@ -300,26 +300,20 @@ impl App<'_> {
 
         while !self.should_exit {
             tokio::select! {
-                _ = interval.tick() => {
-                    // if matches!(self.mode, Mode::Command) {
-                    //     terminal.show_cursor()?;
-                    //     terminal.set_cursor(1, 1)?;
-                    // }
-
-                    let render_start = Instant::now();
-                    terminal.draw(|frame| {
-                        self.render_ui(frame.area(), frame.buffer_mut());
-                        self.frame_count = frame.count();
-                    })?;
-                    self.last_render_took = render_start.elapsed();
-                    self.last_render = render_start;
-                },
                 Some(Ok(event)) = events.next() => self.handle_events(event)?,
                 Some(state) = rx.recv() => {
                     self.handle_state(state);
                 },
                 else => break,
             }
+
+            let render_start = Instant::now();
+            terminal.draw(|frame| {
+                self.render_ui(frame.area(), frame.buffer_mut());
+                self.frame_count = frame.count();
+            })?;
+            self.last_render_took = render_start.elapsed();
+            self.last_render = render_start;
         }
         task_handle.await?;
         Ok(())
