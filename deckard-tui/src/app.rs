@@ -17,6 +17,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Gauge, Paragraph, Widget, Wrap},
 };
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use std::{
     collections::HashSet,
     env, fmt, fs,
@@ -98,7 +99,6 @@ impl fmt::Display for Sorting {
     }
 }
 
-#[derive(Default)]
 pub struct App<'a> {
     focused_window: FocusedWindow,
     should_exit: bool,
@@ -123,6 +123,9 @@ pub struct App<'a> {
     abort_handle: Option<AbortHandle>,
     display_filter: Option<String>,
     warning_message: Option<String>,
+    frame_count: usize,
+    last_render: Instant,
+    last_render_took: Duration,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -256,6 +259,9 @@ impl App<'_> {
             remove_dirs,
             display_filter: None,
             warning_message: None,
+            frame_count: 0,
+            last_render: Instant::now(),
+            last_render_took: Duration::default(),
         }
     }
 
@@ -299,7 +305,14 @@ impl App<'_> {
                     //     terminal.show_cursor()?;
                     //     terminal.set_cursor(1, 1)?;
                     // }
-                    terminal.draw(|frame| self.render_ui(frame.area(), frame.buffer_mut()))?;
+
+                    let render_start = Instant::now();
+                    terminal.draw(|frame| {
+                        self.render_ui(frame.area(), frame.buffer_mut());
+                        self.frame_count = frame.count();
+                    })?;
+                    self.last_render_took = render_start.elapsed();
+                    self.last_render = render_start;
                 },
                 Some(Ok(event)) = events.next() => self.handle_events(event)?,
                 Some(state) = rx.recv() => {
@@ -859,10 +872,31 @@ impl App<'_> {
             env!("CARGO_PKG_VERSION").into(),
         ];
         let title = Line::from(spans);
-        let header = Paragraph::new(title)
+
+        let last_render_took = self.last_render_took.as_secs_f32();
+        let last_render_ago = self.last_render.elapsed().as_secs_f32();
+
+        let block = Block::new()
             .style(Style::new().gray().reversed())
-            .centered();
-        header.render(area, buf)
+            .title_bottom(
+                Line::from(format!(
+                    " frame {}, {:.2} mS ({:.1} FPS)",
+                    self.frame_count,
+                    last_render_ago * 1000.0,
+                    1.0 / last_render_ago,
+                ))
+                .left_aligned(),
+            )
+            .title_bottom(
+                Line::from(format!(
+                    "took {:.2} mS ({:.1} FPS)",
+                    last_render_took * 1000.0,
+                    1.0 / last_render_took
+                ))
+                .right_aligned(),
+            )
+            .title_bottom(title.centered());
+        block.render(area, buf)
     }
 
     fn render_file_info(&self, buf: &mut Buffer, area: Rect) {
