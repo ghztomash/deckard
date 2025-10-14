@@ -123,6 +123,7 @@ pub struct App<'a> {
     abort_handle: Option<AbortHandle>,
     display_filter: Option<String>,
     warning_message: Option<String>,
+    debug: bool,
     frame_count: usize,
     last_render: Instant,
     last_render_took: Duration,
@@ -172,7 +173,7 @@ impl fmt::Display for State {
 }
 
 impl App<'_> {
-    const FRAMES_PER_SECOND: f32 = 30.0;
+    const FRAMES_PER_SECOND: f32 = 15.0;
 
     pub fn new(
         target_paths: HashSet<PathBuf>,
@@ -180,6 +181,7 @@ impl App<'_> {
         dry_run: bool,
         remove_dirs: bool,
         disk_usage: bool,
+        debug: bool,
     ) -> Self {
         let clipboard = Clipboard::new().map_or_else(
             |e| {
@@ -259,6 +261,7 @@ impl App<'_> {
             remove_dirs,
             display_filter: None,
             warning_message: None,
+            debug,
             frame_count: 0,
             last_render: Instant::now(),
             last_render_took: Duration::default(),
@@ -867,28 +870,32 @@ impl App<'_> {
         ];
         let title = Line::from(spans);
 
-        let last_render_took = self.last_render_took.as_secs_f32();
-        let last_render_ago = self.last_render.elapsed().as_secs_f32();
+        let (title_left, title_right) = if self.debug {
+            let last_render_took = self.last_render_took.as_secs_f32();
+            let last_render_ago = self.last_render.elapsed().as_secs_f32();
+
+            let render_fps_line = Line::from(format!(
+                " frame {}, {:.2} mS ({:.1} FPS)",
+                self.frame_count,
+                last_render_ago * 1000.0,
+                1.0 / last_render_ago,
+            ));
+
+            let render_took_line = Line::from(format!(
+                "took {:.2} mS ({:.1} FPS) ",
+                last_render_took * 1000.0,
+                1.0 / last_render_took
+            ));
+
+            (render_fps_line, render_took_line)
+        } else {
+            (Line::default(), Line::default())
+        };
 
         let block = Block::new()
             .style(Style::new().gray().reversed())
-            .title_bottom(
-                Line::from(format!(
-                    " frame {}, {:.2} mS ({:.1} FPS)",
-                    self.frame_count,
-                    last_render_ago * 1000.0,
-                    1.0 / last_render_ago,
-                ))
-                .left_aligned(),
-            )
-            .title_bottom(
-                Line::from(format!(
-                    "took {:.2} mS ({:.1} FPS)",
-                    last_render_took * 1000.0,
-                    1.0 / last_render_took
-                ))
-                .right_aligned(),
-            )
+            .title_bottom(title_left.left_aligned())
+            .title_bottom(title_right.right_aligned())
             .title_bottom(title.centered());
         block.render(area, buf)
     }

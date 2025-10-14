@@ -77,9 +77,16 @@ async fn main() -> Result<()> {
     }
 
     let mut terminal = tui::init()?;
-    let app_result = app::App::new(target_paths, config, dry_run, remove_dirs, disk_usage)
-        .run(&mut terminal)
-        .await;
+    let app_result = app::App::new(
+        target_paths,
+        config,
+        dry_run,
+        remove_dirs,
+        disk_usage,
+        log_level >= tracing::Level::INFO,
+    )
+    .run(&mut terminal)
+    .await;
 
     tui::restore()?;
     terminal.clear()?;
