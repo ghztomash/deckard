@@ -173,7 +173,7 @@ impl fmt::Display for State {
 }
 
 impl App<'_> {
-    const FRAMES_PER_SECOND: f32 = 15.0;
+    const FRAMES_PER_SECOND: f32 = 30.0;
 
     pub fn new(
         target_paths: HashSet<PathBuf>,
@@ -301,22 +301,34 @@ impl App<'_> {
         });
         self.abort_handle = Some(task_handle.abort_handle());
 
+        let mut should_redraw = true;
         while !self.should_exit {
             tokio::select! {
-                Some(Ok(event)) = events.next() => self.handle_events(event)?,
+                // interval timer
+                _ = interval.tick() => {
+                    if should_redraw {
+                        should_redraw = false;
+                        let render_start = Instant::now();
+                        terminal.draw(|frame| {
+                            self.render_ui(frame.area(), frame.buffer_mut());
+                            self.frame_count = frame.count();
+                        })?;
+                        self.last_render_took = render_start.elapsed();
+                        self.last_render = render_start;
+                    }
+                }
+                // terminal events
+                Some(Ok(event)) = events.next() => {
+                    self.handle_events(event)?;
+                    should_redraw = true;
+                },
+                // progress updates
                 Some(state) = rx.recv() => {
                     self.handle_state(state);
+                    should_redraw = true;
                 },
                 else => break,
             }
-
-            let render_start = Instant::now();
-            terminal.draw(|frame| {
-                self.render_ui(frame.area(), frame.buffer_mut());
-                self.frame_count = frame.count();
-            })?;
-            self.last_render_took = render_start.elapsed();
-            self.last_render = render_start;
         }
         task_handle.await?;
         Ok(())
