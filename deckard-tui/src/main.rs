@@ -10,6 +10,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 mod app;
 mod command;
 mod constants;
+mod dirtable;
 mod table;
 mod tui;
 

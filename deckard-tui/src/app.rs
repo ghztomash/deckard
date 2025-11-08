@@ -1,5 +1,6 @@
 use crate::command::{Command, CommandProcessor};
 use crate::constants;
+use crate::dirtable::DirTable;
 use crate::table::FileTable;
 use arboard::Clipboard;
 use chrono::{DateTime, Local};
@@ -229,9 +230,9 @@ impl App {
 
         // don't show clone count for disk_usage mode
         let file_table = if disk_usage {
-            FileTable::new(vec![" ", "File", "Date", "Size"], true, false)
+            DirTable::new(vec![" ", "File", "Date", "Size"], true, false)
         } else {
-            FileTable::new(vec![" ", "File", "Date", "Size", "Clones"], true, true)
+            DirTable::new(vec![" ", "File", "Date", "Size", "Clones"], true, true)
         };
 
         Self {
@@ -684,13 +685,12 @@ impl App {
     }
 
     fn active_selected_file(&self) -> Option<Arc<PathBuf>> {
-        let active_table = match self.focused_window {
-            FocusedWindow::Files => &self.file_table,
-            FocusedWindow::Clones => &self.clone_table,
-            FocusedWindow::Marked => &self.marked_table,
-            _ => return None,
-        };
-        active_table.selected_path()
+        match self.focused_window {
+            FocusedWindow::Files => self.file_table.selected_path(),
+            FocusedWindow::Clones => self.clone_table.selected_path(),
+            FocusedWindow::Marked => self.marked_table.selected_path(),
+            _ => None,
+        }
     }
 
     fn copy_path(&mut self) {
@@ -905,7 +905,7 @@ impl App {
 
         if !paths.is_empty() {
             self.file_table
-                .update_table(&paths, &self.file_index, Some(&self.sort_by));
+                .update_table(&paths, &self.file_index, Some(&self.sort_by), false);
             self.file_table.select_first();
         } else {
             self.file_table.clear();
