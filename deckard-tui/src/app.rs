@@ -377,6 +377,14 @@ impl App {
                         true
                     }
 
+                    KeyCode::Enter => {
+                        if key_event.modifiers.contains(KeyModifiers::SHIFT) {
+                            self.file_table.enter_parent_dir();
+                        } else {
+                            self.file_table.enter_selected_dir();
+                        }
+                    }
+
                     KeyCode::Char('q') | KeyCode::Esc => self.exit(),
                     KeyCode::Char('i') => {
                         self.toggle_info();

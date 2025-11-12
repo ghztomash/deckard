@@ -170,6 +170,7 @@ impl DirTable<'_> {
             direct_size: u64,
             total_count: usize, // recursive
             total_size: u64,    // recursive
+            date: Option<SystemTime>,
         }
 
         let mut acc_map: BTreeMap<PathBuf, Acc> = BTreeMap::new();
@@ -179,12 +180,23 @@ impl DirTable<'_> {
             if let Some(parent) = path.parent() {
                 let parent = parent.to_path_buf();
                 let size = file.size;
+                let date = file.date;
 
                 // Insert file into its parent dir
                 let par_acc = acc_map.entry(parent.clone()).or_default();
                 par_acc.files.push(file.to_owned());
                 par_acc.direct_count += 1;
                 par_acc.direct_size += size;
+
+                if let Some(file_date) = date {
+                    if let Some(par_date) = par_acc.date {
+                        if par_date < file_date {
+                            par_acc.date = Some(file_date);
+                        }
+                    } else {
+                        par_acc.date = Some(file_date);
+                    }
+                }
 
                 // Walk up the ancestor chain to register subdir relationships
                 let mut ancestors = parent.ancestors().collect::<Vec<_>>();
@@ -202,6 +214,16 @@ impl DirTable<'_> {
                         par_acc.subdirs.insert(subdir);
                         par_acc.total_count += 1;
                         par_acc.total_size += size;
+
+                        if let Some(file_date) = date {
+                            if let Some(par_date) = par_acc.date {
+                                if par_date < file_date {
+                                    par_acc.date = Some(file_date);
+                                }
+                            } else {
+                                par_acc.date = Some(file_date);
+                            }
+                        }
                     }
                 }
             }
@@ -221,10 +243,13 @@ impl DirTable<'_> {
                     .iter()
                     .map(|d| DirTableEntry {
                         path: Arc::new(d.to_owned()),
-                        display_path: "dir".to_string(),
-                        clone_count: 0,
-                        size: 0,
-                        date: None,
+                        display_path: d
+                            .file_name()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                        clone_count: acc.total_count,
+                        size: acc.total_size,
+                        date: acc.date,
                         is_dir: true,
                     })
                     .collect();
@@ -293,11 +318,23 @@ impl DirTable<'_> {
             });
         }
 
-        self.update_dirview(&entries);
+        if flatten {
+            self.current_entries = entries;
+            self.total_size = total_size;
+        } else {
+            self.update_dirview(&entries);
+            let current = self
+                .dir_index
+                .first_key_value()
+                .map(|(k, v)| (k.to_owned(), v.entries.clone(), v.total_size));
+            if let Some((path, dir, total_size)) = current {
+                self.current_dir = Some(path);
+                self.current_entries = dir;
+                self.total_size = total_size;
+            }
+        }
 
-        self.current_entries = entries;
         self.table_len = self.current_entries.len();
-        self.total_size = total_size;
         self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
 
         // from draw
@@ -311,6 +348,38 @@ impl DirTable<'_> {
             Cell::from(Text::from(total_size_str)),
         ])
         .style(footer_style);
+    }
+
+    pub fn enter_selected_dir(&mut self) {
+        if let Some(selected) = self.selected_path.clone() {
+            if let Some(dir) = self.dir_index.get(&*selected) {
+                self.current_dir = Some(selected.as_path().to_owned());
+                self.current_entries = dir.entries.clone();
+                self.total_size = dir.total_size;
+
+                self.table_len = self.current_entries.len();
+                self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
+                self.select_first();
+            }
+        }
+    }
+
+    pub fn enter_parent_dir(&mut self) {
+        if let Some(selected) = self.selected_path.clone() {
+            if let Some(dir) = self.dir_index.get(&*selected) {
+                if let Some(parent) = dir.parent() {
+                    self.current_dir = Some(parent.to_owned());
+                    if let Some(parent) = self.dir_index.get(parent) {
+                        self.current_entries = parent.entries.clone();
+                        self.total_size = parent.total_size;
+
+                        self.table_len = self.current_entries.len();
+                        self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
+                        self.select_first();
+                    }
+                }
+            }
+        }
     }
 
     pub fn select_entry(&mut self, index: usize) {
@@ -405,7 +474,13 @@ impl DirTable<'_> {
             Block::bordered()
                 .border_type(BorderType::Plain)
                 .border_style(Style::new().dark_gray())
-        };
+        }
+        .title_bottom(
+            self.current_dir
+                .as_ref()
+                .map(|d| d.display().to_string())
+                .unwrap_or_default(),
+        );
 
         let selected_style = if focused {
             Style::default().fg(Color::Black).bg(Color::White)
