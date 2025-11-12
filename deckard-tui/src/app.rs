@@ -606,7 +606,7 @@ impl App {
     }
 
     fn mark_all(&mut self) {
-        self.marked_files.extend(self.file_table.paths());
+        self.marked_files.extend(self.file_table.current_paths());
 
         let v = self.marked_files.clone().into_iter().collect();
         self.marked_table.update_table(&v, &self.file_index, None);
@@ -620,7 +620,7 @@ impl App {
     }
 
     fn mark_filter(&mut self, filter: &str) {
-        for p in self.file_table.paths() {
+        for p in self.file_table.current_paths() {
             if p.to_string_lossy().contains(filter) {
                 self.marked_files.insert(p);
             }

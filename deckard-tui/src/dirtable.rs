@@ -12,11 +12,13 @@ use ratatui::{
     },
 };
 use std::{
-    collections::HashSet,
-    path::PathBuf,
+    collections::{BTreeMap, BTreeSet, HashSet},
+    ffi::OsString,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::SystemTime,
 };
+use tracing::debug;
 
 #[derive(Debug, Default, Clone)]
 pub struct DirTableEntry {
@@ -57,11 +59,44 @@ impl DirTableEntry {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct DirView {
+    pub path: Arc<PathBuf>,
+    pub entries: Vec<DirTableEntry>,
+
+    /// Count of files including subdirectories
+    pub file_count: usize,
+    /// Sum of sizes of files including subdirectories
+    pub total_size: u64,
+}
+
+impl DirView {
+    pub fn parent(&self) -> Option<&Path> {
+        self.path.parent()
+    }
+
+    pub fn files(&self) -> Vec<DirTableEntry> {
+        self.entries
+            .iter()
+            .filter_map(|f| if !f.is_dir { Some(f.clone()) } else { None })
+            .collect()
+    }
+
+    pub fn directories(&self) -> Vec<DirTableEntry> {
+        self.entries
+            .iter()
+            .filter_map(|d| if d.is_dir { Some(d.clone()) } else { None })
+            .collect()
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct DirTable<'a> {
     pub table_state: TableState,
     pub table_len: usize,
-    entries: Vec<DirTableEntry>,
+    dir_index: BTreeMap<PathBuf, DirView>,
+    current_dir: Option<PathBuf>,
+    current_entries: Vec<DirTableEntry>,
     selected_path: Option<Arc<PathBuf>>,
     scroll_state: ScrollbarState,
     mark_marked: bool,
@@ -98,26 +133,119 @@ impl DirTable<'_> {
             table_state: TableState::new(),
             table_len: 0,
             total_size: 0,
-            entries: Vec::new(),
+            current_entries: Vec::new(),
             selected_path: None,
             scroll_state: ScrollbarState::new(0),
             mark_marked,
             show_clone_count,
             table,
             footer: Row::default(),
+            dir_index: BTreeMap::new(),
+            current_dir: None,
         }
     }
 
     pub fn clear(&mut self) {
         self.table_state = TableState::new();
         self.table_len = 0;
-        self.entries = Vec::new();
+        self.current_entries = Vec::new();
         self.selected_path = None;
         self.scroll_state = ScrollbarState::new(0);
     }
 
-    pub fn paths(&self) -> Vec<Arc<PathBuf>> {
-        self.entries.iter().map(|e| e.path.clone()).collect()
+    pub fn current_paths(&self) -> Vec<Arc<PathBuf>> {
+        self.current_entries
+            .iter()
+            .map(|e| e.path.clone())
+            .collect()
+    }
+
+    fn update_dirview(&mut self, files: &Vec<DirTableEntry>) {
+        // Temporary accumulator per directory during build.
+        #[derive(Debug, Default)]
+        struct Acc {
+            subdirs: BTreeSet<PathBuf>, // deterministic, deduped
+            files: Vec<DirTableEntry>,  // direct files
+            direct_count: usize,
+            direct_size: u64,
+            total_count: usize, // recursive
+            total_size: u64,    // recursive
+        }
+
+        let mut acc_map: BTreeMap<PathBuf, Acc> = BTreeMap::new();
+
+        for file in files {
+            let path = file.path.clone();
+            if let Some(parent) = path.parent() {
+                let parent = parent.to_path_buf();
+                let size = file.size;
+
+                // Insert file into its parent dir
+                let par_acc = acc_map.entry(parent.clone()).or_default();
+                par_acc.files.push(file.to_owned());
+                par_acc.direct_count += 1;
+                par_acc.direct_size += size;
+
+                // Walk up the ancestor chain to register subdir relationships
+                let mut ancestors = parent.ancestors().collect::<Vec<_>>();
+                ancestors.reverse(); // from root to leaf
+
+                // dbg!(&path);
+                // dbg!(&ancestors);
+
+                for win in ancestors.windows(2) {
+                    if let [a, b] = win {
+                        let parent = a.to_path_buf();
+                        let subdir = b.to_path_buf();
+
+                        let par_acc = acc_map.entry(parent).or_default();
+                        par_acc.subdirs.insert(subdir);
+                        par_acc.total_count += 1;
+                        par_acc.total_size += size;
+                    }
+                }
+            }
+        }
+
+        debug!("{:?}", acc_map);
+
+        // Convert to DirView structs
+        self.dir_index = acc_map
+            .into_iter()
+            .map(|(path, mut acc)| {
+                acc.files.sort_by(|a, b| a.path.cmp(&b.path));
+                let path_arc = Arc::new(path.clone());
+
+                let mut entries: Vec<DirTableEntry> = acc
+                    .subdirs
+                    .iter()
+                    .map(|d| DirTableEntry {
+                        path: Arc::new(d.to_owned()),
+                        display_path: "dir".to_string(),
+                        clone_count: 0,
+                        size: 0,
+                        date: None,
+                        is_dir: true,
+                    })
+                    .collect();
+
+                let size: u64 = acc.files.iter().map(|e| e.size).sum();
+                assert_eq!(size, acc.direct_size);
+                assert_eq!(acc.files.len(), acc.direct_count);
+
+                entries.extend(acc.files);
+
+                let view = DirView {
+                    path: path_arc.clone(),
+                    entries,
+                    file_count: acc.direct_count + acc.total_count,
+                    total_size: acc.direct_size + acc.total_size,
+                };
+                (path, view)
+            })
+            .collect();
+
+        debug!("{:?}", self.dir_index);
     }
 
     pub fn update_table(
@@ -165,8 +293,10 @@ impl DirTable<'_> {
             });
         }
 
-        self.entries = entries;
-        self.table_len = self.entries.len();
+        self.update_dirview(&entries);
+
+        self.current_entries = entries;
+        self.table_len = self.current_entries.len();
         self.total_size = total_size;
         self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
 
@@ -189,7 +319,7 @@ impl DirTable<'_> {
             return;
         }
         self.table_state.select(Some(index));
-        self.selected_path = self.entries.get(index).map(|e| e.path.to_owned());
+        self.selected_path = self.current_entries.get(index).map(|e| e.path.to_owned());
         self.scroll_state = self.scroll_state.position(index);
     }
 
@@ -256,7 +386,7 @@ impl DirTable<'_> {
         let height = area.height.saturating_sub(3) as usize;
         let offset = self.table_state.offset();
 
-        let rows = self.entries.iter().enumerate().map(|(i, e)| {
+        let rows = self.current_entries.iter().enumerate().map(|(i, e)| {
             if i >= offset.saturating_sub(height)
                 && i < offset.saturating_add(height.saturating_mul(2))
             {
