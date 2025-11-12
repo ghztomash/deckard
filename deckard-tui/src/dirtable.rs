@@ -13,7 +13,6 @@ use ratatui::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
-    ffi::OsString,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::SystemTime,
@@ -38,7 +37,9 @@ impl DirTableEntry {
             .map(|d| DateTime::<Local>::from(d).format("%d/%m/%Y").to_string())
             .unwrap_or_default();
 
-        let path_style = if mark_marked && is_marked {
+        let path_style = if self.is_dir {
+            Style::new().light_blue()
+        } else if mark_marked && is_marked {
             Style::new().yellow()
         } else {
             Style::new()
@@ -46,7 +47,14 @@ impl DirTableEntry {
 
         let mut cells = vec![
             Cell::from(Text::from(if mark_marked && is_marked { "*" } else { " " })),
-            Cell::from(Text::from(self.display_path.clone().set_style(path_style))),
+            Cell::from(Text::from(
+                format!(
+                    "{}{}",
+                    self.display_path,
+                    if self.is_dir { "/" } else { "" }
+                )
+                .set_style(path_style),
+            )),
             Cell::from(Text::from(date)),
             Cell::from(Text::from(size)),
         ];
@@ -176,7 +184,7 @@ impl DirTable<'_> {
         let mut acc_map: BTreeMap<PathBuf, Acc> = BTreeMap::new();
 
         for file in files {
-            let path = file.path.clone();
+            let path = PathBuf::from(file.display_path.clone());
             if let Some(parent) = path.parent() {
                 let parent = parent.to_path_buf();
                 let size = file.size;
