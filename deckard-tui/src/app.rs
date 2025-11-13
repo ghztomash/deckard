@@ -230,9 +230,14 @@ impl App {
 
         // don't show clone count for disk_usage mode
         let file_table = if disk_usage {
-            DirTable::new(vec![" ", "File", "Date", "Size"], true, false)
+            DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false)
         } else {
-            DirTable::new(vec![" ", "File", "Date", "Size", "Clones"], true, true)
+            DirTable::new(
+                vec![" ", "File", "Date", "Size", "Clones"],
+                true,
+                true,
+                false,
+            )
         };
 
         Self {
@@ -377,12 +382,13 @@ impl App {
                         true
                     }
 
-                    KeyCode::Enter => {
-                        if key_event.modifiers.contains(KeyModifiers::SHIFT) {
-                            self.file_table.enter_parent_dir();
-                        } else {
-                            self.file_table.enter_selected_dir();
-                        }
+                    KeyCode::Enter | KeyCode::Right
+                        if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        self.file_table.enter_selected_dir();
+                    }
+                    KeyCode::Left if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
+                        self.file_table.back_parent_dir();
                     }
 
                     KeyCode::Char('q') | KeyCode::Esc => self.exit(),
@@ -913,7 +919,7 @@ impl App {
 
         if !paths.is_empty() {
             self.file_table
-                .update_table(&paths, &self.file_index, Some(&self.sort_by), false);
+                .update_table(&paths, &self.file_index, Some(&self.sort_by));
             self.file_table.select_first();
         } else {
             self.file_table.clear();

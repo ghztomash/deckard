@@ -30,7 +30,13 @@ pub struct DirTableEntry {
 }
 
 impl DirTableEntry {
-    fn to_row(&self, mark_marked: bool, is_marked: bool, show_clone_count: bool) -> Row<'_> {
+    fn to_row(
+        &self,
+        mark_marked: bool,
+        is_marked: bool,
+        show_clone_count: bool,
+        show_name: bool,
+    ) -> Row<'_> {
         let size = humansize::format_size(self.size, humansize::DECIMAL);
         let date = self
             .date
@@ -50,7 +56,15 @@ impl DirTableEntry {
             Cell::from(Text::from(
                 format!(
                     "{}{}",
-                    self.display_path,
+                    if show_name {
+                        self.path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        self.display_path.to_string()
+                    },
                     if self.is_dir { "/" } else { "" }
                 )
                 .set_style(path_style),
@@ -106,9 +120,11 @@ pub struct DirTable<'a> {
     current_dir: Option<PathBuf>,
     current_entries: Vec<DirTableEntry>,
     selected_path: Option<Arc<PathBuf>>,
+    selected_path_is_dir: bool,
     scroll_state: ScrollbarState,
     mark_marked: bool,
     show_clone_count: bool,
+    flatten_dirs: bool,
     total_size: u64,
     // from draw
     table: Table<'a>,
@@ -116,7 +132,12 @@ pub struct DirTable<'a> {
 }
 
 impl DirTable<'_> {
-    pub fn new(header_str: Vec<&'static str>, mark_marked: bool, show_clone_count: bool) -> Self {
+    pub fn new(
+        header_str: Vec<&'static str>,
+        mark_marked: bool,
+        show_clone_count: bool,
+        flatten_dirs: bool,
+    ) -> Self {
         let header_style = Style::default().dark_gray();
         let header = header_str
             .into_iter()
@@ -143,6 +164,7 @@ impl DirTable<'_> {
             total_size: 0,
             current_entries: Vec::new(),
             selected_path: None,
+            selected_path_is_dir: false,
             scroll_state: ScrollbarState::new(0),
             mark_marked,
             show_clone_count,
@@ -150,14 +172,19 @@ impl DirTable<'_> {
             footer: Row::default(),
             dir_index: BTreeMap::new(),
             current_dir: None,
+            flatten_dirs,
         }
     }
 
     pub fn clear(&mut self) {
         self.table_state = TableState::new();
         self.table_len = 0;
+        self.total_size = 0;
         self.current_entries = Vec::new();
+        self.dir_index = BTreeMap::new();
         self.selected_path = None;
+        self.current_dir = None;
+        self.selected_path_is_dir = false;
         self.scroll_state = ScrollbarState::new(0);
     }
 
@@ -286,7 +313,6 @@ impl DirTable<'_> {
         paths: &Vec<Arc<PathBuf>>,
         file_index: &Arc<RwLock<FileIndex>>,
         sort_by: Option<&Sorting>,
-        flatten: bool,
     ) {
         // Lock the FileIndex only once, then copy out the data we need:
         let (mut entries, total_size) = {
@@ -326,7 +352,7 @@ impl DirTable<'_> {
             });
         }
 
-        if flatten {
+        if self.flatten_dirs {
             self.current_entries = entries;
             self.total_size = total_size;
         } else {
@@ -359,7 +385,7 @@ impl DirTable<'_> {
     }
 
     pub fn enter_selected_dir(&mut self) {
-        if let Some(selected) = self.selected_path.clone() {
+        if let Some(selected) = self.selected_file_path() {
             if let Some(dir) = self.dir_index.get(&*selected) {
                 self.current_dir = Some(selected.as_path().to_owned());
                 self.current_entries = dir.entries.clone();
@@ -372,7 +398,7 @@ impl DirTable<'_> {
         }
     }
 
-    pub fn enter_parent_dir(&mut self) {
+    pub fn back_parent_dir(&mut self) {
         if let Some(selected) = self.selected_path.clone() {
             if let Some(dir) = self.dir_index.get(&*selected) {
                 if let Some(parent) = dir.parent() {
@@ -396,8 +422,15 @@ impl DirTable<'_> {
             return;
         }
         self.table_state.select(Some(index));
-        self.selected_path = self.current_entries.get(index).map(|e| e.path.to_owned());
-        self.scroll_state = self.scroll_state.position(index);
+        if let Some((selected_path, is_dir)) = self
+            .current_entries
+            .get(index)
+            .map(|e| (e.path.to_owned(), e.is_dir))
+        {
+            self.selected_path = Some(selected_path);
+            self.selected_path_is_dir = is_dir;
+            self.scroll_state = self.scroll_state.position(index);
+        }
     }
 
     // Select step entries down
@@ -447,10 +480,27 @@ impl DirTable<'_> {
     pub fn select_none(&mut self) {
         self.table_state.select(None);
         self.selected_path = None;
+        self.selected_path_is_dir = false;
     }
 
     pub fn selected_path(&self) -> Option<Arc<PathBuf>> {
         self.selected_path.clone()
+    }
+
+    pub fn selected_file_path(&self) -> Option<Arc<PathBuf>> {
+        if !self.selected_path_is_dir {
+            self.selected_path.clone()
+        } else {
+            None
+        }
+    }
+
+    pub fn selected_dir_path(&self) -> Option<Arc<PathBuf>> {
+        if self.selected_path_is_dir {
+            self.selected_path.clone()
+        } else {
+            None
+        }
     }
 
     pub fn render(
@@ -468,7 +518,12 @@ impl DirTable<'_> {
                 && i < offset.saturating_add(height.saturating_mul(2))
             {
                 let is_marked = marked_files.contains(&e.path);
-                e.to_row(self.mark_marked, is_marked, self.show_clone_count)
+                e.to_row(
+                    self.mark_marked,
+                    is_marked,
+                    self.show_clone_count,
+                    !self.flatten_dirs,
+                )
             } else {
                 Row::new::<Vec<Cell>>(vec![]).style(Style::new())
             }
