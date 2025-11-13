@@ -382,11 +382,13 @@ impl App {
                         true
                     }
 
-                    KeyCode::Enter | KeyCode::Right
-                        if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
-                    {
+                    KeyCode::Right if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
                         self.file_table.enter_selected_dir();
                     }
+                    KeyCode::Enter => {
+                        self.file_table.enter_selected_dir();
+                    }
+
                     KeyCode::Left if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
                         self.file_table.back_parent_dir();
                     }

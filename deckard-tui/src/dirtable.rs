@@ -126,6 +126,7 @@ pub struct DirTable<'a> {
     show_clone_count: bool,
     flatten_dirs: bool,
     total_size: u64,
+    selected_dir_history: Vec<usize>,
     // from draw
     table: Table<'a>,
     footer: Row<'a>,
@@ -173,6 +174,7 @@ impl DirTable<'_> {
             dir_index: BTreeMap::new(),
             current_dir: None,
             flatten_dirs,
+            selected_dir_history: Vec::new(),
         }
     }
 
@@ -384,34 +386,35 @@ impl DirTable<'_> {
         .style(footer_style);
     }
 
-    pub fn enter_selected_dir(&mut self) {
-        if let Some(selected) = self.selected_file_path() {
-            if let Some(dir) = self.dir_index.get(&*selected) {
-                self.current_dir = Some(selected.as_path().to_owned());
-                self.current_entries = dir.entries.clone();
-                self.total_size = dir.total_size;
+    fn set_current_dir(&mut self, path: PathBuf) {
+        if let Some(dir) = self.dir_index.get(&path) {
+            self.current_dir = Some(path);
+            self.current_entries = dir.entries.clone();
+            self.total_size = dir.total_size;
 
-                self.table_len = self.current_entries.len();
-                self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
-                self.select_first();
-            }
+            self.table_len = self.current_entries.len();
+            self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
+        }
+    }
+
+    pub fn enter_selected_dir(&mut self) {
+        if let Some(selected) = self.selected_dir_path() {
+            if let Some(index) = self.table_state.selected() {
+                self.selected_dir_history.push(index);
+            };
+            self.set_current_dir(selected.as_path().to_owned());
+            self.select_first();
         }
     }
 
     pub fn back_parent_dir(&mut self) {
-        if let Some(selected) = self.selected_path.clone() {
-            if let Some(dir) = self.dir_index.get(&*selected) {
-                if let Some(parent) = dir.parent() {
-                    self.current_dir = Some(parent.to_owned());
-                    if let Some(parent) = self.dir_index.get(parent) {
-                        self.current_entries = parent.entries.clone();
-                        self.total_size = parent.total_size;
-
-                        self.table_len = self.current_entries.len();
-                        self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
-                        self.select_first();
-                    }
-                }
+        if let Some(selected) = self.current_dir.clone()
+            && let Some(dir) = self.dir_index.get(&selected)
+            && let Some(parent) = dir.parent()
+        {
+            self.set_current_dir(parent.to_owned());
+            if let Some(index) = self.selected_dir_history.pop() {
+                self.select_entry(index);
             }
         }
     }
@@ -543,7 +546,8 @@ impl DirTable<'_> {
                 .as_ref()
                 .map(|d| d.display().to_string())
                 .unwrap_or_default(),
-        );
+        )
+        .title_bottom(format!("{:?}", self.selected_dir_history));
 
         let selected_style = if focused {
             Style::default().fg(Color::Black).bg(Color::White)
