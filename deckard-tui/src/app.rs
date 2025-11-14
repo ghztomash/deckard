@@ -674,7 +674,7 @@ impl App {
             let mut index = self.file_index.write().unwrap();
             for file in &self.marked_files {
                 if !self.dry_run {
-                    if remove_callback(file).is_err() {
+                    if file.is_file() && remove_callback(file).is_err() {
                         self.warning_message = Some("Delete failed".to_string());
                     }
                     if self.remove_dirs {
