@@ -28,6 +28,7 @@ pub const HELP_TEXT: &str = concat!(
     "[ma] mark_all - mark all displayed files\n",
     "[mp] mark_parent - mark files in parent directory\n",
     "[cm] clear_marked - unmark all files\n",
+    "[fd] flatten_dirs - display all files at once\n",
     "[h] help - show this window\n",
     "[q] quit - quit deckard\n",
 );

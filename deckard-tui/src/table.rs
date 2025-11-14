@@ -4,7 +4,7 @@ use deckard::index::FileIndex;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Margin, Rect},
-    style::{Color, Style, Stylize},
+    style::{Color, Style},
     text::Span,
     widgets::{
         Block, BorderType, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -396,7 +396,7 @@ fn clamp_offset(
     start.min(max_start)
 }
 
-fn format_path_with_common(path: &PathBuf, common_path: Option<&PathBuf>) -> String {
+pub(crate) fn format_path_with_common(path: &PathBuf, common_path: Option<&PathBuf>) -> String {
     let relative_path = if let Some(common_path) = common_path {
         path.strip_prefix(common_path).unwrap_or(path)
     } else {

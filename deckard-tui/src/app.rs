@@ -97,13 +97,13 @@ impl fmt::Display for Sorting {
     }
 }
 
-pub struct App {
+pub struct App<'a> {
     focused_window: FocusedWindow,
     should_exit: bool,
     dry_run: bool,
     remove_dirs: bool,
     file_index: Arc<RwLock<FileIndex>>,
-    file_table: FileTable,
+    file_table: DirTable<'a>,
     clone_table: FileTable,
     marked_table: FileTable,
     marked_files: HashSet<Arc<PathBuf>>,
@@ -121,6 +121,7 @@ pub struct App {
     abort_handle: Option<AbortHandle>,
     display_filter: Option<String>,
     warning_message: Option<String>,
+    flatten_dirs: bool,
     debug: bool,
     frame_count: usize,
     last_render: Instant,
@@ -170,7 +171,7 @@ impl fmt::Display for State {
     }
 }
 
-impl App {
+impl App<'_> {
     const FRAMES_PER_SECOND: f32 = 30.0;
 
     pub fn new(
@@ -226,6 +227,10 @@ impl App {
                 command: "clear_marked",
                 alias: Some("cm"),
             },
+            Command {
+                command: "flatten_dirs",
+                alias: Some("fd"),
+            },
         ];
 
         // don't show clone count for disk_usage mode
@@ -264,6 +269,7 @@ impl App {
             remove_dirs,
             display_filter: None,
             warning_message: None,
+            flatten_dirs: false,
             debug,
             frame_count: 0,
             last_render: Instant::now(),
@@ -507,6 +513,12 @@ impl App {
         Ok(changed)
     }
 
+    fn toggle_flatten_dirs(&mut self) {
+        self.flatten_dirs = !self.flatten_dirs;
+        self.file_table.flatten_dirs(self.flatten_dirs);
+        self.update_file_table();
+    }
+
     fn toggle_about(&mut self) -> bool {
         if matches!(self.focused_window, FocusedWindow::Popup) {
             self.focused_window = FocusedWindow::Files;
@@ -582,6 +594,9 @@ impl App {
                     if let Some(filter) = command.args.first() {
                         self.set_filter(filter);
                     }
+                }
+                "flatten_dirs" => {
+                    self.toggle_flatten_dirs();
                 }
                 _ => {
                     self.set_warning(format!("Failed to match command: {}", command.name));

@@ -1,10 +1,10 @@
-use crate::app::{Sorting, format_path};
+use crate::{app::Sorting, table::format_path_with_common};
 use chrono::{DateTime, Local};
 use deckard::index::FileIndex;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Margin, Rect},
-    style::{Color, Style, Styled, Stylize},
+    style::{Color, Style, Styled},
     text::Text,
     widgets::{
         Block, BorderType, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -182,6 +182,10 @@ impl DirTable<'_> {
         }
     }
 
+    pub fn flatten_dirs(&mut self, enabled: bool) {
+        self.flatten_dirs = enabled;
+    }
+
     pub fn clear(&mut self) {
         self.table_state = TableState::new();
         self.table_len = 0;
@@ -342,6 +346,7 @@ impl DirTable<'_> {
         // Lock the FileIndex only once, then copy out the data we need:
         let (mut entries, total_size) = {
             let fi = file_index.read().unwrap();
+            let common_path = deckard::find_common_path(&fi.dirs);
 
             // Pre-calculate file metadata for each path we display,
             // including size & date. Also track a sum to show total size.
@@ -350,7 +355,7 @@ impl DirTable<'_> {
             for path in paths {
                 let size = fi.file_size(path).unwrap_or_default();
                 let date = fi.file_date_modified(path); // or created
-                let display_path = format_path(path, &fi.dirs);
+                let display_path = format_path_with_common(path, common_path.as_ref());
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
                 total_size_acc += size;
 
