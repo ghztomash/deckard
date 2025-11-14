@@ -384,18 +384,15 @@ impl App {
 
                     // dir navigation
                     KeyCode::Right if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
-                        self.file_table.enter_selected_dir();
-                        self.update_clone_table();
+                        self.enter_dir(false);
                         true
                     }
                     KeyCode::Enter => {
-                        self.file_table.enter_selected_dir();
-                        self.update_clone_table();
+                        self.enter_dir(false);
                         true
                     }
                     KeyCode::Left if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
-                        self.file_table.back_parent_dir();
-                        self.update_clone_table();
+                        self.enter_dir(true);
                         true
                     }
 
@@ -612,6 +609,17 @@ impl App {
 
     fn clear_warning(&mut self) {
         self.warning_message = None;
+    }
+
+    fn enter_dir(&mut self, back: bool) {
+        if matches!(self.focused_window, FocusedWindow::Files) {
+            if back {
+                self.file_table.back_parent_dir();
+            } else {
+                self.file_table.enter_selected_dir();
+            }
+            self.update_clone_table()
+        }
     }
 
     fn mark(&mut self) {
