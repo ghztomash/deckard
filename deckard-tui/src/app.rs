@@ -382,15 +382,18 @@ impl App {
                         true
                     }
 
+                    // dir navigation
                     KeyCode::Right if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
                         self.file_table.enter_selected_dir();
+                        self.update_clone_table()
                     }
                     KeyCode::Enter => {
                         self.file_table.enter_selected_dir();
+                        self.update_clone_table()
                     }
-
                     KeyCode::Left if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
                         self.file_table.back_parent_dir();
+                        self.update_clone_table()
                     }
 
                     KeyCode::Char('q') | KeyCode::Esc => self.exit(),
@@ -929,7 +932,9 @@ impl App {
     }
 
     fn update_clone_table(&mut self) {
-        if let Some(selected_file) = self.file_table.selected_path().as_ref() {
+        if let Some(selected_file) = self.file_table.selected_path().as_ref()
+            && !self.file_table.selected_path_is_dir()
+        {
             if let Some(clone_paths) = self
                 .file_index
                 .read()

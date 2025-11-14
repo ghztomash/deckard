@@ -188,6 +188,7 @@ impl DirTable<'_> {
         self.current_dir = None;
         self.selected_path_is_dir = false;
         self.scroll_state = ScrollbarState::new(0);
+        self.selected_dir_history = Vec::new();
     }
 
     pub fn current_paths(&self) -> Vec<Arc<PathBuf>> {
@@ -199,7 +200,7 @@ impl DirTable<'_> {
 
     fn update_dirview(&mut self, files: &Vec<DirTableEntry>) {
         // Temporary accumulator per directory during build.
-        #[derive(Debug, Default)]
+        #[derive(Debug, Default, Clone)]
         struct Acc {
             subdirs: BTreeSet<PathBuf>, // deterministic, deduped
             files: Vec<DirTableEntry>,  // direct files
@@ -270,6 +271,7 @@ impl DirTable<'_> {
 
         // Convert to DirView structs
         self.dir_index = acc_map
+            .clone() // TODO: fix this abomination
             .into_iter()
             .map(|(path, mut acc)| {
                 acc.files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -278,16 +280,24 @@ impl DirTable<'_> {
                 let mut entries: Vec<DirTableEntry> = acc
                     .subdirs
                     .iter()
-                    .map(|d| DirTableEntry {
-                        path: Arc::new(d.to_owned()),
-                        display_path: d
-                            .file_name()
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_default(),
-                        clone_count: acc.total_count,
-                        size: acc.total_size,
-                        date: acc.date,
-                        is_dir: true,
+                    .map(|d| {
+                        let c = acc_map.get(d).unwrap();
+
+                        let size = c.total_size + c.direct_size;
+                        let clone_count = c.total_count + c.direct_count;
+                        let date = c.date;
+
+                        DirTableEntry {
+                            path: Arc::new(d.to_owned()),
+                            display_path: d
+                                .file_name()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_default(),
+                            clone_count,
+                            size,
+                            date,
+                            is_dir: true,
+                        }
                     })
                     .collect();
 
@@ -307,7 +317,7 @@ impl DirTable<'_> {
             })
             .collect();
 
-        debug!("{:?}", self.dir_index);
+        debug!("dir_index= {:#?}", self.dir_index);
     }
 
     pub fn update_table(
@@ -355,6 +365,7 @@ impl DirTable<'_> {
         }
 
         if self.flatten_dirs {
+            self.current_dir = None;
             self.current_entries = entries;
             self.total_size = total_size;
         } else {
@@ -363,19 +374,22 @@ impl DirTable<'_> {
                 .dir_index
                 .first_key_value()
                 .map(|(k, v)| (k.to_owned(), v.entries.clone(), v.total_size));
-            if let Some((path, dir, total_size)) = current {
+            if let Some((path, dir, dir_size)) = current {
                 self.current_dir = Some(path);
                 self.current_entries = dir;
-                self.total_size = total_size;
+                self.total_size = dir_size;
             }
         }
 
         self.table_len = self.current_entries.len();
         self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
+        self.update_footer();
+    }
 
+    fn update_footer(&mut self) {
         // from draw
         let footer_style = Style::default().dark_gray();
-        let total_size_str = humansize::format_size(total_size, humansize::DECIMAL);
+        let total_size_str = humansize::format_size(self.total_size, humansize::DECIMAL);
 
         self.footer = Row::new(vec![
             Cell::from(Text::from("")),
@@ -394,6 +408,8 @@ impl DirTable<'_> {
 
             self.table_len = self.current_entries.len();
             self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
+
+            self.update_footer();
         }
     }
 
@@ -488,6 +504,10 @@ impl DirTable<'_> {
 
     pub fn selected_path(&self) -> Option<Arc<PathBuf>> {
         self.selected_path.clone()
+    }
+
+    pub fn selected_path_is_dir(&self) -> bool {
+        self.selected_path_is_dir
     }
 
     pub fn selected_file_path(&self) -> Option<Arc<PathBuf>> {
