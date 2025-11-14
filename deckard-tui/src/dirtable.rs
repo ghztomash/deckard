@@ -198,7 +198,7 @@ impl DirTable<'_> {
             .collect()
     }
 
-    fn update_dirview(&mut self, files: &Vec<DirTableEntry>) {
+    fn update_dirview(&mut self, files: &Vec<DirTableEntry>, sort_by: Option<&Sorting>) {
         // Temporary accumulator per directory during build.
         #[derive(Debug, Default, Clone)]
         struct Acc {
@@ -273,8 +273,7 @@ impl DirTable<'_> {
         self.dir_index = acc_map
             .clone() // TODO: fix this abomination
             .into_iter()
-            .map(|(path, mut acc)| {
-                acc.files.sort_by(|a, b| a.path.cmp(&b.path));
+            .map(|(path, acc)| {
                 let path_arc = Arc::new(path.clone());
 
                 let mut entries: Vec<DirTableEntry> = acc
@@ -306,6 +305,16 @@ impl DirTable<'_> {
                 assert_eq!(acc.files.len(), acc.direct_count);
 
                 entries.extend(acc.files);
+
+                // Sort the entries
+                if let Some(sort_by) = sort_by {
+                    entries.sort_by(|a, b| match sort_by {
+                        Sorting::Path => a.path.cmp(&b.path),
+                        Sorting::Size => b.size.cmp(&a.size),
+                        Sorting::Date => b.date.cmp(&a.date),
+                        Sorting::Count => b.clone_count.cmp(&a.clone_count),
+                    });
+                }
 
                 let view = DirView {
                     path: path_arc.clone(),
@@ -354,22 +363,22 @@ impl DirTable<'_> {
             (entries_vec, total_size_acc)
         };
 
-        // Sort the paths
-        if let Some(sort_by) = sort_by {
-            entries.sort_by(|a, b| match sort_by {
-                Sorting::Path => a.path.cmp(&b.path),
-                Sorting::Size => b.size.cmp(&a.size),
-                Sorting::Date => b.date.cmp(&a.date),
-                Sorting::Count => b.clone_count.cmp(&a.clone_count),
-            });
-        }
-
         if self.flatten_dirs {
+            // Sort the paths
+            if let Some(sort_by) = sort_by {
+                entries.sort_by(|a, b| match sort_by {
+                    Sorting::Path => a.path.cmp(&b.path),
+                    Sorting::Size => b.size.cmp(&a.size),
+                    Sorting::Date => b.date.cmp(&a.date),
+                    Sorting::Count => b.clone_count.cmp(&a.clone_count),
+                });
+            }
+
             self.current_dir = None;
             self.current_entries = entries;
             self.total_size = total_size;
         } else {
-            self.update_dirview(&entries);
+            self.update_dirview(&entries, sort_by);
             let current = self
                 .dir_index
                 .first_key_value()
