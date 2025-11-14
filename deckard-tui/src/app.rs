@@ -385,15 +385,18 @@ impl App {
                     // dir navigation
                     KeyCode::Right if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
                         self.file_table.enter_selected_dir();
-                        self.update_clone_table()
+                        self.update_clone_table();
+                        true
                     }
                     KeyCode::Enter => {
                         self.file_table.enter_selected_dir();
-                        self.update_clone_table()
+                        self.update_clone_table();
+                        true
                     }
                     KeyCode::Left if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
                         self.file_table.back_parent_dir();
-                        self.update_clone_table()
+                        self.update_clone_table();
+                        true
                     }
 
                     KeyCode::Char('q') | KeyCode::Esc => self.exit(),
@@ -705,7 +708,7 @@ impl App {
 
     fn active_selected_file(&self) -> Option<Arc<PathBuf>> {
         match self.focused_window {
-            FocusedWindow::Files => self.file_table.selected_path(),
+            FocusedWindow::Files => self.file_table.selected_file_path(),
             FocusedWindow::Clones => self.clone_table.selected_path(),
             FocusedWindow::Marked => self.marked_table.selected_path(),
             _ => None,

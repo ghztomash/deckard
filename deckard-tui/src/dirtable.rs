@@ -52,7 +52,11 @@ impl DirTableEntry {
         };
 
         let mut cells = vec![
-            Cell::from(Text::from(if mark_marked && is_marked { "*" } else { " " })),
+            Cell::from(Text::from(if mark_marked && is_marked {
+                if self.is_dir { "-" } else { "*" }
+            } else {
+                " "
+            })),
             Cell::from(Text::from(
                 format!(
                     "{}{}",
@@ -549,7 +553,14 @@ impl DirTable<'_> {
             if i >= offset.saturating_sub(height)
                 && i < offset.saturating_add(height.saturating_mul(2))
             {
-                let is_marked = marked_files.contains(&e.path);
+                let is_marked = if e.is_dir {
+                    marked_files
+                        .iter()
+                        // TODO: fix this abomination
+                        .any(|m| m.to_string_lossy().contains(&*e.path.to_string_lossy()))
+                } else {
+                    marked_files.contains(&e.path)
+                };
                 e.to_row(
                     self.mark_marked,
                     is_marked,
@@ -576,7 +587,10 @@ impl DirTable<'_> {
                 .map(|d| d.display().to_string())
                 .unwrap_or_default(),
         )
-        .title_bottom(format!("{:?}", self.selected_dir_history));
+        .title_bottom(format!(
+            "{:?} {:?}",
+            self.selected_dir_history, self.selected_path
+        ));
 
         let selected_style = if focused {
             Style::default().fg(Color::Black).bg(Color::White)
