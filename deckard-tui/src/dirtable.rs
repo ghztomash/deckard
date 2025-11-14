@@ -266,7 +266,7 @@ impl DirTable<'_> {
             }
         }
 
-        debug!("{:?}", acc_map);
+        debug!("acc_map: {:#?}", acc_map);
 
         // Convert to DirView structs
         self.dir_index = acc_map
