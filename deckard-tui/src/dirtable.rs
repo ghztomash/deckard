@@ -4,8 +4,8 @@ use deckard::index::FileIndex;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Margin, Rect},
-    style::{Color, Style, Styled},
-    text::Text,
+    style::{Color, Style},
+    text::Span,
     widgets::{
         Block, BorderType, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         StatefulWidget, Table, TableState,
@@ -23,13 +23,53 @@ use tracing::debug;
 pub struct DirTableEntry {
     path: Arc<PathBuf>,
     display_path: String,
+    display_text: String,
+    name_text: String,
     size: u64,
+    size_text: String,
     date: Option<SystemTime>,
+    date_text: String,
     clone_count: usize,
+    clone_count_text: String,
     is_dir: bool,
 }
 
 impl DirTableEntry {
+    fn new(
+        path: Arc<PathBuf>,
+        display_path: String,
+        size: u64,
+        date: Option<SystemTime>,
+        clone_count: usize,
+        is_dir: bool,
+    ) -> Self {
+        let suffix = if is_dir { "/" } else { "" };
+        let display_text = format!("{display_path}{suffix}");
+        let name_text = format!(
+            "{}{suffix}",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
+        let size_text = humansize::format_size(size, humansize::DECIMAL);
+        let date_text = date
+            .map(|d| DateTime::<Local>::from(d).format("%d/%m/%Y").to_string())
+            .unwrap_or_default();
+        let clone_count_text = clone_count.to_string();
+
+        Self {
+            path,
+            display_path,
+            display_text,
+            name_text,
+            size,
+            size_text,
+            date,
+            date_text,
+            clone_count,
+            clone_count_text,
+            is_dir,
+        }
+    }
+
     fn to_row(
         &self,
         mark_marked: bool,
@@ -37,12 +77,6 @@ impl DirTableEntry {
         show_clone_count: bool,
         show_name: bool,
     ) -> Row<'_> {
-        let size = humansize::format_size(self.size, humansize::DECIMAL);
-        let date = self
-            .date
-            .map(|d| DateTime::<Local>::from(d).format("%d/%m/%Y").to_string())
-            .unwrap_or_default();
-
         let path_style = if self.is_dir {
             Style::new().light_blue()
         } else if mark_marked && is_marked {
@@ -51,34 +85,25 @@ impl DirTableEntry {
             Style::new()
         };
 
+        let path_text = if show_name {
+            self.name_text.as_str()
+        } else {
+            self.display_text.as_str()
+        };
+
         let mut cells = vec![
-            Cell::from(Text::from(if mark_marked && is_marked {
+            Cell::from(if mark_marked && is_marked {
                 if self.is_dir { "-" } else { "*" }
             } else {
                 " "
-            })),
-            Cell::from(Text::from(
-                format!(
-                    "{}{}",
-                    if show_name {
-                        self.path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string()
-                    } else {
-                        self.display_path.to_string()
-                    },
-                    if self.is_dir { "/" } else { "" }
-                )
-                .set_style(path_style),
-            )),
-            Cell::from(Text::from(date)),
-            Cell::from(Text::from(size)),
+            }),
+            Cell::from(Span::styled(path_text, path_style)),
+            Cell::from(self.date_text.as_str()),
+            Cell::from(self.size_text.as_str()),
         ];
 
         if show_clone_count {
-            cells.push(Cell::from(Text::from(self.clone_count.to_string())));
+            cells.push(Cell::from(self.clone_count_text.as_str()));
         }
 
         Row::new(cells).style(Style::new())
@@ -117,7 +142,7 @@ impl DirView {
 }
 
 #[derive(Debug, Default)]
-pub struct DirTable<'a> {
+pub struct DirTable {
     pub table_state: TableState,
     pub table_len: usize,
     dir_index: BTreeMap<PathBuf, DirView>,
@@ -131,25 +156,19 @@ pub struct DirTable<'a> {
     flatten_dirs: bool,
     total_size: u64,
     selected_dir_history: Vec<usize>,
-    // from draw
-    table: Table<'a>,
-    footer: Row<'a>,
+    header_labels: Vec<&'static str>,
+    widths: Vec<Constraint>,
+    file_count_text: String,
+    total_size_text: String,
 }
 
-impl DirTable<'_> {
+impl DirTable {
     pub fn new(
         header_str: Vec<&'static str>,
         mark_marked: bool,
         show_clone_count: bool,
         flatten_dirs: bool,
     ) -> Self {
-        let header_style = Style::default().dark_gray();
-        let header = header_str
-            .into_iter()
-            .map(Cell::from)
-            .collect::<Row>()
-            .style(header_style);
-
         let mut widths = vec![
             // + 1 is for padding.
             Constraint::Max(1),
@@ -161,8 +180,6 @@ impl DirTable<'_> {
             widths.push(Constraint::Max(7));
         }
 
-        let table = Table::default().widths(widths).header(header);
-
         Self {
             table_state: TableState::new(),
             table_len: 0,
@@ -173,12 +190,14 @@ impl DirTable<'_> {
             scroll_state: ScrollbarState::new(0),
             mark_marked,
             show_clone_count,
-            table,
-            footer: Row::default(),
             dir_index: BTreeMap::new(),
             current_dir: None,
             flatten_dirs,
             selected_dir_history: Vec::new(),
+            header_labels: header_str,
+            widths,
+            file_count_text: String::new(),
+            total_size_text: String::new(),
         }
     }
 
@@ -197,6 +216,8 @@ impl DirTable<'_> {
         self.selected_path_is_dir = false;
         self.scroll_state = ScrollbarState::new(0);
         self.selected_dir_history = Vec::new();
+        self.file_count_text = String::new();
+        self.total_size_text = String::new();
     }
 
     pub fn current_paths(&self) -> Vec<Arc<PathBuf>> {
@@ -294,17 +315,16 @@ impl DirTable<'_> {
                         let clone_count = c.total_count + c.direct_count;
                         let date = c.date;
 
-                        DirTableEntry {
-                            path: Arc::new(d.to_owned()),
-                            display_path: d
-                                .file_name()
+                        DirTableEntry::new(
+                            Arc::new(d.to_owned()),
+                            d.file_name()
                                 .map(|p| p.to_string_lossy().to_string())
                                 .unwrap_or_default(),
-                            clone_count,
                             size,
                             date,
-                            is_dir: true,
-                        }
+                            clone_count,
+                            true,
+                        )
                     })
                     .collect();
 
@@ -359,14 +379,14 @@ impl DirTable<'_> {
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
                 total_size_acc += size;
 
-                entries_vec.push(DirTableEntry {
-                    path: path.clone(),
+                entries_vec.push(DirTableEntry::new(
+                    path.clone(),
                     display_path,
                     size,
                     date,
                     clone_count,
-                    is_dir: false,
-                });
+                    false,
+                ));
             }
 
             (entries_vec, total_size_acc)
@@ -400,22 +420,13 @@ impl DirTable<'_> {
         }
 
         self.table_len = self.current_entries.len();
-        self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
+        self.scroll_state = ScrollbarState::new(self.table_len);
         self.update_footer();
     }
 
     fn update_footer(&mut self) {
-        // from draw
-        let footer_style = Style::default().dark_gray();
-        let total_size_str = humansize::format_size(self.total_size, humansize::DECIMAL);
-
-        self.footer = Row::new(vec![
-            Cell::from(Text::from("")),
-            Cell::from(Text::from(format!("Files: {}", self.table_len))),
-            Cell::from(Text::from("Total:")),
-            Cell::from(Text::from(total_size_str)),
-        ])
-        .style(footer_style);
+        self.file_count_text = format!("Files: {}", self.table_len);
+        self.total_size_text = humansize::format_size(self.total_size, humansize::DECIMAL);
     }
 
     fn set_current_dir(&mut self, path: PathBuf) {
@@ -425,7 +436,7 @@ impl DirTable<'_> {
             self.total_size = dir.total_size;
 
             self.table_len = self.current_entries.len();
-            self.scroll_state = ScrollbarState::new(self.table_len.saturating_sub(1));
+            self.scroll_state = ScrollbarState::new(self.table_len);
 
             self.update_footer();
         }
@@ -458,6 +469,7 @@ impl DirTable<'_> {
             self.select_none();
             return;
         }
+        let index = index.min(self.table_len.saturating_sub(1));
         self.table_state.select(Some(index));
         if let Some((selected_path, is_dir)) = self
             .current_entries
@@ -466,7 +478,6 @@ impl DirTable<'_> {
         {
             self.selected_path = Some(selected_path);
             self.selected_path_is_dir = is_dir;
-            self.scroll_state = self.scroll_state.position(index);
         }
     }
 
@@ -551,33 +562,67 @@ impl DirTable<'_> {
         focused: bool,
         marked_files: &HashSet<Arc<PathBuf>>,
     ) {
-        let height = area.height.saturating_sub(3) as usize;
-        let offset = self.table_state.offset();
-
-        let rows = self.current_entries.iter().enumerate().map(|(i, e)| {
-            if i >= offset.saturating_sub(height)
-                && i < offset.saturating_add(height.saturating_mul(2))
-            {
-                let is_marked = if e.is_dir {
-                    marked_files
-                        .iter()
-                        // TODO: fix this abomination
-                        .any(|m| m.to_string_lossy().contains(&*e.path.to_string_lossy()))
-                } else {
-                    marked_files.contains(&e.path)
-                };
+        let visible = self.visible_range(area);
+        let rows = self.current_entries[visible.start..visible.end]
+            .iter()
+            .map(|e| {
                 e.to_row(
                     self.mark_marked,
-                    is_marked,
+                    self.entry_is_marked(e, marked_files),
                     self.show_clone_count,
                     !self.flatten_dirs,
                 )
-            } else {
-                Row::new::<Vec<Cell>>(vec![]).style(Style::new())
-            }
-        });
+            });
 
-        let block = if focused {
+        let block = self.block(focused);
+
+        let selected_style = if focused {
+            Style::default().fg(Color::Black).bg(Color::White)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::DarkGray)
+        };
+
+        let table = Table::default()
+            .widths(self.widths.iter().copied())
+            .header(self.header())
+            .rows(rows)
+            .footer(self.footer())
+            .row_highlight_style(selected_style)
+            .block(block);
+        let mut visible_state = TableState::new()
+            .with_selected(visible.selected)
+            .with_offset(0);
+        StatefulWidget::render(table, area, buf, &mut visible_state);
+
+        let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
+        self.scroll_state = self
+            .scroll_state
+            .content_length(self.table_len)
+            .viewport_content_length(visible.row_capacity)
+            .position(visible.scroll_position);
+        scrollbar.render(
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            buf,
+            &mut self.scroll_state,
+        );
+    }
+
+    fn entry_is_marked(&self, entry: &DirTableEntry, marked_files: &HashSet<Arc<PathBuf>>) -> bool {
+        if entry.is_dir {
+            marked_files
+                .iter()
+                // TODO: fix this abomination
+                .any(|m| m.to_string_lossy().contains(&*entry.path.to_string_lossy()))
+        } else {
+            marked_files.contains(&entry.path)
+        }
+    }
+
+    fn block(&self, focused: bool) -> Block<'_> {
+        if focused {
             Block::bordered()
                 .border_type(BorderType::Thick)
                 .border_style(Style::new().light_magenta())
@@ -595,31 +640,203 @@ impl DirTable<'_> {
         .title_bottom(format!(
             "{:?} {:?}",
             self.selected_dir_history, self.selected_path
-        ));
+        ))
+    }
 
-        let selected_style = if focused {
-            Style::default().fg(Color::Black).bg(Color::White)
-        } else {
-            Style::default().fg(Color::Black).bg(Color::DarkGray)
-        };
+    fn header(&self) -> Row<'_> {
+        self.header_labels
+            .iter()
+            .copied()
+            .map(Cell::from)
+            .collect::<Row>()
+            .style(Style::default().dark_gray())
+    }
 
-        let table = self
-            .table
-            .clone()
-            .rows(rows)
-            .footer(self.footer.clone())
-            .row_highlight_style(selected_style)
-            .block(block);
-        StatefulWidget::render(table, area, buf, &mut self.table_state);
+    fn footer(&self) -> Row<'_> {
+        Row::new(vec![
+            Cell::from(""),
+            Cell::from(self.file_count_text.as_str()),
+            Cell::from("Total:"),
+            Cell::from(self.total_size_text.as_str()),
+        ])
+        .style(Style::default().dark_gray())
+    }
 
-        let scrollbar = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-        scrollbar.render(
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            buf,
-            &mut self.scroll_state,
+    fn visible_range(&mut self, area: Rect) -> VisibleRange {
+        let row_capacity = row_capacity(area);
+        if self.table_len == 0 || row_capacity == 0 {
+            *self.table_state.offset_mut() = 0;
+            return VisibleRange {
+                start: 0,
+                end: 0,
+                selected: None,
+                row_capacity,
+                scroll_position: 0,
+            };
+        }
+
+        let global_selected = self
+            .table_state
+            .selected()
+            .map(|i| i.min(self.table_len.saturating_sub(1)));
+        self.table_state.select(global_selected);
+
+        let start = clamp_offset(
+            self.table_state.offset(),
+            global_selected,
+            row_capacity,
+            self.table_len,
         );
+        *self.table_state.offset_mut() = start;
+
+        let end = start.saturating_add(row_capacity).min(self.table_len);
+        let selected = global_selected.and_then(|index| {
+            if (start..end).contains(&index) {
+                Some(index - start)
+            } else {
+                None
+            }
+        });
+
+        VisibleRange {
+            start,
+            end,
+            selected,
+            row_capacity,
+            scroll_position: global_selected.unwrap_or(start),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VisibleRange {
+    start: usize,
+    end: usize,
+    selected: Option<usize>,
+    row_capacity: usize,
+    scroll_position: usize,
+}
+
+fn row_capacity(area: Rect) -> usize {
+    area.height.saturating_sub(4) as usize
+}
+
+fn clamp_offset(
+    offset: usize,
+    selected: Option<usize>,
+    row_capacity: usize,
+    table_len: usize,
+) -> usize {
+    if table_len == 0 || row_capacity == 0 {
+        return 0;
+    }
+
+    let max_start = table_len.saturating_sub(row_capacity);
+    let mut start = offset.min(max_start);
+
+    if let Some(selected) = selected {
+        let selected = selected.min(table_len.saturating_sub(1));
+        if selected < start {
+            start = selected;
+        } else if selected >= start.saturating_add(row_capacity) {
+            start = selected.saturating_add(1).saturating_sub(row_capacity);
+        }
+    }
+
+    start.min(max_start)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(index: usize) -> DirTableEntry {
+        DirTableEntry::new(
+            Arc::new(PathBuf::from(format!("/tmp/file-{index}"))),
+            format!("file-{index}"),
+            index as u64,
+            None,
+            index,
+            false,
+        )
+    }
+
+    #[test]
+    fn row_capacity_accounts_for_table_chrome() {
+        assert_eq!(row_capacity(Rect::new(0, 0, 80, 8)), 4);
+        assert_eq!(row_capacity(Rect::new(0, 0, 80, 3)), 0);
+    }
+
+    #[test]
+    fn clamp_offset_keeps_selection_visible_below_viewport() {
+        assert_eq!(clamp_offset(0, Some(9), 4, 20), 6);
+    }
+
+    #[test]
+    fn clamp_offset_keeps_selection_visible_above_viewport() {
+        assert_eq!(clamp_offset(10, Some(3), 4, 20), 3);
+    }
+
+    #[test]
+    fn clamp_offset_limits_start_near_end() {
+        assert_eq!(clamp_offset(99, Some(99), 8, 100), 92);
+    }
+
+    #[test]
+    fn visible_range_uses_relative_selection() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        table.table_len = 20;
+        table.table_state.select(Some(9));
+
+        let visible = table.visible_range(Rect::new(0, 0, 80, 8));
+
+        assert_eq!(
+            visible,
+            VisibleRange {
+                start: 6,
+                end: 10,
+                selected: Some(3),
+                row_capacity: 4,
+                scroll_position: 9,
+            }
+        );
+        assert_eq!(table.table_state.offset(), 6);
+        assert_eq!(table.table_state.selected(), Some(9));
+    }
+
+    #[test]
+    fn visible_range_scroll_position_tracks_selected_row() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        table.table_len = 20;
+        table.table_state.select(Some(19));
+
+        let visible = table.visible_range(Rect::new(0, 0, 80, 8));
+
+        assert_eq!(visible.start, 16);
+        assert_eq!(visible.selected, Some(3));
+        assert_eq!(visible.scroll_position, 19);
+    }
+
+    #[test]
+    fn render_large_table_uses_visible_slice() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        table.current_entries = (0..10_000).map(entry).collect();
+        table.table_len = table.current_entries.len();
+        table.file_count_text = format!("Files: {}", table.table_len);
+        table.total_size_text = humansize::format_size(0u64, humansize::DECIMAL);
+        table.select_entry(5_000);
+
+        let area = Rect::new(0, 0, 80, 8);
+        let mut buf = Buffer::empty(area);
+        table.render(&mut buf, area, true, &HashSet::new());
+
+        let output = buf
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(output.contains("file-5000"));
+        assert!(!output.contains("file-0"));
+        assert_eq!(table.table_state.offset(), 4_997);
     }
 }
