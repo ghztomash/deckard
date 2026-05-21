@@ -28,7 +28,7 @@ jwalk = "0.8"
 image_hasher = "3.0"
 image = "0.25"
 
-symphonia = { version = "0.5", features = ["mp3", "aac", "opt-simd"] }
+symphonia = { version = "0.6", features = ["mp3", "aac", "opt-simd"] }
 rusty-chromaprint = "0.3"
 common-path = "1.0"
 pathdiff = "0.2"

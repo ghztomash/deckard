@@ -117,3 +117,20 @@ fn test_skip_empty_files() {
         .success()
         .stdout(predicate.not());
 }
+
+#[test]
+fn test_audio_duplicates() {
+    let mut cmd = Command::cargo_bin(env!("CARGO_PKG_NAME")).unwrap();
+    let base_path = test_files_path().join("audio");
+    let file_a = base_path.join("440_44khz_16b_mono.flac");
+    let file_b = base_path.join("440_44khz_24b_mono.flac");
+    let predicate = predicate::str::contains(file_a.to_string_lossy())
+        .and(predicate::str::contains(file_b.to_string_lossy()));
+
+    cmd.arg("--json")
+        .arg("--check_audio")
+        .args([base_path.as_os_str()])
+        .assert()
+        .success()
+        .stdout(predicate);
+}

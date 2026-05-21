@@ -13,11 +13,11 @@ use std::{
     path::Path,
 };
 use symphonia::core::{
-    audio::SampleBuffer,
-    codecs::{CODEC_TYPE_NULL, DecoderOptions},
+    codecs::audio::AudioDecoderOptions,
     errors::Error,
-    io::MediaSourceStream,
-    probe::Hint,
+    formats::{FormatOptions, TrackType, probe::Hint},
+    io::{MediaSourceStream, MediaSourceStreamOptions},
+    meta::MetadataOptions,
 };
 use tracing::warn;
 
@@ -158,64 +158,104 @@ pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
     }
 
     file.rewind()?;
-    let mss = MediaSourceStream::new(Box::new(file.try_clone()?), Default::default());
+    let mss = MediaSourceStream::new(
+        Box::new(file.try_clone()?),
+        MediaSourceStreamOptions::default(),
+    );
 
     // guess the format
-    let probe = symphonia::default::get_probe().format(
+    let mut format = symphonia::default::get_probe().probe(
         &hint,
         mss,
-        &Default::default(),
-        &Default::default(),
+        FormatOptions::default(),
+        MetadataOptions::default(),
     )?;
-    let mut format = probe.format;
 
     let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .default_track(TrackType::Audio)
         .ok_or(DeckardError::AudioTrackMissing)?;
-
-    let dec_opts: DecoderOptions = Default::default();
-    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &dec_opts)?;
-
     let track_id = track.id;
 
-    let sample_rate = 11025;
-    let channels = track
+    let audio_params = track
         .codec_params
-        .channels
-        .ok_or(DeckardError::AudioTrackMissing)?
-        .count() as u32;
+        .as_ref()
+        .and_then(|params| params.audio())
+        .ok_or(DeckardError::AudioTrackMissing)?;
+
+    let dec_opts = AudioDecoderOptions::default();
+    let mut decoder =
+        symphonia::default::get_codecs().make_audio_decoder(audio_params, &dec_opts)?;
 
     let mut printer = Fingerprinter::new(&Configuration::preset_test1());
-    printer.start(sample_rate, channels)?;
+    let mut printer_started = false;
+    let mut samples = Vec::new();
 
-    let mut sample_buf = None;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(Some(packet)) => packet,
+            Ok(None) | Err(Error::ResetRequired) => break,
+            Err(err) => return Err(err.into()),
+        };
 
-    while let Ok(packet) = format.next_packet() {
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
         match decoder.decode(&packet) {
             Ok(audio_buf) => {
-                if sample_buf.is_none() {
-                    let spec = *audio_buf.spec();
-                    let duration = audio_buf.capacity() as u64;
-                    sample_buf = Some(SampleBuffer::<i16>::new(duration, spec));
+                if !printer_started {
+                    let spec = audio_buf.spec();
+                    printer.start(spec.rate(), spec.channels().count() as u32)?;
+                    printer_started = true;
                 }
-
-                if let Some(buf) = &mut sample_buf {
-                    buf.copy_interleaved_ref(audio_buf);
-                    printer.consume(buf.samples());
-                }
+                audio_buf.copy_to_vec_interleaved::<i16>(&mut samples);
+                printer.consume(&samples);
             }
-            Err(Error::DecodeError(_)) => (),
-            Err(_) => break,
+            Err(Error::DecodeError(_)) | Err(Error::IoError(_)) => (),
+            Err(Error::ResetRequired) => break,
+            Err(err) => return Err(err.into()),
         }
+    }
+
+    if !printer_started {
+        return Err(DeckardError::AudioTrackMissing);
     }
 
     printer.finish();
 
     Ok(printer.fingerprint().to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn audio_fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("test_files")
+            .join("audio")
+            .join(name)
+    }
+
+    #[test]
+    fn audio_hash_matches_equivalent_flac_fixtures() {
+        let file_a_path = audio_fixture("440_44khz_16b_mono.flac");
+        let file_b_path = audio_fixture("440_44khz_24b_mono.flac");
+        let mut file_a = File::open(&file_a_path).unwrap();
+        let mut file_b = File::open(&file_b_path).unwrap();
+
+        let hash_a = get_audio_hash(&file_a_path, &mut file_a).unwrap();
+        let hash_b = get_audio_hash(&file_b_path, &mut file_b).unwrap();
+
+        assert!(!hash_a.is_empty());
+        assert!(!hash_b.is_empty());
+
+        let segments =
+            rusty_chromaprint::match_fingerprints(&hash_a, &hash_b, &Configuration::preset_test1())
+                .unwrap();
+
+        assert!(!segments.is_empty());
+    }
 }
