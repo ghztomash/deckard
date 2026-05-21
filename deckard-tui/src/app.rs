@@ -99,15 +99,15 @@ impl fmt::Display for Sorting {
     }
 }
 
-pub struct App<'a> {
+pub struct App {
     focused_window: FocusedWindow,
     should_exit: bool,
     dry_run: bool,
     remove_dirs: bool,
     file_index: Arc<RwLock<FileIndex>>,
-    file_table: FileTable<'a>,
-    clone_table: FileTable<'a>,
-    marked_table: FileTable<'a>,
+    file_table: FileTable,
+    clone_table: FileTable,
+    marked_table: FileTable,
     marked_files: HashSet<Arc<PathBuf>>,
     disk_usage_mode: bool,
     show_clones_table: bool,
@@ -172,7 +172,7 @@ impl fmt::Display for State {
     }
 }
 
-impl App<'_> {
+impl App {
     const FRAMES_PER_SECOND: f32 = 30.0;
 
     pub fn new(
@@ -1457,18 +1457,6 @@ async fn find_duplicates(
     })
     .await?;
     Ok(())
-}
-
-/// Make the path relative to the commont search parth
-pub fn format_path(path: &PathBuf, target_paths: &HashSet<PathBuf>) -> String {
-    let common_path = deckard::find_common_path(target_paths);
-
-    let relative_path = if let Some(common_path) = &common_path {
-        path.strip_prefix(common_path).unwrap_or(path)
-    } else {
-        path
-    };
-    relative_path.to_string_lossy().to_string()
 }
 
 /// helper function to create a centered rect using up certain percentage of the available rect `r`
