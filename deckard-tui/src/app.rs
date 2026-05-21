@@ -26,10 +26,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-use tokio::{
-    sync::mpsc::{UnboundedSender, unbounded_channel},
-    task::AbortHandle,
-};
+use tokio::{sync::watch, task::AbortHandle};
 use tracing::{debug, error, warn};
 
 #[derive(Debug, Default)]
@@ -275,7 +272,7 @@ impl App {
         let mut events = EventStream::new();
 
         // TODO: Handle graceful shutdown
-        let (tx, mut rx) = unbounded_channel::<State>();
+        let (tx, mut rx) = watch::channel(State::Idle);
         let file_index = self.file_index.clone();
         let task_cancel_flag = self.cancel_flag.clone();
         let disk_usage_mode = self.disk_usage_mode;
@@ -306,6 +303,7 @@ impl App {
             tokio::select! {
                 // interval timer
                 _ = interval.tick() => {
+                    should_redraw |= self.handle_state(rx.borrow_and_update().clone());
                     if should_redraw {
                         should_redraw = false;
                         let render_start = Instant::now();
@@ -319,13 +317,7 @@ impl App {
                 }
                 // terminal events
                 Some(Ok(event)) = events.next() => {
-                    self.handle_events(event)?;
-                    should_redraw = true;
-                },
-                // progress updates
-                Some(state) = rx.recv() => {
-                    self.handle_state(state);
-                    should_redraw = true;
+                    should_redraw |= self.handle_events(event)?;
                 },
                 else => break,
             }
@@ -345,117 +337,183 @@ impl App {
     }
 
     /// updates the application's state based on user input
-    fn handle_events(&mut self, event: Event) -> Result<()> {
+    fn handle_events(&mut self, event: Event) -> Result<bool> {
         match event {
             // it's important to check that the event is a key press event as
             // crossterm also emits key release and repeat events on Windows.
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => self
                 .handle_key_event(key_event)
                 .wrap_err_with(|| format!("handling key event failed:\n{key_event:#?}")),
-            _ => Ok(()),
+            Event::Resize(_, _) => Ok(true),
+            _ => Ok(false),
         }
     }
 
-    fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
-        match self.mode {
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<bool> {
+        let changed = match self.mode {
             Mode::Normal => {
-                match key_event.code {
+                let handled = match key_event.code {
                     // page move
                     KeyCode::Char('J') | KeyCode::Down
                         if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
                     {
-                        self.next_file(true)
+                        self.next_file(true);
+                        true
                     }
                     KeyCode::Char('K') | KeyCode::Up
                         if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
                     {
-                        self.previous_file(true)
+                        self.previous_file(true);
+                        true
                     }
                     // regular move
-                    KeyCode::Char('j') | KeyCode::Down => self.next_file(false),
-                    KeyCode::Char('k') | KeyCode::Up => self.previous_file(false),
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        self.next_file(false);
+                        true
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        self.previous_file(false);
+                        true
+                    }
 
                     KeyCode::Char('q') | KeyCode::Esc => self.exit(),
-                    KeyCode::Char('i') => self.toggle_info(),
-                    KeyCode::Char('o') => self.open_file(),
-                    KeyCode::Char('p') => self.open_path(),
-                    KeyCode::Char('D') | KeyCode::Delete => self.delete(),
-                    KeyCode::Char('T') | KeyCode::Backspace => self.trash(),
-                    KeyCode::Char('c') => self.toggle_show_clones_table(),
-                    KeyCode::Char(' ') => self.mark(),
-                    KeyCode::Char('a') => self.mark_all_clones(),
-                    KeyCode::Char('A') => self.clear_marked(),
-                    KeyCode::Char('m') => self.toggle_show_marked_table(),
-                    KeyCode::Char('y') => self.copy_path(),
-                    KeyCode::Char('.') => self.toggle_more_keys(),
+                    KeyCode::Char('i') => {
+                        self.toggle_info();
+                        true
+                    }
+                    KeyCode::Char('o') => {
+                        self.open_file();
+                        true
+                    }
+                    KeyCode::Char('p') => {
+                        self.open_path();
+                        true
+                    }
+                    KeyCode::Char('D') | KeyCode::Delete => {
+                        self.delete();
+                        true
+                    }
+                    KeyCode::Char('T') | KeyCode::Backspace => {
+                        self.trash();
+                        true
+                    }
+                    KeyCode::Char('c') => {
+                        self.toggle_show_clones_table();
+                        true
+                    }
+                    KeyCode::Char(' ') => {
+                        self.mark();
+                        true
+                    }
+                    KeyCode::Char('a') => {
+                        self.mark_all_clones();
+                        true
+                    }
+                    KeyCode::Char('A') => {
+                        self.clear_marked();
+                        true
+                    }
+                    KeyCode::Char('m') => {
+                        self.toggle_show_marked_table();
+                        true
+                    }
+                    KeyCode::Char('y') => {
+                        self.copy_path();
+                        true
+                    }
+                    KeyCode::Char('.') => {
+                        self.toggle_more_keys();
+                        true
+                    }
                     KeyCode::Char('?') => self.toggle_about(),
-                    KeyCode::Char('s') => self.cycle_sort_by(),
-                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => self.focus_next_table(),
+                    KeyCode::Char('s') => {
+                        self.cycle_sort_by();
+                        true
+                    }
+                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
+                        self.focus_next_table();
+                        true
+                    }
                     KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
-                        self.focus_previus_table()
+                        self.focus_previus_table();
+                        true
                     }
                     KeyCode::Char(':') => self.enter_command_mode(),
-                    _ => {}
+                    _ => false,
+                };
+                if handled {
+                    self.clear_warning();
                 }
-                self.clear_warning();
+                handled
             }
-            Mode::Command => {
-                match key_event.code {
-                    KeyCode::Esc => {
-                        self.command_processor.reset_command();
-                        self.exit_command_mode();
-                    }
-                    KeyCode::Enter => {
-                        self.handle_command();
-                    } // process
-                    KeyCode::Backspace => {
-                        self.command_processor.delete_char();
-                    } // delete
-                    KeyCode::Tab => {} // complete
-                    KeyCode::Up => {
-                        self.command_processor.last_command();
-                    } // last command
-                    KeyCode::Down => {
-                        self.command_processor.next_command();
-                    } // next command
-                    KeyCode::Left => {
-                        self.command_processor.move_cursor_left();
-                    } // last char
-                    KeyCode::Right => {
-                        self.command_processor.move_cursor_right();
-                    } // next char
-                    KeyCode::Char(c) => {
-                        self.command_processor.enter_char(c);
-                    }
-                    _ => {}
+            Mode::Command => match key_event.code {
+                KeyCode::Esc => {
+                    self.command_processor.reset_command();
+                    self.exit_command_mode();
+                    true
                 }
-            }
+                KeyCode::Enter => {
+                    self.handle_command();
+                    true
+                }
+                KeyCode::Backspace => {
+                    self.command_processor.delete_char();
+                    true
+                }
+                KeyCode::Tab => false,
+                KeyCode::Up => {
+                    self.command_processor.last_command();
+                    true
+                }
+                KeyCode::Down => {
+                    self.command_processor.next_command();
+                    true
+                }
+                KeyCode::Left => {
+                    self.command_processor.move_cursor_left();
+                    true
+                }
+                KeyCode::Right => {
+                    self.command_processor.move_cursor_right();
+                    true
+                }
+                KeyCode::Char(c) => {
+                    self.command_processor.enter_char(c);
+                    true
+                }
+                _ => false,
+            },
         };
-        Ok(())
+        Ok(changed)
     }
 
-    fn toggle_about(&mut self) {
+    fn toggle_about(&mut self) -> bool {
         if matches!(self.focused_window, FocusedWindow::Popup) {
             self.focused_window = FocusedWindow::Files;
         } else {
             self.focused_window = FocusedWindow::Popup;
         }
+        true
     }
 
-    fn exit(&mut self) {
+    fn exit(&mut self) -> bool {
         self.cancel_flag.store(true, Ordering::Relaxed);
         if let Some(abort_handle) = &self.abort_handle {
             abort_handle.abort();
         }
         self.should_exit = true;
+        true
     }
 
-    fn enter_command_mode(&mut self) {
+    fn enter_command_mode(&mut self) -> bool {
         if matches!(self.mode, Mode::Normal)
             && matches!(self.current_state, State::Done)
             && !matches!(self.focused_window, FocusedWindow::Popup)
         {
             self.mode = Mode::Command;
+            true
+        } else {
+            false
         }
     }
 
@@ -1393,18 +1451,25 @@ impl App {
         }
     }
 
-    fn handle_state(&mut self, state: State) {
+    fn handle_state(&mut self, state: State) -> bool {
+        if self.current_state == state {
+            return false;
+        }
+
+        let reached_done = state == State::Done;
         self.current_state = state;
 
-        if self.current_state == State::Done {
+        if reached_done {
             self.update_tables();
         }
+
+        true
     }
 }
 
 async fn index_files(
     file_index: Arc<RwLock<FileIndex>>,
-    tx: UnboundedSender<State>,
+    tx: watch::Sender<State>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
@@ -1422,7 +1487,7 @@ async fn index_files(
 
 async fn process_files(
     file_index: Arc<RwLock<FileIndex>>,
-    tx: UnboundedSender<State>,
+    tx: watch::Sender<State>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
     // If the I/O or hashing is heavy, prefer spawn_blocking:
@@ -1442,7 +1507,7 @@ async fn process_files(
 
 async fn find_duplicates(
     file_index: Arc<RwLock<FileIndex>>,
-    tx: UnboundedSender<State>,
+    tx: watch::Sender<State>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
