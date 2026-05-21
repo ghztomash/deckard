@@ -235,7 +235,7 @@ pub fn read_id3_tags(file: &mut File) -> Option<AudioTags> {
     tags.comment = file_tag.comment().map(|b| b.to_string());
 
     tags.bpm = file_tag
-        .get_string(&lofty::tag::ItemKey::Bpm)
+        .get_string(lofty::tag::ItemKey::Bpm)
         .map(|b| b.to_string());
 
     let properties = tagged_file.properties();
