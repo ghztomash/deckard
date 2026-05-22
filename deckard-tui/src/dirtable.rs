@@ -154,6 +154,7 @@ pub struct DirTable {
     mark_marked: bool,
     show_clone_count: bool,
     flatten_dirs: bool,
+    common_path: Option<PathBuf>,
     total_size: u64,
     selected_dir_history: Vec<usize>,
     header_labels: Vec<&'static str>,
@@ -193,6 +194,7 @@ impl DirTable {
             dir_index: BTreeMap::new(),
             current_dir: None,
             flatten_dirs,
+            common_path: None,
             selected_dir_history: Vec::new(),
             header_labels: header_str,
             widths,
@@ -214,15 +216,18 @@ impl DirTable {
         self.selected_path = None;
         self.current_dir = None;
         self.selected_path_is_dir = false;
+        self.common_path = None;
         self.scroll_state = ScrollbarState::new(0);
         self.selected_dir_history = Vec::new();
         self.file_count_text = String::new();
         self.total_size_text = String::new();
     }
 
-    pub fn current_paths(&self) -> Vec<Arc<PathBuf>> {
+    /// Returns paths for currently visible file rows only.
+    pub fn current_file_paths(&self) -> Vec<Arc<PathBuf>> {
         self.current_entries
             .iter()
+            .filter(|e| !e.is_dir)
             .map(|e| e.path.clone())
             .collect()
     }
@@ -364,7 +369,7 @@ impl DirTable {
         sort_by: Option<&Sorting>,
     ) {
         // Lock the FileIndex only once, then copy out the data we need:
-        let (mut entries, total_size) = {
+        let (mut entries, total_size, common_path) = {
             let fi = file_index.read().unwrap();
             let common_path = deckard::find_common_path(&fi.dirs);
 
@@ -389,8 +394,9 @@ impl DirTable {
                 ));
             }
 
-            (entries_vec, total_size_acc)
+            (entries_vec, total_size_acc, common_path)
         };
+        self.common_path = common_path;
 
         if self.flatten_dirs {
             // Sort the paths
@@ -612,10 +618,15 @@ impl DirTable {
 
     fn entry_is_marked(&self, entry: &DirTableEntry, marked_files: &HashSet<Arc<PathBuf>>) -> bool {
         if entry.is_dir {
-            marked_files
-                .iter()
-                // TODO: fix this abomination
-                .any(|m| m.to_string_lossy().contains(&*entry.path.to_string_lossy()))
+            marked_files.iter().any(|marked_file| {
+                let marked_file = self
+                    .common_path
+                    .as_ref()
+                    .and_then(|common_path| marked_file.strip_prefix(common_path).ok())
+                    .unwrap_or(marked_file.as_path());
+
+                marked_file.starts_with(entry.path.as_path())
+            })
         } else {
             marked_files.contains(&entry.path)
         }
@@ -759,6 +770,69 @@ mod tests {
             index,
             false,
         )
+    }
+
+    fn dir_entry(path: &str) -> DirTableEntry {
+        DirTableEntry::new(
+            Arc::new(PathBuf::from(path)),
+            path.to_string(),
+            0,
+            None,
+            0,
+            true,
+        )
+    }
+
+    fn marked_files(paths: &[&str]) -> HashSet<Arc<PathBuf>> {
+        paths
+            .iter()
+            .map(|path| Arc::new(PathBuf::from(path)))
+            .collect()
+    }
+
+    fn table_with_common_path(common_path: &str) -> DirTable {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        table.common_path = Some(PathBuf::from(common_path));
+        table
+    }
+
+    #[test]
+    fn marks_only_real_ancestor_directories() {
+        let table = table_with_common_path("/home/user/deckard");
+        let marked = marked_files(&["/home/user/deckard/deckard-tui/Cargo.toml"]);
+
+        assert!(table.entry_is_marked(&dir_entry("deckard-tui"), &marked));
+        assert!(!table.entry_is_marked(&dir_entry("deckard"), &marked));
+    }
+
+    #[test]
+    fn root_files_do_not_mark_substring_named_dirs() {
+        let table = table_with_common_path("/home/user/deckard");
+        let marked = marked_files(&["/home/user/deckard/.gitignore"]);
+
+        assert!(!table.entry_is_marked(&dir_entry("deckard"), &marked));
+        assert!(!table.entry_is_marked(&dir_entry(".git"), &marked));
+    }
+
+    #[test]
+    fn nested_files_mark_component_ancestors() {
+        let table = table_with_common_path("/home/user/deckard");
+        let marked = marked_files(&["/home/user/deckard/deckard/src/lib.rs"]);
+
+        assert!(table.entry_is_marked(&dir_entry("deckard"), &marked));
+        assert!(table.entry_is_marked(&dir_entry("deckard/src"), &marked));
+    }
+
+    #[test]
+    fn current_file_paths_excludes_directory_rows() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        let file_path = Arc::new(PathBuf::from("/tmp/file"));
+        table.current_entries = vec![
+            dir_entry("deckard"),
+            DirTableEntry::new(file_path.clone(), "file".to_string(), 0, None, 0, false),
+        ];
+
+        assert_eq!(table.current_file_paths(), vec![file_path]);
     }
 
     #[test]
