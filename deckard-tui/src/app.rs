@@ -1,12 +1,13 @@
 use crate::command::{Command, CommandProcessor};
 use crate::constants;
-use crate::dirtable::DirTable;
+use crate::dirtable::{DirTable, DirectoryInfo};
 use crate::table::FileTable;
 use arboard::Clipboard;
 use chrono::{DateTime, Local};
 use color_eyre::eyre::{Result, WrapErr};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use deckard::config::SearchConfig;
+use deckard::file::FileEntry;
 use deckard::index::FileIndex;
 use futures::StreamExt;
 use ratatui::widgets::Padding;
@@ -25,7 +26,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use tokio::{sync::watch, task::AbortHandle};
 use tracing::{debug, error, warn};
@@ -1049,154 +1050,7 @@ impl App {
     }
 
     fn render_file_info(&self, buf: &mut Buffer, area: Rect) {
-        let selected_file = self.active_selected_file();
-        let maybe_entry = {
-            if let Some(ref path) = selected_file {
-                let fi = self.file_index.read().unwrap();
-                fi.files.get(path).cloned()
-            } else {
-                None
-            }
-        };
-
-        let info_lines = if let Some(file_entry) = maybe_entry {
-            let mut lines = vec![
-                Line::from(vec![
-                    "name: ".into(),
-                    file_entry
-                        .name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string()
-                        .yellow(),
-                ]),
-                Line::from(vec![
-                    "size: ".into(),
-                    humansize::format_size(file_entry.size, humansize::DECIMAL)
-                        .to_string()
-                        .blue(),
-                    " (".into(),
-                    file_entry.size.to_string().blue(),
-                    ")".into(),
-                ]),
-                Line::from(vec![
-                    "created: ".into(),
-                    file_entry
-                        .created
-                        .map(|t| {
-                            DateTime::<Local>::from(t)
-                                .format("%d/%m/%Y %H:%M:%S %Z")
-                                .to_string()
-                        })
-                        .unwrap_or_default()
-                        .red(),
-                ]),
-                Line::from(vec![
-                    "modified: ".into(),
-                    file_entry
-                        .modified
-                        .map(|t| {
-                            DateTime::<Local>::from(t)
-                                .format("%d/%m/%Y %H:%M:%S %Z")
-                                .to_string()
-                        })
-                        .unwrap_or_default()
-                        .red(),
-                ]),
-                //TODO: Fill in file info
-                // Line::from(vec![
-                //     "mime: ".into(),
-                //     file_entry
-                //         .mime_type
-                //         .as_ref()
-                //         .unwrap_or(&"none".to_string())
-                //         .to_string()
-                //         .cyan(),
-                // ]),
-                Line::from(vec![
-                    "hash: ".into(),
-                    match &file_entry.hash {
-                        Some(h) => h.to_string().cyan(),
-                        None => "none".into(),
-                    },
-                ]),
-                Line::from(vec![
-                    "path: ".into(),
-                    deckard::to_relative_path(&file_entry.path)
-                        .display()
-                        .to_string()
-                        .yellow(),
-                ]),
-            ];
-
-            if let Some(audio_hash) = &file_entry.audio_hash {
-                let mut hasher = DefaultHasher::new();
-                audio_hash.hash(&mut hasher);
-                lines.push(Line::from(vec![
-                    "audio_hash: ".into(),
-                    format!("{:x}", hasher.finish()).to_string().cyan(),
-                ]));
-            }
-
-            if let Some(image_hash) = &file_entry.image_hash {
-                let mut hasher = DefaultHasher::new();
-                image_hash.hash(&mut hasher);
-                lines.push(Line::from(vec![
-                    "image_hash: ".into(),
-                    format!("{:x}", hasher.finish()).to_string().cyan(),
-                ]));
-            }
-
-            // TODO: Read audio tags
-            // if let Some(audio_tags) = &file_entry.audio_tags {
-            //     let mut tag_lines = vec![];
-            //     if let Some(v) = &audio_tags.title {
-            //         tag_lines.push(Line::from(vec!["title: ".into(), v.clone().yellow()]));
-            //     }
-            //     if let Some(v) = &audio_tags.artist {
-            //         tag_lines.push(Line::from(vec!["artist: ".into(), v.clone().yellow()]));
-            //     }
-            //     if let Some(v) = &audio_tags.album {
-            //         tag_lines.push(Line::from(vec!["album: ".into(), v.clone().yellow()]));
-            //     }
-            //     if let Some(v) = &audio_tags.genre {
-            //         tag_lines.push(Line::from(vec!["genre: ".into(), v.clone().yellow()]));
-            //     }
-            //     if let Some(v) = &audio_tags.rating {
-            //         tag_lines.push(Line::from(vec!["rating: ".into(), v.clone().yellow()]));
-            //     }
-            //     if let Some(v) = &audio_tags.bpm {
-            //         tag_lines.push(Line::from(vec!["bpm: ".into(), v.clone().yellow()]));
-            //     }
-            //     if let Some(v) = &audio_tags.duration {
-            //         tag_lines.push(Line::from(vec![
-            //             "duration: ".into(),
-            //             v.to_string().yellow(),
-            //         ]));
-            //     }
-            //     if let Some(v) = &audio_tags.bitrate {
-            //         tag_lines.push(Line::from(vec!["bitrate: ".into(), v.clone().yellow()]));
-            //     }
-            //     if let Some(v) = &audio_tags.sample_rate {
-            //         tag_lines.push(Line::from(vec!["sample_rate: ".into(), v.clone().yellow()]));
-            //     }
-            //     if let Some(v) = &audio_tags.comment {
-            //         tag_lines.push(Line::from(vec![
-            //             "comment: ".into(),
-            //             v.clone()
-            //                 .chars()
-            //                 .filter(|c| !c.is_whitespace() || *c == ' ')
-            //                 .collect::<String>()
-            //                 .yellow(),
-            //         ]));
-            //     }
-            //     lines.extend(tag_lines);
-            // }
-
-            lines
-        } else {
-            vec![Line::from(vec!["none".into()])]
-        };
+        let info_lines = self.selected_info_lines();
 
         let file_info_text = Text::from(info_lines);
 
@@ -1210,6 +1064,34 @@ impl App {
                     .border_style(Style::new()),
             );
         summary.render(area, buf)
+    }
+
+    fn selected_info_lines(&self) -> Vec<Line<'static>> {
+        if let Some(file_entry) = self.selected_file_entry() {
+            file_info_lines(&file_entry)
+        } else if let Some(dir_info) = self.selected_directory_info() {
+            directory_info_lines(&dir_info)
+        } else {
+            vec![Line::from(vec!["none".into()])]
+        }
+    }
+
+    fn selected_file_entry(&self) -> Option<FileEntry> {
+        let selected_file = self.active_selected_file()?;
+        self.file_index
+            .read()
+            .unwrap()
+            .files
+            .get(&selected_file)
+            .cloned()
+    }
+
+    fn selected_directory_info(&self) -> Option<DirectoryInfo> {
+        if matches!(self.focused_window, FocusedWindow::Files) {
+            self.file_table.selected_dir_info()
+        } else {
+            None
+        }
     }
 
     fn render_progress_bar(&self, buf: &mut Buffer, area: Rect) {
@@ -1616,6 +1498,115 @@ fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     area
 }
 
+fn file_info_lines(file_entry: &FileEntry) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(vec![
+            "name: ".into(),
+            file_entry
+                .name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+                .yellow(),
+        ]),
+        Line::from(vec![
+            "size: ".into(),
+            humansize::format_size(file_entry.size, humansize::DECIMAL)
+                .to_string()
+                .blue(),
+            " (".into(),
+            file_entry.size.to_string().blue(),
+            ")".into(),
+        ]),
+        Line::from(vec![
+            "created: ".into(),
+            format_system_time(file_entry.created).red(),
+        ]),
+        Line::from(vec![
+            "modified: ".into(),
+            format_system_time(file_entry.modified).red(),
+        ]),
+        Line::from(vec![
+            "hash: ".into(),
+            match &file_entry.hash {
+                Some(h) => h.to_string().cyan(),
+                None => "none".into(),
+            },
+        ]),
+        Line::from(vec![
+            "path: ".into(),
+            deckard::to_relative_path(&file_entry.path)
+                .display()
+                .to_string()
+                .yellow(),
+        ]),
+    ];
+
+    if let Some(audio_hash) = &file_entry.audio_hash {
+        let mut hasher = DefaultHasher::new();
+        audio_hash.hash(&mut hasher);
+        lines.push(Line::from(vec![
+            "audio_hash: ".into(),
+            format!("{:x}", hasher.finish()).to_string().cyan(),
+        ]));
+    }
+
+    if let Some(image_hash) = &file_entry.image_hash {
+        let mut hasher = DefaultHasher::new();
+        image_hash.hash(&mut hasher);
+        lines.push(Line::from(vec![
+            "image_hash: ".into(),
+            format!("{:x}", hasher.finish()).to_string().cyan(),
+        ]));
+    }
+
+    lines
+}
+
+fn directory_info_lines(dir_info: &DirectoryInfo) -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec!["type: ".into(), "directory".light_blue()]),
+        Line::from(vec!["name: ".into(), dir_info.name.clone().yellow()]),
+        Line::from(vec![
+            "files: ".into(),
+            dir_info.file_count.to_string().blue(),
+        ]),
+        Line::from(vec![
+            "directories: ".into(),
+            dir_info.subdirectory_count.to_string().blue(),
+        ]),
+        Line::from(vec![
+            "size: ".into(),
+            humansize::format_size(dir_info.total_size, humansize::DECIMAL)
+                .to_string()
+                .blue(),
+            " (".into(),
+            dir_info.total_size.to_string().blue(),
+            ")".into(),
+        ]),
+        Line::from(vec![
+            "modified: ".into(),
+            format_system_time(dir_info.modified).red(),
+        ]),
+        Line::from(vec![
+            "path: ".into(),
+            deckard::to_relative_path(&dir_info.path)
+                .display()
+                .to_string()
+                .yellow(),
+        ]),
+    ]
+}
+
+fn format_system_time(time: Option<SystemTime>) -> String {
+    time.map(|time| {
+        DateTime::<Local>::from(time)
+            .format("%d/%m/%Y %H:%M:%S %Z")
+            .to_string()
+    })
+    .unwrap_or_default()
+}
+
 fn toggle_marked_paths(marked_files: &mut HashSet<Arc<PathBuf>>, paths: &[Arc<PathBuf>]) -> bool {
     if paths.is_empty() {
         return false;
@@ -1642,6 +1633,17 @@ mod tests {
 
     fn path_arc(path: &str) -> Arc<PathBuf> {
         Arc::new(PathBuf::from(path))
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    fn line_texts(lines: &[Line<'_>]) -> Vec<String> {
+        lines.iter().map(line_text).collect()
     }
 
     fn app_with_nested_file_table() -> App {
@@ -1787,5 +1789,17 @@ mod tests {
         assert!(app.marked_files.contains(&direct));
         assert!(app.marked_files.contains(&nested));
         assert!(app.marked_files.contains(&sibling));
+    }
+
+    #[test]
+    fn selected_info_lines_shows_directory_details_for_selected_directory() {
+        let (app, _direct, _nested, _sibling) = app_with_selected_directory();
+
+        let texts = line_texts(&app.selected_info_lines());
+
+        assert!(texts.contains(&"type: directory".to_string()));
+        assert!(texts.contains(&"name: folder".to_string()));
+        assert!(texts.contains(&"files: 2".to_string()));
+        assert!(!texts.contains(&"none".to_string()));
     }
 }

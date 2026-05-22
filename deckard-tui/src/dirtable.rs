@@ -141,6 +141,23 @@ impl DirView {
     }
 }
 
+/// Summary details for the selected directory row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DirectoryInfo {
+    /// Full or display-resolved directory path.
+    pub(crate) path: PathBuf,
+    /// Directory name.
+    pub(crate) name: String,
+    /// Recursive count of files represented by the current dirview.
+    pub(crate) file_count: usize,
+    /// Recursive count of subdirectories represented by the current dirview.
+    pub(crate) subdirectory_count: usize,
+    /// Recursive size of files represented by the current dirview.
+    pub(crate) total_size: u64,
+    /// Latest modified time among represented child files.
+    pub(crate) modified: Option<SystemTime>,
+}
+
 #[derive(Debug, Default)]
 pub struct DirTable {
     pub table_state: TableState,
@@ -589,6 +606,42 @@ impl DirTable {
             .collect()
     }
 
+    /// Returns summary details for the selected directory row.
+    pub(crate) fn selected_dir_info(&self) -> Option<DirectoryInfo> {
+        let selected_dir = self.selected_dir_path()?;
+        let view = self.dir_index.get(selected_dir.as_path())?;
+        let path = self.resolved_dir_path(selected_dir.as_path());
+        let name = selected_dir
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| selected_dir.to_string_lossy().to_string());
+        let subdirectory_count = self
+            .dir_index
+            .keys()
+            .filter(|dir_path| {
+                dir_path.starts_with(selected_dir.as_path())
+                    && dir_path.as_path() != selected_dir.as_path()
+            })
+            .count();
+        let modified = view.entries.iter().filter_map(|entry| entry.date).max();
+
+        Some(DirectoryInfo {
+            path,
+            name,
+            file_count: view.file_count,
+            subdirectory_count,
+            total_size: view.total_size,
+            modified,
+        })
+    }
+
+    fn resolved_dir_path(&self, selected_dir: &Path) -> PathBuf {
+        self.common_path
+            .as_ref()
+            .map(|common_path| common_path.join(selected_dir))
+            .unwrap_or_else(|| selected_dir.to_path_buf())
+    }
+
     pub fn render(
         &mut self,
         buf: &mut Buffer,
@@ -804,12 +857,39 @@ mod tests {
         DirTableEntry::new(path, display_path.to_string(), 0, None, 0, false)
     }
 
+    fn file_entry_with_metadata(
+        path: &str,
+        display_path: &str,
+        size: u64,
+        date: Option<SystemTime>,
+    ) -> DirTableEntry {
+        DirTableEntry::new(
+            Arc::new(PathBuf::from(path)),
+            display_path.to_string(),
+            size,
+            date,
+            0,
+            false,
+        )
+    }
+
     fn dir_entry(path: &str) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(path)),
             path.to_string(),
             0,
             None,
+            0,
+            true,
+        )
+    }
+
+    fn dir_entry_with_date(path: &str, date: Option<SystemTime>) -> DirTableEntry {
+        DirTableEntry::new(
+            Arc::new(PathBuf::from(path)),
+            path.to_string(),
+            0,
+            date,
             0,
             true,
         )
@@ -829,11 +909,20 @@ mod tests {
     }
 
     fn dir_view(path: &str, entries: Vec<DirTableEntry>) -> DirView {
+        dir_view_with_stats(path, entries, 0, 0)
+    }
+
+    fn dir_view_with_stats(
+        path: &str,
+        entries: Vec<DirTableEntry>,
+        file_count: usize,
+        total_size: u64,
+    ) -> DirView {
         DirView {
             path: Arc::new(PathBuf::from(path)),
             entries,
-            file_count: 0,
-            total_size: 0,
+            file_count,
+            total_size,
         }
     }
 
@@ -973,6 +1062,101 @@ mod tests {
         table.select_first();
 
         assert!(table.selected_dir_file_paths().is_empty());
+    }
+
+    #[test]
+    fn selected_dir_info_returns_stats_for_selected_directory() {
+        let older = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
+        let newer = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(20);
+        let mut table = table_with_common_path("/tmp/root");
+
+        table.current_entries = vec![dir_entry("folder")];
+        table.table_len = table.current_entries.len();
+        table.dir_index.insert(
+            PathBuf::from("folder"),
+            dir_view_with_stats(
+                "folder",
+                vec![
+                    file_entry_with_metadata(
+                        "/tmp/root/folder/direct.txt",
+                        "folder/direct.txt",
+                        15,
+                        Some(older),
+                    ),
+                    dir_entry_with_date("folder/sub", Some(newer)),
+                ],
+                2,
+                35,
+            ),
+        );
+        table.dir_index.insert(
+            PathBuf::from("folder/sub"),
+            dir_view_with_stats(
+                "folder/sub",
+                vec![file_entry_with_metadata(
+                    "/tmp/root/folder/sub/nested.txt",
+                    "folder/sub/nested.txt",
+                    20,
+                    Some(newer),
+                )],
+                1,
+                20,
+            ),
+        );
+        table.select_first();
+
+        assert_eq!(
+            table.selected_dir_info(),
+            Some(DirectoryInfo {
+                path: PathBuf::from("/tmp/root/folder"),
+                name: "folder".to_string(),
+                file_count: 2,
+                subdirectory_count: 1,
+                total_size: 35,
+                modified: Some(newer),
+            })
+        );
+    }
+
+    #[test]
+    fn selected_dir_info_counts_nested_subdirectories_component_safely() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+
+        table.current_entries = vec![dir_entry("folder")];
+        table.table_len = table.current_entries.len();
+        table
+            .dir_index
+            .insert(PathBuf::from("folder"), dir_view("folder", vec![]));
+        table
+            .dir_index
+            .insert(PathBuf::from("folder/sub"), dir_view("folder/sub", vec![]));
+        table.dir_index.insert(
+            PathBuf::from("folder/sub/nested"),
+            dir_view("folder/sub/nested", vec![]),
+        );
+        table.dir_index.insert(
+            PathBuf::from("folder-sibling"),
+            dir_view("folder-sibling", vec![]),
+        );
+        table.select_first();
+
+        let info = table.selected_dir_info().unwrap();
+
+        assert_eq!(info.subdirectory_count, 2);
+    }
+
+    #[test]
+    fn selected_dir_info_is_none_without_selected_directory() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        let file_path = Arc::new(PathBuf::from("/tmp/root/file.txt"));
+        table.current_entries = vec![file_entry(file_path, "file.txt")];
+        table.table_len = table.current_entries.len();
+
+        assert!(table.selected_dir_info().is_none());
+
+        table.select_first();
+
+        assert!(table.selected_dir_info().is_none());
     }
 
     #[test]
