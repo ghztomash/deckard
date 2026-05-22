@@ -12,7 +12,7 @@ use ratatui::{
     },
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::Instant,
@@ -20,16 +20,23 @@ use std::{
 };
 use tracing::debug;
 
+#[derive(Debug, Clone)]
+struct FileRecord {
+    path: Arc<PathBuf>,
+    size: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    clone_count: usize,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct DirTableEntry {
     path: Arc<PathBuf>,
-    relative_path: PathBuf,
     display_text: String,
     name_text: String,
     size: u64,
     size_text: String,
     date: Option<SystemTime>,
-    created: Option<SystemTime>,
     date_text: String,
     clone_count: usize,
     clone_count_text: String,
@@ -42,7 +49,7 @@ impl DirTableEntry {
         relative_path: PathBuf,
         size: u64,
         date: Option<SystemTime>,
-        created: Option<SystemTime>,
+        _created: Option<SystemTime>,
         clone_count: usize,
         is_dir: bool,
     ) -> Self {
@@ -61,18 +68,28 @@ impl DirTableEntry {
 
         Self {
             path,
-            relative_path,
             display_text,
             name_text,
             size,
             size_text,
             date,
-            created,
             date_text,
             clone_count,
             clone_count_text,
             is_dir,
         }
+    }
+
+    fn from_file_record(record: &FileRecord, relative_path: PathBuf) -> Self {
+        Self::new(
+            record.path.clone(),
+            relative_path,
+            record.size,
+            record.modified,
+            record.created,
+            record.clone_count,
+            false,
+        )
     }
 
     fn to_row(
@@ -115,26 +132,17 @@ impl DirTableEntry {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct DirView {
-    pub path: Arc<PathBuf>,
-    pub entries: Vec<DirTableEntry>,
-
-    /// Count of files including subdirectories
-    pub file_count: usize,
-    /// Count of subdirectories including nested subdirectories
-    pub subdirectory_count: usize,
-    /// Sum of sizes of files including subdirectories
-    pub total_size: u64,
-    /// Latest modified time among files including subdirectories
-    pub modified: Option<SystemTime>,
-    pub created: Option<SystemTime>,
-}
-
-impl DirView {
-    pub fn parent(&self) -> Option<&Path> {
-        self.path.parent()
-    }
+#[derive(Clone, Debug, Default)]
+struct DirectoryNode {
+    parent: Option<PathBuf>,
+    child_dirs: HashSet<PathBuf>,
+    direct_files: Vec<FileRecord>,
+    direct_size: u64,
+    file_count: usize,
+    subdirectory_count: usize,
+    total_size: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
 }
 
 /// Summary details for the selected directory row.
@@ -144,11 +152,11 @@ pub(crate) struct DirectoryInfo {
     pub(crate) path: PathBuf,
     /// Directory name.
     pub(crate) name: String,
-    /// Recursive count of files represented by the current dirview.
+    /// Recursive count of files represented by the current directory.
     pub(crate) file_count: usize,
-    /// Recursive count of subdirectories represented by the current dirview.
+    /// Recursive count of subdirectories represented by the current directory.
     pub(crate) subdirectory_count: usize,
-    /// Recursive size of files represented by the current dirview.
+    /// Recursive size of files represented by the current directory.
     pub(crate) total_size: u64,
     /// Latest modified time among represented child files.
     pub(crate) modified: Option<SystemTime>,
@@ -159,8 +167,9 @@ pub(crate) struct DirectoryInfo {
 pub struct DirTable {
     pub table_state: TableState,
     pub table_len: usize,
-    dir_index: BTreeMap<PathBuf, DirView>,
+    dir_nodes: HashMap<PathBuf, DirectoryNode>,
     current_dir: Option<PathBuf>,
+    current_sort: Option<Sorting>,
     current_entries: Vec<DirTableEntry>,
     selected_path: Option<Arc<PathBuf>>,
     selected_path_is_dir: bool,
@@ -205,8 +214,9 @@ impl DirTable {
             scroll_state: ScrollbarState::new(0),
             mark_marked,
             show_clone_count,
-            dir_index: BTreeMap::new(),
+            dir_nodes: HashMap::new(),
             current_dir: None,
+            current_sort: None,
             flatten_dirs,
             common_path: None,
             selected_dir_history: Vec::new(),
@@ -226,9 +236,10 @@ impl DirTable {
         self.table_len = 0;
         self.total_size = 0;
         self.current_entries = Vec::new();
-        self.dir_index = BTreeMap::new();
+        self.dir_nodes = HashMap::new();
         self.selected_path = None;
         self.current_dir = None;
+        self.current_sort = None;
         self.selected_path_is_dir = false;
         self.common_path = None;
         self.scroll_state = ScrollbarState::new(0);
@@ -246,188 +257,6 @@ impl DirTable {
             .collect()
     }
 
-    fn update_dirview(&mut self, files: &Vec<DirTableEntry>, sort_by: Option<&Sorting>) {
-        let build_start = Instant::now();
-
-        // Temporary accumulator per directory during build.
-        #[derive(Debug, Default, Clone)]
-        struct Acc {
-            subdirs: BTreeSet<PathBuf>, // deterministic, deduped
-            files: Vec<DirTableEntry>,  // direct files
-            direct_count: usize,
-            direct_size: u64,
-            total_count: usize, // recursive
-            total_size: u64,    // recursive
-            date: Option<SystemTime>,
-            created: Option<SystemTime>,
-        }
-
-        let mut acc_map: BTreeMap<PathBuf, Acc> = BTreeMap::new();
-
-        for file in files {
-            let path = file.relative_path.clone();
-            if let Some(parent) = path.parent() {
-                let parent = parent.to_path_buf();
-                let size = file.size;
-                let date = file.date;
-                let created = file.created;
-
-                // Insert file into its parent dir
-                let par_acc = acc_map.entry(parent.clone()).or_default();
-                par_acc.files.push(file.to_owned());
-                par_acc.direct_count += 1;
-                par_acc.direct_size += size;
-
-                if let Some(file_date) = date {
-                    if let Some(par_date) = par_acc.date {
-                        if par_date < file_date {
-                            par_acc.date = Some(file_date);
-                        }
-                    } else {
-                        par_acc.date = Some(file_date);
-                    }
-                }
-                if let Some(file_created) = created {
-                    if let Some(par_created) = par_acc.created {
-                        if par_created < file_created {
-                            par_acc.created = Some(file_created);
-                        }
-                    } else {
-                        par_acc.created = Some(file_created);
-                    }
-                }
-
-                // Walk up the ancestor chain to register subdir relationships
-                let mut ancestors = parent.ancestors().collect::<Vec<_>>();
-                ancestors.reverse(); // from root to leaf
-
-                // dbg!(&path);
-                // dbg!(&ancestors);
-
-                for win in ancestors.windows(2) {
-                    if let [a, b] = win {
-                        let parent = a.to_path_buf();
-                        let subdir = b.to_path_buf();
-
-                        let par_acc = acc_map.entry(parent).or_default();
-                        par_acc.subdirs.insert(subdir);
-                        par_acc.total_count += 1;
-                        par_acc.total_size += size;
-
-                        if let Some(file_date) = date {
-                            if let Some(par_date) = par_acc.date {
-                                if par_date < file_date {
-                                    par_acc.date = Some(file_date);
-                                }
-                            } else {
-                                par_acc.date = Some(file_date);
-                            }
-                        }
-                        if let Some(file_created) = created {
-                            if let Some(par_created) = par_acc.created {
-                                if par_created < file_created {
-                                    par_acc.created = Some(file_created);
-                                }
-                            } else {
-                                par_acc.created = Some(file_created);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        fn count_subdirectories(
-            path: &Path,
-            acc_map: &BTreeMap<PathBuf, Acc>,
-            cache: &mut BTreeMap<PathBuf, usize>,
-        ) -> usize {
-            if let Some(count) = cache.get(path) {
-                return *count;
-            }
-
-            let count = acc_map
-                .get(path)
-                .map(|acc| {
-                    acc.subdirs
-                        .iter()
-                        .map(|subdir| 1 + count_subdirectories(subdir, acc_map, cache))
-                        .sum()
-                })
-                .unwrap_or_default();
-            cache.insert(path.to_path_buf(), count);
-            count
-        }
-
-        let mut subdirectory_counts = BTreeMap::new();
-
-        // Convert to DirView structs
-        self.dir_index = acc_map
-            .iter()
-            .map(|(path, acc)| {
-                let path_arc = Arc::new(path.clone());
-                let subdirectory_count =
-                    count_subdirectories(path, &acc_map, &mut subdirectory_counts);
-
-                let mut entries: Vec<DirTableEntry> = acc
-                    .subdirs
-                    .iter()
-                    .map(|d| {
-                        let c = acc_map.get(d).unwrap();
-
-                        let size = c.total_size + c.direct_size;
-                        let clone_count = c.total_count + c.direct_count;
-                        let date = c.date;
-
-                        DirTableEntry::new(
-                            Arc::new(d.to_owned()),
-                            d.to_owned(),
-                            size,
-                            date,
-                            c.created,
-                            clone_count,
-                            true,
-                        )
-                    })
-                    .collect();
-
-                let size: u64 = acc.files.iter().map(|e| e.size).sum();
-                assert_eq!(size, acc.direct_size);
-                assert_eq!(acc.files.len(), acc.direct_count);
-
-                entries.extend(acc.files.iter().cloned());
-
-                // Sort the entries
-                if let Some(sort_by) = sort_by {
-                    entries.sort_by(|a, b| match sort_by {
-                        Sorting::Path => a.path.cmp(&b.path),
-                        Sorting::Size => b.size.cmp(&a.size),
-                        Sorting::Date => b.date.cmp(&a.date),
-                        Sorting::Count => b.clone_count.cmp(&a.clone_count),
-                    });
-                }
-
-                let view = DirView {
-                    path: path_arc.clone(),
-                    entries,
-                    file_count: acc.direct_count + acc.total_count,
-                    subdirectory_count,
-                    total_size: acc.direct_size + acc.total_size,
-                    modified: acc.date,
-                    created: acc.created,
-                };
-                (path.clone(), view)
-            })
-            .collect();
-
-        debug!(
-            "update_dirview built {} dirs from {} files in {:?}",
-            self.dir_index.len(),
-            files.len(),
-            build_start.elapsed()
-        );
-    }
-
     pub fn update_table(
         &mut self,
         paths: &Vec<Arc<PathBuf>>,
@@ -435,69 +264,49 @@ impl DirTable {
         sort_by: Option<&Sorting>,
     ) {
         let update_start = Instant::now();
+        self.current_sort = sort_by.copied();
 
-        // Lock the FileIndex only once, then copy out the data we need:
-        let (mut entries, total_size, common_path) = {
-            let fi = file_index.read().unwrap();
-            let common_path = deckard::find_common_path(&fi.dirs);
-
-            // Pre-calculate file metadata for each path we display,
-            // including size & date. Also track a sum to show total size.
-            let mut total_size_acc = 0u64;
-            let mut entries_vec = Vec::with_capacity(paths.len());
-            for path in paths {
-                let size = fi.file_size(path).unwrap_or_default();
-                let date = fi.file_date_modified(path); // or created
-                let created = fi.file_date_created(path);
-                let relative_path = common_path
-                    .as_ref()
-                    .and_then(|common_path| path.strip_prefix(common_path).ok())
-                    .unwrap_or(path.as_path())
-                    .to_path_buf();
-                let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
-                total_size_acc += size;
-
-                entries_vec.push(DirTableEntry::new(
-                    path.clone(),
-                    relative_path,
-                    size,
-                    date,
-                    created,
-                    clone_count,
-                    false,
-                ));
-            }
-
-            (entries_vec, total_size_acc, common_path)
-        };
+        let fi = file_index.read().unwrap();
+        let common_path = deckard::find_common_path(&fi.dirs);
         self.common_path = common_path;
 
         if self.flatten_dirs {
-            // Sort the paths
-            if let Some(sort_by) = sort_by {
-                entries.sort_by(|a, b| match sort_by {
-                    Sorting::Path => a.path.cmp(&b.path),
-                    Sorting::Size => b.size.cmp(&a.size),
-                    Sorting::Date => b.date.cmp(&a.date),
-                    Sorting::Count => b.clone_count.cmp(&a.clone_count),
-                });
+            let mut entries = Vec::with_capacity(paths.len());
+            let mut total_size = 0u64;
+
+            for path in paths {
+                let record = file_record_from_index(path, &fi);
+                total_size += record.size;
+                let relative_path =
+                    relative_path_for_common(path.as_path(), self.common_path.as_deref());
+                entries.push(DirTableEntry::from_file_record(&record, relative_path));
             }
+            sort_entries(&mut entries, self.current_sort);
 
             self.current_dir = None;
             self.current_entries = entries;
             self.total_size = total_size;
+            self.dir_nodes.clear();
         } else {
-            self.update_dirview(&entries, sort_by);
-            let current = self
-                .dir_index
-                .first_key_value()
-                .map(|(k, v)| (k.to_owned(), v.entries.clone(), v.total_size));
-            if let Some((path, dir, dir_size)) = current {
-                self.current_dir = Some(path);
-                self.current_entries = dir;
-                self.total_size = dir_size;
+            let build_start = Instant::now();
+            self.dir_nodes =
+                build_directory_nodes(paths, &fi, self.common_path.as_deref());
+            debug!(
+                "built {} compact directory nodes from {} files in {:?}",
+                self.dir_nodes.len(),
+                paths.len(),
+                build_start.elapsed()
+            );
+
+            if let Some(root_dir) = root_dir_path(&self.dir_nodes) {
+                self.set_current_dir(root_dir);
+            } else {
+                self.current_dir = None;
+                self.current_entries.clear();
+                self.total_size = 0;
             }
         }
+        drop(fi);
 
         self.table_len = self.current_entries.len();
         self.scroll_state = ScrollbarState::new(self.table_len);
@@ -517,11 +326,46 @@ impl DirTable {
         self.total_size_text = humansize::format_size(self.total_size, humansize::DECIMAL);
     }
 
+    fn materialize_dir_entries(&self, path: &Path) -> Vec<DirTableEntry> {
+        let Some(node) = self.dir_nodes.get(path) else {
+            return Vec::new();
+        };
+
+        let mut child_dirs = node.child_dirs.iter().collect::<Vec<_>>();
+        child_dirs.sort();
+
+        let mut entries = Vec::with_capacity(child_dirs.len() + node.direct_files.len());
+        entries.extend(child_dirs.into_iter().filter_map(|child_path| {
+            self.dir_nodes.get(child_path).map(|child| {
+                DirTableEntry::new(
+                    Arc::new(child_path.clone()),
+                    child_path.clone(),
+                    child.total_size,
+                    child.modified,
+                    child.created,
+                    child.file_count,
+                    true,
+                )
+            })
+        }));
+        entries.extend(node.direct_files.iter().map(|record| {
+            let relative_path =
+                relative_path_for_common(record.path.as_path(), self.common_path.as_deref());
+            DirTableEntry::from_file_record(record, relative_path)
+        }));
+
+        sort_entries(&mut entries, self.current_sort);
+        entries
+    }
+
     fn set_current_dir(&mut self, path: PathBuf) {
-        if let Some(dir) = self.dir_index.get(&path) {
+        if let Some(dir) = self.dir_nodes.get(&path) {
+            let total_size = dir.total_size;
+            let entries = self.materialize_dir_entries(&path);
+
             self.current_dir = Some(path);
-            self.current_entries = dir.entries.clone();
-            self.total_size = dir.total_size;
+            self.current_entries = entries;
+            self.total_size = total_size;
 
             self.table_len = self.current_entries.len();
             self.scroll_state = ScrollbarState::new(self.table_len);
@@ -545,12 +389,11 @@ impl DirTable {
         let parent = self
             .current_dir
             .as_ref()
-            .and_then(|selected| self.dir_index.get(selected))
-            .and_then(DirView::parent)
-            .map(Path::to_path_buf);
+            .and_then(|selected| self.dir_nodes.get(selected))
+            .and_then(|node| node.parent.clone());
 
         if let Some(parent) = parent
-            && self.dir_index.contains_key(&parent)
+            && self.dir_nodes.contains_key(&parent)
         {
             self.set_current_dir(parent);
             if let Some(index) = self.selected_dir_history.pop() {
@@ -659,22 +502,28 @@ impl DirTable {
             return Vec::new();
         };
 
-        self.dir_index
-            .iter()
-            .filter(|(dir_path, _)| dir_path.starts_with(selected_dir.as_path()))
-            .flat_map(|(_, view)| {
-                view.entries
-                    .iter()
-                    .filter(|entry| !entry.is_dir)
-                    .map(|entry| entry.path.clone())
-            })
-            .collect()
+        let mut files = Vec::new();
+        let mut stack = vec![selected_dir.as_ref().clone()];
+
+        while let Some(dir_path) = stack.pop() {
+            let Some(node) = self.dir_nodes.get(&dir_path) else {
+                continue;
+            };
+
+            files.extend(node.direct_files.iter().map(|record| record.path.clone()));
+
+            let mut child_dirs = node.child_dirs.iter().collect::<Vec<_>>();
+            child_dirs.sort();
+            stack.extend(child_dirs.into_iter().rev().cloned());
+        }
+
+        files
     }
 
     /// Returns summary details for the selected directory row.
     pub(crate) fn selected_dir_info(&self) -> Option<DirectoryInfo> {
         let selected_dir = self.selected_dir_path()?;
-        let view = self.dir_index.get(selected_dir.as_path())?;
+        let node = self.dir_nodes.get(selected_dir.as_path())?;
         let path = self.resolved_dir_path(selected_dir.as_path());
         let name = selected_dir
             .file_name()
@@ -684,11 +533,11 @@ impl DirTable {
         Some(DirectoryInfo {
             path,
             name,
-            file_count: view.file_count,
-            subdirectory_count: view.subdirectory_count,
-            total_size: view.total_size,
-            modified: view.modified,
-            created: view.created,
+            file_count: node.file_count,
+            subdirectory_count: node.subdirectory_count,
+            total_size: node.total_size,
+            modified: node.modified,
+            created: node.created,
         })
     }
 
@@ -876,6 +725,162 @@ impl DirTable {
     }
 }
 
+fn file_record_from_index(path: &Arc<PathBuf>, file_index: &FileIndex) -> FileRecord {
+    let file = file_index.files.get(path);
+
+    FileRecord {
+        path: path.clone(),
+        size: file.map(|entry| entry.size).unwrap_or_default(),
+        modified: file.and_then(|entry| entry.modified),
+        created: file.and_then(|entry| entry.created),
+        clone_count: file_index
+            .duplicates
+            .get(path)
+            .map(|duplicates| duplicates.len())
+            .unwrap_or_default(),
+    }
+}
+
+fn build_directory_nodes(
+    paths: &[Arc<PathBuf>],
+    file_index: &FileIndex,
+    common_path: Option<&Path>,
+) -> HashMap<PathBuf, DirectoryNode> {
+    let mut nodes = HashMap::new();
+
+    for path in paths {
+        let relative_path = relative_path_for_common(path.as_path(), common_path);
+        let parent = relative_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf();
+        ensure_directory(&mut nodes, &parent);
+
+        let record = file_record_from_index(path, file_index);
+        let node = nodes.entry(parent).or_default();
+        node.direct_size += record.size;
+        node.file_count += 1;
+        node.total_size += record.size;
+        retain_latest_time(&mut node.modified, record.modified);
+        retain_latest_time(&mut node.created, record.created);
+        node.direct_files.push(record);
+    }
+
+    finalize_directory_summaries(&mut nodes);
+    nodes
+}
+
+fn ensure_directory(nodes: &mut HashMap<PathBuf, DirectoryNode>, path: &Path) {
+    let path = path.to_path_buf();
+    if nodes.contains_key(&path) {
+        return;
+    }
+
+    let parent = directory_parent(&path);
+    nodes.insert(
+        path.clone(),
+        DirectoryNode {
+            parent: parent.clone(),
+            ..DirectoryNode::default()
+        },
+    );
+
+    if let Some(parent) = parent {
+        ensure_directory(nodes, &parent);
+        if let Some(parent_node) = nodes.get_mut(&parent) {
+            parent_node.child_dirs.insert(path);
+        }
+    }
+}
+
+fn directory_parent(path: &Path) -> Option<PathBuf> {
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+
+    path.parent()
+        .filter(|parent| *parent != path)
+        .map(Path::to_path_buf)
+}
+
+fn finalize_directory_summaries(nodes: &mut HashMap<PathBuf, DirectoryNode>) {
+    let mut paths = nodes.keys().cloned().collect::<Vec<_>>();
+    paths.sort_by(|a, b| {
+        path_depth(b.as_path())
+            .cmp(&path_depth(a.as_path()))
+            .then_with(|| b.cmp(a))
+    });
+
+    for path in paths {
+        let Some(node) = nodes.get(&path) else {
+            continue;
+        };
+        let Some(parent) = node.parent.clone() else {
+            continue;
+        };
+        let file_count = node.file_count;
+        let subdirectory_count = node.subdirectory_count;
+        let total_size = node.total_size;
+        let modified = node.modified;
+        let created = node.created;
+
+        if let Some(parent_node) = nodes.get_mut(&parent) {
+            parent_node.file_count += file_count;
+            parent_node.subdirectory_count += 1 + subdirectory_count;
+            parent_node.total_size += total_size;
+            retain_latest_time(&mut parent_node.modified, modified);
+            retain_latest_time(&mut parent_node.created, created);
+        }
+    }
+}
+
+fn retain_latest_time(current: &mut Option<SystemTime>, candidate: Option<SystemTime>) {
+    let Some(candidate) = candidate else {
+        return;
+    };
+
+    if current.is_none_or(|current| current < candidate) {
+        *current = Some(candidate);
+    }
+}
+
+fn relative_path_for_common(path: &Path, common_path: Option<&Path>) -> PathBuf {
+    common_path
+        .and_then(|common_path| path.strip_prefix(common_path).ok())
+        .unwrap_or(path)
+        .to_path_buf()
+}
+
+fn root_dir_path(nodes: &HashMap<PathBuf, DirectoryNode>) -> Option<PathBuf> {
+    if nodes.contains_key(Path::new("")) {
+        return Some(PathBuf::new());
+    }
+
+    nodes
+        .keys()
+        .min_by(|a, b| {
+            path_depth(a.as_path())
+                .cmp(&path_depth(b.as_path()))
+                .then_with(|| a.cmp(b))
+        })
+        .cloned()
+}
+
+fn path_depth(path: &Path) -> usize {
+    path.components().count()
+}
+
+fn sort_entries(entries: &mut [DirTableEntry], sort_by: Option<Sorting>) {
+    if let Some(sort_by) = sort_by {
+        entries.sort_by(|a, b| match sort_by {
+            Sorting::Path => a.path.cmp(&b.path),
+            Sorting::Size => b.size.cmp(&a.size),
+            Sorting::Date => b.date.cmp(&a.date),
+            Sorting::Count => b.clone_count.cmp(&a.clone_count),
+        });
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct VisibleRange {
     start: usize,
@@ -918,6 +923,17 @@ fn clamp_offset(
 mod tests {
     use super::*;
 
+    type TestFileEntry = (Arc<PathBuf>, u64, Option<SystemTime>, Option<SystemTime>);
+
+    #[derive(Default)]
+    struct NodeStats {
+        file_count: usize,
+        subdirectory_count: usize,
+        total_size: u64,
+        modified: Option<SystemTime>,
+        created: Option<SystemTime>,
+    }
+
     fn entry(index: usize) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(format!("/tmp/file-{index}"))),
@@ -934,24 +950,6 @@ mod tests {
         DirTableEntry::new(path, PathBuf::from(display_path), 0, None, None, 0, false)
     }
 
-    fn file_entry_with_timestamps(
-        path: &str,
-        display_path: &str,
-        size: u64,
-        modified: Option<SystemTime>,
-        created: Option<SystemTime>,
-    ) -> DirTableEntry {
-        DirTableEntry::new(
-            Arc::new(PathBuf::from(path)),
-            PathBuf::from(display_path),
-            size,
-            modified,
-            created,
-            0,
-            false,
-        )
-    }
-
     fn dir_entry(path: &str) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(path)),
@@ -959,22 +957,6 @@ mod tests {
             0,
             None,
             None,
-            0,
-            true,
-        )
-    }
-
-    fn dir_entry_with_timestamps(
-        path: &str,
-        modified: Option<SystemTime>,
-        created: Option<SystemTime>,
-    ) -> DirTableEntry {
-        DirTableEntry::new(
-            Arc::new(PathBuf::from(path)),
-            PathBuf::from(path),
-            0,
-            modified,
-            created,
             0,
             true,
         )
@@ -997,31 +979,98 @@ mod tests {
         table
     }
 
-    fn dir_view(path: &str, entries: Vec<DirTableEntry>) -> DirView {
-        dir_view_with_stats(path, entries, 0, 0)
+    fn file_record(path: Arc<PathBuf>, size: u64) -> FileRecord {
+        FileRecord {
+            path,
+            size,
+            modified: None,
+            created: None,
+            clone_count: 0,
+        }
     }
 
-    fn dir_view_with_stats(
-        path: &str,
-        entries: Vec<DirTableEntry>,
-        file_count: usize,
-        total_size: u64,
-    ) -> DirView {
-        dir_view_with_cached_info(path, entries, file_count, 0, total_size, None, None)
+    fn path(path: &str) -> Arc<PathBuf> {
+        Arc::new(PathBuf::from(path))
     }
 
-    fn dir_view_with_cached_info(
+    fn file_index_with_entries(
+        root: &str,
+        entries: &[TestFileEntry],
+    ) -> Arc<RwLock<FileIndex>> {
+        let mut file_index = FileIndex::new(
+            HashSet::from([PathBuf::from(root)]),
+            deckard::config::SearchConfig::default(),
+        );
+
+        for (path, size, modified, created) in entries {
+            file_index.files.insert(
+                path.clone(),
+                deckard::file::FileEntry {
+                    path: path.clone(),
+                    size: *size,
+                    created: *created,
+                    modified: *modified,
+                    hash: None,
+                    image_hash: None,
+                    audio_hash: None,
+                },
+            );
+        }
+
+        Arc::new(RwLock::new(file_index))
+    }
+
+    fn file_record_with_timestamps(
         path: &str,
-        entries: Vec<DirTableEntry>,
+        size: u64,
+        modified: Option<SystemTime>,
+        created: Option<SystemTime>,
+    ) -> FileRecord {
+        FileRecord {
+            path: Arc::new(PathBuf::from(path)),
+            size,
+            modified,
+            created,
+            clone_count: 0,
+        }
+    }
+
+    fn directory_node(
+        parent: Option<&str>,
+        child_dirs: &[&str],
+        direct_files: Vec<FileRecord>,
+        stats: NodeStats,
+    ) -> DirectoryNode {
+        DirectoryNode {
+            parent: parent.map(PathBuf::from),
+            child_dirs: child_dirs.iter().map(PathBuf::from).collect(),
+            direct_size: direct_files.iter().map(|record| record.size).sum(),
+            direct_files,
+            file_count: stats.file_count,
+            subdirectory_count: stats.subdirectory_count,
+            total_size: stats.total_size,
+            modified: stats.modified,
+            created: stats.created,
+        }
+    }
+
+    fn node_stats(file_count: usize, subdirectory_count: usize, total_size: u64) -> NodeStats {
+        NodeStats {
+            file_count,
+            subdirectory_count,
+            total_size,
+            ..NodeStats::default()
+        }
+    }
+
+    fn node_stats_with_timestamps(
         file_count: usize,
         subdirectory_count: usize,
         total_size: u64,
         modified: Option<SystemTime>,
         created: Option<SystemTime>,
-    ) -> DirView {
-        DirView {
-            path: Arc::new(PathBuf::from(path)),
-            entries,
+    ) -> NodeStats {
+        NodeStats {
             file_count,
             subdirectory_count,
             total_size,
@@ -1033,12 +1082,18 @@ mod tests {
     #[test]
     fn back_parent_dir_moves_to_parent_when_nested() {
         let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
-        table
-            .dir_index
-            .insert(PathBuf::new(), dir_view("", vec![dir_entry("deckard-tui")]));
-        table.dir_index.insert(
+        table.dir_nodes.insert(
+            PathBuf::new(),
+            directory_node(None, &["deckard-tui"], vec![], node_stats(1, 1, 1)),
+        );
+        table.dir_nodes.insert(
             PathBuf::from("deckard-tui"),
-            dir_view("deckard-tui", vec![entry(1)]),
+            directory_node(
+                Some(""),
+                &[],
+                vec![file_record(Arc::new(PathBuf::from("/tmp/file-1")), 1)],
+                node_stats(1, 0, 1),
+            ),
         );
         table.current_dir = Some(PathBuf::from("deckard-tui"));
         table.selected_dir_history.push(0);
@@ -1052,9 +1107,10 @@ mod tests {
     #[test]
     fn back_parent_dir_returns_false_at_top_level() {
         let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
-        table
-            .dir_index
-            .insert(PathBuf::new(), dir_view("", vec![dir_entry("deckard-tui")]));
+        table.dir_nodes.insert(
+            PathBuf::new(),
+            directory_node(None, &["deckard-tui"], vec![], node_stats(0, 1, 0)),
+        );
         table.current_dir = Some(PathBuf::new());
 
         assert!(!table.back_parent_dir());
@@ -1136,21 +1192,22 @@ mod tests {
 
         table.current_entries = vec![dir_entry("folder")];
         table.table_len = table.current_entries.len();
-        table.dir_index.insert(
+        table.dir_nodes.insert(
             PathBuf::from("folder"),
-            dir_view(
-                "folder",
-                vec![
-                    file_entry(direct.clone(), "folder/direct.txt"),
-                    dir_entry("folder/sub"),
-                ],
+            directory_node(
+                Some(""),
+                &["folder/sub"],
+                vec![file_record(direct.clone(), 0)],
+                node_stats(2, 1, 0),
             ),
         );
-        table.dir_index.insert(
+        table.dir_nodes.insert(
             PathBuf::from("folder/sub"),
-            dir_view(
-                "folder/sub",
-                vec![file_entry(nested.clone(), "folder/sub/nested.txt")],
+            directory_node(
+                Some("folder"),
+                &[],
+                vec![file_record(nested.clone(), 0)],
+                node_stats(1, 0, 0),
             ),
         );
         table.select_first();
@@ -1166,18 +1223,22 @@ mod tests {
 
         table.current_entries = vec![dir_entry("folder")];
         table.table_len = table.current_entries.len();
-        table.dir_index.insert(
+        table.dir_nodes.insert(
             PathBuf::from("folder"),
-            dir_view(
-                "folder",
-                vec![file_entry(selected_file.clone(), "folder/file.txt")],
+            directory_node(
+                Some(""),
+                &[],
+                vec![file_record(selected_file.clone(), 0)],
+                node_stats(1, 0, 0),
             ),
         );
-        table.dir_index.insert(
+        table.dir_nodes.insert(
             PathBuf::from("folder-sibling"),
-            dir_view(
-                "folder-sibling",
-                vec![file_entry(sibling_file, "folder-sibling/file.txt")],
+            directory_node(
+                Some(""),
+                &[],
+                vec![file_record(sibling_file, 0)],
+                node_stats(1, 0, 0),
             ),
         );
         table.select_first();
@@ -1206,43 +1267,32 @@ mod tests {
 
         table.current_entries = vec![dir_entry("folder")];
         table.table_len = table.current_entries.len();
-        table.dir_index.insert(
+        table.dir_nodes.insert(
             PathBuf::from("folder"),
-            dir_view_with_cached_info(
-                "folder",
-                vec![
-                    file_entry_with_timestamps(
-                        "/tmp/root/folder/direct.txt",
-                        "folder/direct.txt",
-                        15,
-                        Some(older),
-                        Some(oldest_created),
-                    ),
-                    dir_entry_with_timestamps("folder/sub", Some(newer), Some(newest_created)),
-                ],
-                2,
-                1,
-                35,
-                Some(newer),
-                Some(newest_created),
+            directory_node(
+                Some(""),
+                &["folder/sub"],
+                vec![file_record_with_timestamps(
+                    "/tmp/root/folder/direct.txt",
+                    15,
+                    Some(older),
+                    Some(oldest_created),
+                )],
+                node_stats_with_timestamps(2, 1, 35, Some(newer), Some(newest_created)),
             ),
         );
-        table.dir_index.insert(
+        table.dir_nodes.insert(
             PathBuf::from("folder/sub"),
-            dir_view_with_cached_info(
-                "folder/sub",
-                vec![file_entry_with_timestamps(
+            directory_node(
+                Some("folder"),
+                &[],
+                vec![file_record_with_timestamps(
                     "/tmp/root/folder/sub/nested.txt",
-                    "folder/sub/nested.txt",
                     20,
                     Some(newer),
                     Some(newest_created),
                 )],
-                1,
-                0,
-                20,
-                Some(newer),
-                Some(newest_created),
+                node_stats_with_timestamps(1, 0, 20, Some(newer), Some(newest_created)),
             ),
         );
         table.select_first();
@@ -1267,9 +1317,9 @@ mod tests {
 
         table.current_entries = vec![dir_entry("folder")];
         table.table_len = table.current_entries.len();
-        table.dir_index.insert(
+        table.dir_nodes.insert(
             PathBuf::from("folder"),
-            dir_view_with_cached_info("folder", vec![], 0, 7, 0, None, None),
+            directory_node(Some(""), &[], vec![], node_stats(0, 7, 0)),
         );
         table.select_first();
 
@@ -1307,6 +1357,169 @@ mod tests {
                 .map(|info| (info.file_count, info.subdirectory_count)),
             Some((2, 1))
         );
+    }
+
+    #[test]
+    fn root_materialization_shows_immediate_directories_and_files_only() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        let root_file = path("/tmp/root/root.txt");
+        let direct = path("/tmp/root/folder/direct.txt");
+        let nested = path("/tmp/root/folder/sub/nested.txt");
+        let paths = vec![nested.clone(), root_file.clone(), direct.clone()];
+        let file_index = file_index_with_entries(
+            "/tmp/root",
+            &[
+                (nested, 3, None, None),
+                (root_file, 1, None, None),
+                (direct, 2, None, None),
+            ],
+        );
+
+        table.update_table(&paths, &file_index, None);
+
+        let displayed = table
+            .current_entries
+            .iter()
+            .map(|entry| entry.display_text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(displayed, vec!["folder/", "root.txt"]);
+    }
+
+    #[test]
+    fn entering_nested_directory_materializes_direct_children() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        let direct = path("/tmp/root/folder/direct.txt");
+        let nested = path("/tmp/root/folder/sub/nested.txt");
+        let paths = vec![direct.clone(), nested.clone()];
+        let file_index = file_index_with_entries(
+            "/tmp/root",
+            &[(direct, 2, None, None), (nested, 3, None, None)],
+        );
+
+        table.update_table(&paths, &file_index, None);
+        table.select_first();
+        table.enter_selected_dir();
+
+        assert_eq!(table.current_dir, Some(PathBuf::from("folder")));
+        let displayed = table
+            .current_entries
+            .iter()
+            .map(|entry| entry.name_text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(displayed, vec!["sub/", "direct.txt"]);
+    }
+
+    #[test]
+    fn recursive_directory_summaries_match_index_metadata() {
+        let older = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
+        let newer = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(20);
+        let oldest_created = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(5);
+        let newest_created = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(15);
+        let direct = path("/tmp/root/folder/direct.txt");
+        let nested = path("/tmp/root/folder/sub/nested.txt");
+        let paths = vec![direct.clone(), nested.clone()];
+        let file_index = file_index_with_entries(
+            "/tmp/root",
+            &[
+                (direct, 15, Some(older), Some(oldest_created)),
+                (nested, 20, Some(newer), Some(newest_created)),
+            ],
+        );
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+
+        table.update_table(&paths, &file_index, None);
+        table.select_first();
+
+        assert_eq!(
+            table.selected_dir_info(),
+            Some(DirectoryInfo {
+                path: PathBuf::from("/tmp/root/folder"),
+                name: "folder".to_string(),
+                file_count: 2,
+                subdirectory_count: 1,
+                total_size: 35,
+                modified: Some(newer),
+                created: Some(newest_created),
+            })
+        );
+    }
+
+    #[test]
+    fn similarly_named_siblings_do_not_affect_selection_summary() {
+        let selected = path("/tmp/root/folder/file.txt");
+        let sibling = path("/tmp/root/folder-sibling/file.txt");
+        let paths = vec![selected.clone(), sibling.clone()];
+        let file_index = file_index_with_entries(
+            "/tmp/root",
+            &[(selected.clone(), 10, None, None), (sibling, 20, None, None)],
+        );
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+
+        table.update_table(&paths, &file_index, Some(&Sorting::Path));
+        let folder_index = table
+            .current_entries
+            .iter()
+            .position(|entry| entry.path.as_path() == Path::new("folder"))
+            .unwrap();
+        table.select_entry(folder_index);
+
+        assert_eq!(table.selected_dir_file_paths(), vec![selected]);
+        assert_eq!(
+            table
+                .selected_dir_info()
+                .map(|info| (info.file_count, info.subdirectory_count, info.total_size)),
+            Some((1, 0, 10))
+        );
+    }
+
+    #[test]
+    fn root_fallback_chooses_shallowest_lexicographic_directory() {
+        let mut nodes = HashMap::new();
+        nodes.insert(PathBuf::from("beta/nested"), DirectoryNode::default());
+        nodes.insert(PathBuf::from("beta"), DirectoryNode::default());
+        nodes.insert(PathBuf::from("alpha"), DirectoryNode::default());
+
+        assert_eq!(root_dir_path(&nodes), Some(PathBuf::from("alpha")));
+
+        nodes.insert(PathBuf::new(), DirectoryNode::default());
+        assert_eq!(root_dir_path(&nodes), Some(PathBuf::new()));
+    }
+
+    #[test]
+    fn sorting_applies_to_materialized_current_directory_only() {
+        let root_file = path("/tmp/root/root.txt");
+        let small = path("/tmp/root/a/small.txt");
+        let large = path("/tmp/root/b/large.txt");
+        let nested = path("/tmp/root/b/sub/tiny.txt");
+        let paths = vec![root_file.clone(), small.clone(), large.clone(), nested.clone()];
+        let file_index = file_index_with_entries(
+            "/tmp/root",
+            &[
+                (root_file, 10, None, None),
+                (small, 1, None, None),
+                (large, 50, None, None),
+                (nested, 1, None, None),
+            ],
+        );
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+
+        table.update_table(&paths, &file_index, Some(&Sorting::Size));
+
+        let displayed = table
+            .current_entries
+            .iter()
+            .map(|entry| entry.name_text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(displayed, vec!["b/", "root.txt", "a/"]);
+
+        table.select_first();
+        table.enter_selected_dir();
+        let displayed = table
+            .current_entries
+            .iter()
+            .map(|entry| entry.name_text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(displayed, vec!["large.txt", "sub/"]);
     }
 
     #[test]
