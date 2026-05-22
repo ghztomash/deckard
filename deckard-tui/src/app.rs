@@ -1,7 +1,6 @@
 use crate::command::{Command, CommandProcessor};
 use crate::constants;
 use crate::dirtable::{DirTable, DirectoryInfo};
-use crate::table::FileTable;
 use arboard::Clipboard;
 use chrono::{DateTime, Local};
 use color_eyre::eyre::{Result, WrapErr};
@@ -105,8 +104,8 @@ pub struct App {
     remove_dirs: bool,
     file_index: Arc<RwLock<FileIndex>>,
     file_table: DirTable,
-    clone_table: FileTable,
-    marked_table: FileTable,
+    clone_table: DirTable,
+    marked_table: DirTable,
     marked_files: HashSet<Arc<PathBuf>>,
     disk_usage_mode: bool,
     show_clones_table: bool,
@@ -251,8 +250,8 @@ impl App {
             should_exit: false,
             file_index: Arc::new(RwLock::new(FileIndex::new(target_paths, config))),
             file_table,
-            clone_table: FileTable::new(vec![" ", "Clone", "Date", "Size"], true, false),
-            marked_table: FileTable::new(vec![" ", "Marked"], false, false),
+            clone_table: DirTable::new(vec![" ", "Clone", "Date", "Size"], true, false, true),
+            marked_table: DirTable::new(vec![" ", "Marked"], false, false, true),
             marked_files: HashSet::new(),
             disk_usage_mode: disk_usage,
             show_marked_table: true,
@@ -679,7 +678,8 @@ impl App {
     }
 
     fn mark_all_clones(&mut self) {
-        self.marked_files.extend(self.clone_table.paths());
+        self.marked_files
+            .extend(self.clone_table.current_file_paths());
 
         self.update_marked_table();
     }

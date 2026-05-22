@@ -1,4 +1,4 @@
-use crate::{app::Sorting, table::format_path_with_common};
+use crate::app::Sorting;
 use chrono::{DateTime, Local};
 use deckard::index::FileIndex;
 use ratatui::{
@@ -132,20 +132,6 @@ pub struct DirView {
 impl DirView {
     pub fn parent(&self) -> Option<&Path> {
         self.path.parent()
-    }
-
-    pub fn files(&self) -> Vec<DirTableEntry> {
-        self.entries
-            .iter()
-            .filter_map(|f| if !f.is_dir { Some(f.clone()) } else { None })
-            .collect()
-    }
-
-    pub fn directories(&self) -> Vec<DirTableEntry> {
-        self.entries
-            .iter()
-            .filter_map(|d| if d.is_dir { Some(d.clone()) } else { None })
-            .collect()
     }
 }
 
@@ -889,6 +875,15 @@ fn clamp_offset(
     }
 
     start.min(max_start)
+}
+
+pub fn format_path_with_common(path: &PathBuf, common_path: Option<&PathBuf>) -> String {
+    let relative_path = if let Some(common_path) = common_path {
+        path.strip_prefix(common_path).unwrap_or(path)
+    } else {
+        path
+    };
+    relative_path.to_string_lossy().to_string()
 }
 
 #[cfg(test)]
