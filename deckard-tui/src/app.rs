@@ -1565,15 +1565,10 @@ fn file_info_lines(file_entry: &FileEntry) -> Vec<Line<'static>> {
 
 fn directory_info_lines(dir_info: &DirectoryInfo) -> Vec<Line<'static>> {
     vec![
-        Line::from(vec!["type: ".into(), "directory".light_blue()]),
-        Line::from(vec!["name: ".into(), dir_info.name.clone().yellow()]),
         Line::from(vec![
-            "files: ".into(),
-            dir_info.file_count.to_string().blue(),
-        ]),
-        Line::from(vec![
-            "directories: ".into(),
-            dir_info.subdirectory_count.to_string().blue(),
+            "name: ".into(),
+            dir_info.name.clone().yellow(),
+            "/".to_string().yellow(),
         ]),
         Line::from(vec![
             "size: ".into(),
@@ -1585,8 +1580,20 @@ fn directory_info_lines(dir_info: &DirectoryInfo) -> Vec<Line<'static>> {
             ")".into(),
         ]),
         Line::from(vec![
+            "created: ".into(),
+            format_system_time(dir_info.created).red(),
+        ]),
+        Line::from(vec![
             "modified: ".into(),
             format_system_time(dir_info.modified).red(),
+        ]),
+        Line::from(vec![
+            "files: ".into(),
+            dir_info.file_count.to_string().blue(),
+        ]),
+        Line::from(vec![
+            "directories: ".into(),
+            dir_info.subdirectory_count.to_string().blue(),
         ]),
         Line::from(vec![
             "path: ".into(),
@@ -1797,8 +1804,9 @@ mod tests {
 
         let texts = line_texts(&app.selected_info_lines());
 
-        assert!(texts.contains(&"type: directory".to_string()));
-        assert!(texts.contains(&"name: folder".to_string()));
+        assert!(texts.contains(&"name: folder/".to_string()));
+        assert!(texts.iter().any(|text| text.starts_with("created: ")));
+        assert!(texts.iter().any(|text| text.starts_with("modified: ")));
         assert!(texts.contains(&"files: 2".to_string()));
         assert!(!texts.contains(&"none".to_string()));
     }

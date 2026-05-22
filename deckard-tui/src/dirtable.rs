@@ -28,6 +28,7 @@ pub struct DirTableEntry {
     size: u64,
     size_text: String,
     date: Option<SystemTime>,
+    created: Option<SystemTime>,
     date_text: String,
     clone_count: usize,
     clone_count_text: String,
@@ -40,6 +41,7 @@ impl DirTableEntry {
         display_path: String,
         size: u64,
         date: Option<SystemTime>,
+        created: Option<SystemTime>,
         clone_count: usize,
         is_dir: bool,
     ) -> Self {
@@ -63,6 +65,7 @@ impl DirTableEntry {
             size,
             size_text,
             date,
+            created,
             date_text,
             clone_count,
             clone_count_text,
@@ -123,6 +126,7 @@ pub struct DirView {
     pub total_size: u64,
     /// Latest modified time among files including subdirectories
     pub modified: Option<SystemTime>,
+    pub created: Option<SystemTime>,
 }
 
 impl DirView {
@@ -160,6 +164,7 @@ pub(crate) struct DirectoryInfo {
     pub(crate) total_size: u64,
     /// Latest modified time among represented child files.
     pub(crate) modified: Option<SystemTime>,
+    pub(crate) created: Option<SystemTime>,
 }
 
 #[derive(Debug, Default)]
@@ -264,6 +269,7 @@ impl DirTable {
             total_count: usize, // recursive
             total_size: u64,    // recursive
             date: Option<SystemTime>,
+            created: Option<SystemTime>,
         }
 
         let mut acc_map: BTreeMap<PathBuf, Acc> = BTreeMap::new();
@@ -274,6 +280,7 @@ impl DirTable {
                 let parent = parent.to_path_buf();
                 let size = file.size;
                 let date = file.date;
+                let created = file.created;
 
                 // Insert file into its parent dir
                 let par_acc = acc_map.entry(parent.clone()).or_default();
@@ -288,6 +295,15 @@ impl DirTable {
                         }
                     } else {
                         par_acc.date = Some(file_date);
+                    }
+                }
+                if let Some(file_created) = created {
+                    if let Some(par_created) = par_acc.created {
+                        if par_created < file_created {
+                            par_acc.created = Some(file_created);
+                        }
+                    } else {
+                        par_acc.created = Some(file_created);
                     }
                 }
 
@@ -315,6 +331,15 @@ impl DirTable {
                                 }
                             } else {
                                 par_acc.date = Some(file_date);
+                            }
+                        }
+                        if let Some(file_created) = created {
+                            if let Some(par_created) = par_acc.created {
+                                if par_created < file_created {
+                                    par_acc.created = Some(file_created);
+                                }
+                            } else {
+                                par_acc.created = Some(file_created);
                             }
                         }
                     }
@@ -374,6 +399,7 @@ impl DirTable {
                                 .unwrap_or_default(),
                             size,
                             date,
+                            c.created,
                             clone_count,
                             true,
                         )
@@ -403,6 +429,7 @@ impl DirTable {
                     subdirectory_count,
                     total_size: acc.direct_size + acc.total_size,
                     modified: acc.date,
+                    created: acc.created,
                 };
                 (path, view)
             })
@@ -429,6 +456,7 @@ impl DirTable {
             for path in paths {
                 let size = fi.file_size(path).unwrap_or_default();
                 let date = fi.file_date_modified(path); // or created
+                let created = fi.file_date_created(path);
                 let display_path = format_path_with_common(path, common_path.as_ref());
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
                 total_size_acc += size;
@@ -438,6 +466,7 @@ impl DirTable {
                     display_path,
                     size,
                     date,
+                    created,
                     clone_count,
                     false,
                 ));
@@ -655,6 +684,7 @@ impl DirTable {
             subdirectory_count: view.subdirectory_count,
             total_size: view.total_size,
             modified: view.modified,
+            created: view.created,
         })
     }
 
@@ -871,26 +901,29 @@ mod tests {
             format!("file-{index}"),
             index as u64,
             None,
+            None,
             index,
             false,
         )
     }
 
     fn file_entry(path: Arc<PathBuf>, display_path: &str) -> DirTableEntry {
-        DirTableEntry::new(path, display_path.to_string(), 0, None, 0, false)
+        DirTableEntry::new(path, display_path.to_string(), 0, None, None, 0, false)
     }
 
-    fn file_entry_with_metadata(
+    fn file_entry_with_timestamps(
         path: &str,
         display_path: &str,
         size: u64,
-        date: Option<SystemTime>,
+        modified: Option<SystemTime>,
+        created: Option<SystemTime>,
     ) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(path)),
             display_path.to_string(),
             size,
-            date,
+            modified,
+            created,
             0,
             false,
         )
@@ -902,17 +935,23 @@ mod tests {
             path.to_string(),
             0,
             None,
+            None,
             0,
             true,
         )
     }
 
-    fn dir_entry_with_date(path: &str, date: Option<SystemTime>) -> DirTableEntry {
+    fn dir_entry_with_timestamps(
+        path: &str,
+        modified: Option<SystemTime>,
+        created: Option<SystemTime>,
+    ) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(path)),
             path.to_string(),
             0,
-            date,
+            modified,
+            created,
             0,
             true,
         )
@@ -941,7 +980,7 @@ mod tests {
         file_count: usize,
         total_size: u64,
     ) -> DirView {
-        dir_view_with_cached_info(path, entries, file_count, 0, total_size, None)
+        dir_view_with_cached_info(path, entries, file_count, 0, total_size, None, None)
     }
 
     fn dir_view_with_cached_info(
@@ -951,6 +990,7 @@ mod tests {
         subdirectory_count: usize,
         total_size: u64,
         modified: Option<SystemTime>,
+        created: Option<SystemTime>,
     ) -> DirView {
         DirView {
             path: Arc::new(PathBuf::from(path)),
@@ -959,6 +999,7 @@ mod tests {
             subdirectory_count,
             total_size,
             modified,
+            created,
         }
     }
 
@@ -1026,7 +1067,15 @@ mod tests {
         let file_path = Arc::new(PathBuf::from("/tmp/file"));
         table.current_entries = vec![
             dir_entry("deckard"),
-            DirTableEntry::new(file_path.clone(), "file".to_string(), 0, None, 0, false),
+            DirTableEntry::new(
+                file_path.clone(),
+                "file".to_string(),
+                0,
+                None,
+                None,
+                0,
+                false,
+            ),
         ];
 
         assert_eq!(table.current_file_paths(), vec![file_path]);
@@ -1104,6 +1153,8 @@ mod tests {
     fn selected_dir_info_returns_stats_for_selected_directory() {
         let older = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
         let newer = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(20);
+        let oldest_created = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(5);
+        let newest_created = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(15);
         let mut table = table_with_common_path("/tmp/root");
 
         table.current_entries = vec![dir_entry("folder")];
@@ -1113,34 +1164,38 @@ mod tests {
             dir_view_with_cached_info(
                 "folder",
                 vec![
-                    file_entry_with_metadata(
+                    file_entry_with_timestamps(
                         "/tmp/root/folder/direct.txt",
                         "folder/direct.txt",
                         15,
                         Some(older),
+                        Some(oldest_created),
                     ),
-                    dir_entry_with_date("folder/sub", Some(newer)),
+                    dir_entry_with_timestamps("folder/sub", Some(newer), Some(newest_created)),
                 ],
                 2,
                 1,
                 35,
                 Some(newer),
+                Some(newest_created),
             ),
         );
         table.dir_index.insert(
             PathBuf::from("folder/sub"),
             dir_view_with_cached_info(
                 "folder/sub",
-                vec![file_entry_with_metadata(
+                vec![file_entry_with_timestamps(
                     "/tmp/root/folder/sub/nested.txt",
                     "folder/sub/nested.txt",
                     20,
                     Some(newer),
+                    Some(newest_created),
                 )],
                 1,
                 0,
                 20,
                 Some(newer),
+                Some(newest_created),
             ),
         );
         table.select_first();
@@ -1154,6 +1209,7 @@ mod tests {
                 subdirectory_count: 1,
                 total_size: 35,
                 modified: Some(newer),
+                created: Some(newest_created),
             })
         );
     }
@@ -1166,7 +1222,7 @@ mod tests {
         table.table_len = table.current_entries.len();
         table.dir_index.insert(
             PathBuf::from("folder"),
-            dir_view_with_cached_info("folder", vec![], 0, 7, 0, None),
+            dir_view_with_cached_info("folder", vec![], 0, 7, 0, None, None),
         );
         table.select_first();
 
