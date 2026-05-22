@@ -649,12 +649,21 @@ impl App {
     }
 
     fn mark(&mut self) {
-        if let Some(path) = self.active_selected_file() {
-            if !self.marked_files.insert(path.clone()) {
-                self.marked_files.remove(&path);
+        let changed = if matches!(self.focused_window, FocusedWindow::Files) {
+            let dir_paths = self.file_table.selected_dir_file_paths();
+            if dir_paths.is_empty() {
+                self.active_selected_file()
+                    .is_some_and(|path| toggle_marked_paths(&mut self.marked_files, &[path]))
+            } else {
+                toggle_marked_paths(&mut self.marked_files, &dir_paths)
             }
-            let v = self.marked_files.clone().into_iter().collect();
-            self.marked_table.update_table(&v, &self.file_index, None);
+        } else {
+            self.active_selected_file()
+                .is_some_and(|path| toggle_marked_paths(&mut self.marked_files, &[path]))
+        };
+
+        if changed {
+            self.update_marked_table();
             if matches!(self.focused_window, FocusedWindow::Marked) {
                 self.marked_table.select_previous(1);
             }
@@ -665,15 +674,13 @@ impl App {
         self.marked_files
             .extend(self.file_table.current_file_paths());
 
-        let v = self.marked_files.clone().into_iter().collect();
-        self.marked_table.update_table(&v, &self.file_index, None);
+        self.update_marked_table();
     }
 
     fn mark_all_clones(&mut self) {
         self.marked_files.extend(self.clone_table.paths());
 
-        let v = self.marked_files.clone().into_iter().collect();
-        self.marked_table.update_table(&v, &self.file_index, None);
+        self.update_marked_table();
     }
 
     fn mark_filter(&mut self, filter: &str) {
@@ -683,17 +690,21 @@ impl App {
             }
         }
 
-        let v = self.marked_files.clone().into_iter().collect();
-        self.marked_table.update_table(&v, &self.file_index, None);
+        self.update_marked_table();
     }
 
     fn clear_marked(&mut self) {
         self.marked_files = HashSet::new();
-        let v = self.marked_files.clone().into_iter().collect();
-        self.marked_table.update_table(&v, &self.file_index, None);
+        self.update_marked_table();
         if matches!(self.focused_window, FocusedWindow::Marked) {
             self.marked_table.select_none();
         }
+    }
+
+    fn update_marked_table(&mut self) {
+        let paths: Vec<Arc<PathBuf>> = self.marked_files.iter().cloned().collect();
+        self.marked_table
+            .update_table(&paths, &self.file_index, None);
     }
 
     fn remove_marked(&mut self, remove_callback: fn(&PathBuf) -> Result<(), ()>) {
@@ -747,6 +758,14 @@ impl App {
             FocusedWindow::Clones => self.clone_table.selected_path(),
             FocusedWindow::Marked => self.marked_table.selected_path(),
             _ => None,
+        }
+    }
+
+    fn active_mark_target_exists(&self) -> bool {
+        match self.focused_window {
+            FocusedWindow::Files => self.file_table.selected_path().is_some(),
+            FocusedWindow::Clones | FocusedWindow::Marked => self.active_selected_file().is_some(),
+            FocusedWindow::Popup => false,
         }
     }
 
@@ -1331,6 +1350,11 @@ impl App {
         } else {
             " more "
         };
+        let mark_style = if self.active_mark_target_exists() {
+            Style::new().blue().bold()
+        } else {
+            Style::new().dark_gray().bold()
+        };
         let selected_style = if self.active_selected_file().is_none() {
             Style::new().dark_gray().bold()
         } else {
@@ -1342,8 +1366,8 @@ impl App {
             Style::new().blue().bold()
         };
         let instructions_text = vec![
-            "Mark file ".into(),
-            "<space>".set_style(selected_style),
+            "Mark file/folder ".into(),
+            "<space>".set_style(mark_style),
             " Mark all clones ".into(),
             "<a>".blue().bold(),
             " Open file ".into(),
@@ -1592,12 +1616,32 @@ fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     area
 }
 
+fn toggle_marked_paths(marked_files: &mut HashSet<Arc<PathBuf>>, paths: &[Arc<PathBuf>]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+
+    if paths.iter().all(|path| marked_files.contains(path)) {
+        for path in paths {
+            marked_files.remove(path);
+        }
+    } else {
+        marked_files.extend(paths.iter().cloned());
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn esc_key_event() -> KeyEvent {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    fn path_arc(path: &str) -> Arc<PathBuf> {
+        Arc::new(PathBuf::from(path))
     }
 
     fn app_with_nested_file_table() -> App {
@@ -1617,6 +1661,29 @@ mod tests {
         app.file_table.select_first();
         app.file_table.enter_selected_dir();
         app
+    }
+
+    fn app_with_selected_directory() -> (App, Arc<PathBuf>, Arc<PathBuf>, Arc<PathBuf>) {
+        let root = PathBuf::from("/tmp/deckard-mark-test");
+        let target_paths = HashSet::from([root.clone()]);
+        let mut app = App::new(
+            target_paths,
+            SearchConfig::default(),
+            true,
+            false,
+            true,
+            false,
+        );
+        let direct = Arc::new(root.join("folder/direct.txt"));
+        let nested = Arc::new(root.join("folder/sub/nested.txt"));
+        let sibling = Arc::new(root.join("other/sibling.txt"));
+        let paths = vec![direct.clone(), nested.clone(), sibling.clone()];
+
+        app.file_table
+            .update_table(&paths, &app.file_index, Some(&Sorting::Path));
+        app.file_table.select_first();
+
+        (app, direct, nested, sibling)
     }
 
     #[test]
@@ -1646,5 +1713,79 @@ mod tests {
         assert!(app.handle_key_event(esc_key_event()).unwrap());
 
         assert!(app.should_exit);
+    }
+
+    #[test]
+    fn toggle_marked_paths_marks_all_when_partially_marked() {
+        let direct = path_arc("/tmp/folder/direct.txt");
+        let nested = path_arc("/tmp/folder/sub/nested.txt");
+        let outside = path_arc("/tmp/outside.txt");
+        let paths = vec![direct.clone(), nested.clone()];
+        let mut marked = HashSet::from([direct.clone(), outside.clone()]);
+
+        assert!(toggle_marked_paths(&mut marked, &paths));
+
+        assert!(marked.contains(&direct));
+        assert!(marked.contains(&nested));
+        assert!(marked.contains(&outside));
+    }
+
+    #[test]
+    fn toggle_marked_paths_unmarks_all_when_fully_marked() {
+        let direct = path_arc("/tmp/folder/direct.txt");
+        let nested = path_arc("/tmp/folder/sub/nested.txt");
+        let outside = path_arc("/tmp/outside.txt");
+        let paths = vec![direct.clone(), nested.clone()];
+        let mut marked = HashSet::from([direct.clone(), nested.clone(), outside.clone()]);
+
+        assert!(toggle_marked_paths(&mut marked, &paths));
+
+        assert!(!marked.contains(&direct));
+        assert!(!marked.contains(&nested));
+        assert!(marked.contains(&outside));
+    }
+
+    #[test]
+    fn toggle_marked_paths_ignores_empty_paths() {
+        let mut marked = HashSet::new();
+
+        assert!(!toggle_marked_paths(&mut marked, &[]));
+        assert!(marked.is_empty());
+    }
+
+    #[test]
+    fn mark_selected_directory_marks_recursive_files_only() {
+        let (mut app, direct, nested, sibling) = app_with_selected_directory();
+
+        app.mark();
+
+        assert!(app.marked_files.contains(&direct));
+        assert!(app.marked_files.contains(&nested));
+        assert!(!app.marked_files.contains(&sibling));
+    }
+
+    #[test]
+    fn mark_selected_directory_unmarks_when_all_children_marked() {
+        let (mut app, direct, nested, sibling) = app_with_selected_directory();
+        app.marked_files
+            .extend([direct.clone(), nested.clone(), sibling.clone()]);
+
+        app.mark();
+
+        assert!(!app.marked_files.contains(&direct));
+        assert!(!app.marked_files.contains(&nested));
+        assert!(app.marked_files.contains(&sibling));
+    }
+
+    #[test]
+    fn mark_selected_directory_marks_all_when_some_children_unmarked() {
+        let (mut app, direct, nested, sibling) = app_with_selected_directory();
+        app.marked_files.extend([direct.clone(), sibling.clone()]);
+
+        app.mark();
+
+        assert!(app.marked_files.contains(&direct));
+        assert!(app.marked_files.contains(&nested));
+        assert!(app.marked_files.contains(&sibling));
     }
 }

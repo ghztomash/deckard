@@ -571,6 +571,24 @@ impl DirTable {
         }
     }
 
+    /// Returns file paths below the selected directory row.
+    pub fn selected_dir_file_paths(&self) -> Vec<Arc<PathBuf>> {
+        let Some(selected_dir) = self.selected_dir_path() else {
+            return Vec::new();
+        };
+
+        self.dir_index
+            .iter()
+            .filter(|(dir_path, _)| dir_path.starts_with(selected_dir.as_path()))
+            .flat_map(|(_, view)| {
+                view.entries
+                    .iter()
+                    .filter(|entry| !entry.is_dir)
+                    .map(|entry| entry.path.clone())
+            })
+            .collect()
+    }
+
     pub fn render(
         &mut self,
         buf: &mut Buffer,
@@ -782,6 +800,10 @@ mod tests {
         )
     }
 
+    fn file_entry(path: Arc<PathBuf>, display_path: &str) -> DirTableEntry {
+        DirTableEntry::new(path, display_path.to_string(), 0, None, 0, false)
+    }
+
     fn dir_entry(path: &str) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(path)),
@@ -883,6 +905,74 @@ mod tests {
         ];
 
         assert_eq!(table.current_file_paths(), vec![file_path]);
+    }
+
+    #[test]
+    fn selected_dir_file_paths_includes_direct_and_nested_files() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        let direct = Arc::new(PathBuf::from("/tmp/root/folder/direct.txt"));
+        let nested = Arc::new(PathBuf::from("/tmp/root/folder/sub/nested.txt"));
+
+        table.current_entries = vec![dir_entry("folder")];
+        table.table_len = table.current_entries.len();
+        table.dir_index.insert(
+            PathBuf::from("folder"),
+            dir_view(
+                "folder",
+                vec![
+                    file_entry(direct.clone(), "folder/direct.txt"),
+                    dir_entry("folder/sub"),
+                ],
+            ),
+        );
+        table.dir_index.insert(
+            PathBuf::from("folder/sub"),
+            dir_view(
+                "folder/sub",
+                vec![file_entry(nested.clone(), "folder/sub/nested.txt")],
+            ),
+        );
+        table.select_first();
+
+        assert_eq!(table.selected_dir_file_paths(), vec![direct, nested]);
+    }
+
+    #[test]
+    fn selected_dir_file_paths_excludes_similarly_named_siblings() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        let selected_file = Arc::new(PathBuf::from("/tmp/root/folder/file.txt"));
+        let sibling_file = Arc::new(PathBuf::from("/tmp/root/folder-sibling/file.txt"));
+
+        table.current_entries = vec![dir_entry("folder")];
+        table.table_len = table.current_entries.len();
+        table.dir_index.insert(
+            PathBuf::from("folder"),
+            dir_view(
+                "folder",
+                vec![file_entry(selected_file.clone(), "folder/file.txt")],
+            ),
+        );
+        table.dir_index.insert(
+            PathBuf::from("folder-sibling"),
+            dir_view(
+                "folder-sibling",
+                vec![file_entry(sibling_file, "folder-sibling/file.txt")],
+            ),
+        );
+        table.select_first();
+
+        assert_eq!(table.selected_dir_file_paths(), vec![selected_file]);
+    }
+
+    #[test]
+    fn selected_dir_file_paths_is_empty_without_selected_dir() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        let file_path = Arc::new(PathBuf::from("/tmp/root/file.txt"));
+        table.current_entries = vec![file_entry(file_path, "file.txt")];
+        table.table_len = table.current_entries.len();
+        table.select_first();
+
+        assert!(table.selected_dir_file_paths().is_empty());
     }
 
     #[test]
