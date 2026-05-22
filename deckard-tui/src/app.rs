@@ -402,7 +402,8 @@ impl App {
                         true
                     }
 
-                    KeyCode::Char('q') | KeyCode::Esc => self.exit(),
+                    KeyCode::Char('q') => self.exit(),
+                    KeyCode::Esc => self.back_dir_or_exit(),
                     KeyCode::Char('i') => {
                         self.toggle_info();
                         true
@@ -535,6 +536,16 @@ impl App {
         }
         self.should_exit = true;
         true
+    }
+
+    fn back_dir_or_exit(&mut self) -> bool {
+        if matches!(self.focused_window, FocusedWindow::Files) && self.file_table.back_parent_dir()
+        {
+            self.update_clone_table();
+            true
+        } else {
+            self.exit()
+        }
     }
 
     fn enter_command_mode(&mut self) -> bool {
@@ -1579,4 +1590,61 @@ fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     let [area] = vertical.areas(area);
     let [area] = horizontal.areas(area);
     area
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn esc_key_event() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    fn app_with_nested_file_table() -> App {
+        let root = PathBuf::from("/tmp/deckard-esc-test");
+        let target_paths = HashSet::from([root.clone()]);
+        let mut app = App::new(
+            target_paths,
+            SearchConfig::default(),
+            true,
+            false,
+            true,
+            false,
+        );
+        let paths = vec![Arc::new(root.join("deckard-tui/Cargo.toml"))];
+        app.file_table
+            .update_table(&paths, &app.file_index, Some(&Sorting::Path));
+        app.file_table.select_first();
+        app.file_table.enter_selected_dir();
+        app
+    }
+
+    #[test]
+    fn esc_goes_up_when_files_view_is_nested() {
+        let mut app = app_with_nested_file_table();
+
+        assert!(app.handle_key_event(esc_key_event()).unwrap());
+
+        assert!(!app.should_exit);
+    }
+
+    #[test]
+    fn esc_quits_when_files_view_is_at_top_level() {
+        let mut app = app_with_nested_file_table();
+        app.handle_key_event(esc_key_event()).unwrap();
+
+        assert!(app.handle_key_event(esc_key_event()).unwrap());
+
+        assert!(app.should_exit);
+    }
+
+    #[test]
+    fn esc_quits_when_non_files_view_is_focused() {
+        let mut app = app_with_nested_file_table();
+        app.focused_window = FocusedWindow::Clones;
+
+        assert!(app.handle_key_event(esc_key_event()).unwrap());
+
+        assert!(app.should_exit);
+    }
 }

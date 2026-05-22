@@ -458,15 +458,25 @@ impl DirTable {
         }
     }
 
-    pub fn back_parent_dir(&mut self) {
-        if let Some(selected) = self.current_dir.clone()
-            && let Some(dir) = self.dir_index.get(&selected)
-            && let Some(parent) = dir.parent()
+    /// Moves to the parent directory if the current view has one.
+    pub fn back_parent_dir(&mut self) -> bool {
+        let parent = self
+            .current_dir
+            .as_ref()
+            .and_then(|selected| self.dir_index.get(selected))
+            .and_then(DirView::parent)
+            .map(Path::to_path_buf);
+
+        if let Some(parent) = parent
+            && self.dir_index.contains_key(&parent)
         {
-            self.set_current_dir(parent.to_owned());
+            self.set_current_dir(parent);
             if let Some(index) = self.selected_dir_history.pop() {
                 self.select_entry(index);
             }
+            true
+        } else {
+            false
         }
     }
 
@@ -794,6 +804,46 @@ mod tests {
         let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
         table.common_path = Some(PathBuf::from(common_path));
         table
+    }
+
+    fn dir_view(path: &str, entries: Vec<DirTableEntry>) -> DirView {
+        DirView {
+            path: Arc::new(PathBuf::from(path)),
+            entries,
+            file_count: 0,
+            total_size: 0,
+        }
+    }
+
+    #[test]
+    fn back_parent_dir_moves_to_parent_when_nested() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        table
+            .dir_index
+            .insert(PathBuf::new(), dir_view("", vec![dir_entry("deckard-tui")]));
+        table.dir_index.insert(
+            PathBuf::from("deckard-tui"),
+            dir_view("deckard-tui", vec![entry(1)]),
+        );
+        table.current_dir = Some(PathBuf::from("deckard-tui"));
+        table.selected_dir_history.push(0);
+
+        assert!(table.back_parent_dir());
+        assert_eq!(table.current_dir, Some(PathBuf::new()));
+        assert_eq!(table.table_state.selected(), Some(0));
+        assert!(table.selected_dir_history.is_empty());
+    }
+
+    #[test]
+    fn back_parent_dir_returns_false_at_top_level() {
+        let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
+        table
+            .dir_index
+            .insert(PathBuf::new(), dir_view("", vec![dir_entry("deckard-tui")]));
+        table.current_dir = Some(PathBuf::new());
+
+        assert!(!table.back_parent_dir());
+        assert_eq!(table.current_dir, Some(PathBuf::new()));
     }
 
     #[test]
