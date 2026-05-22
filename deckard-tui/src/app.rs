@@ -107,6 +107,7 @@ pub struct App {
     clone_table: DirTable,
     marked_table: DirTable,
     marked_files: HashSet<Arc<PathBuf>>,
+    marked_dirs: HashSet<PathBuf>,
     disk_usage_mode: bool,
     show_clones_table: bool,
     show_marked_table: bool,
@@ -253,6 +254,7 @@ impl App {
             clone_table: DirTable::new(vec![" ", "Clone", "Date", "Size"], true, false, true),
             marked_table: DirTable::new(vec![" ", "Marked"], false, false, true),
             marked_files: HashSet::new(),
+            marked_dirs: HashSet::new(),
             disk_usage_mode: disk_usage,
             show_marked_table: true,
             show_clones_table: !disk_usage,
@@ -706,6 +708,11 @@ impl App {
         let paths: Vec<Arc<PathBuf>> = self.marked_files.iter().cloned().collect();
         self.marked_table
             .update_table(&paths, &self.file_index, None);
+        self.refresh_marked_dirs();
+    }
+
+    fn refresh_marked_dirs(&mut self) {
+        self.marked_dirs = self.file_table.marked_directory_paths(&self.marked_files);
     }
 
     fn remove_marked(&mut self, remove_callback: fn(&PathBuf) -> Result<(), ()>) {
@@ -950,6 +957,7 @@ impl App {
     }
 
     fn update_file_table(&mut self) {
+        let update_start = Instant::now();
         let paths: Vec<Arc<PathBuf>> = if self.disk_usage_mode {
             // use files map for disk usage mode
             self.file_index
@@ -987,6 +995,15 @@ impl App {
         } else {
             self.file_table.clear();
         }
+        self.refresh_marked_dirs();
+
+        debug!(
+            "update_file_table built from {} paths in {:?} (filter={:?}, flattened={})",
+            paths.len(),
+            update_start.elapsed(),
+            self.display_filter,
+            self.flatten_dirs
+        );
     }
 
     fn update_clone_table(&mut self) {
@@ -1358,6 +1375,7 @@ impl App {
             main_sub_area_top[0], // top left
             matches!(self.focused_window, FocusedWindow::Files),
             &self.marked_files,
+            &self.marked_dirs,
         );
         if self.show_clones_table {
             self.clone_table.render(
@@ -1365,6 +1383,7 @@ impl App {
                 main_sub_area_top[1], // top right
                 matches!(self.focused_window, FocusedWindow::Clones),
                 &self.marked_files,
+                &self.marked_dirs,
             );
         }
         if self.show_marked_table {
@@ -1378,6 +1397,7 @@ impl App {
                 rect_area,
                 matches!(self.focused_window, FocusedWindow::Marked),
                 &self.marked_files,
+                &self.marked_dirs,
             );
         }
         if self.show_file_info {
@@ -1425,7 +1445,12 @@ impl App {
         self.current_state = state;
 
         if reached_done {
+            let update_start = Instant::now();
             self.update_tables();
+            debug!(
+                "state transition to Done rebuilt tables in {:?}",
+                update_start.elapsed()
+            );
         }
 
         true

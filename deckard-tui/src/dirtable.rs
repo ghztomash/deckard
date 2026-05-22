@@ -15,6 +15,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
+    time::Instant,
     time::SystemTime,
 };
 use tracing::debug;
@@ -22,7 +23,7 @@ use tracing::debug;
 #[derive(Debug, Default, Clone)]
 pub struct DirTableEntry {
     path: Arc<PathBuf>,
-    display_path: String,
+    relative_path: PathBuf,
     display_text: String,
     name_text: String,
     size: u64,
@@ -38,13 +39,14 @@ pub struct DirTableEntry {
 impl DirTableEntry {
     fn new(
         path: Arc<PathBuf>,
-        display_path: String,
+        relative_path: PathBuf,
         size: u64,
         date: Option<SystemTime>,
         created: Option<SystemTime>,
         clone_count: usize,
         is_dir: bool,
     ) -> Self {
+        let display_path = relative_path.to_string_lossy().to_string();
         let suffix = if is_dir { "/" } else { "" };
         let display_text = format!("{display_path}{suffix}");
         let name_text = format!(
@@ -59,7 +61,7 @@ impl DirTableEntry {
 
         Self {
             path,
-            display_path,
+            relative_path,
             display_text,
             name_text,
             size,
@@ -245,6 +247,8 @@ impl DirTable {
     }
 
     fn update_dirview(&mut self, files: &Vec<DirTableEntry>, sort_by: Option<&Sorting>) {
+        let build_start = Instant::now();
+
         // Temporary accumulator per directory during build.
         #[derive(Debug, Default, Clone)]
         struct Acc {
@@ -261,7 +265,7 @@ impl DirTable {
         let mut acc_map: BTreeMap<PathBuf, Acc> = BTreeMap::new();
 
         for file in files {
-            let path = PathBuf::from(file.display_path.clone());
+            let path = file.relative_path.clone();
             if let Some(parent) = path.parent() {
                 let parent = parent.to_path_buf();
                 let size = file.size;
@@ -355,18 +359,15 @@ impl DirTable {
             count
         }
 
-        debug!("acc_map: {:#?}", acc_map);
-
         let mut subdirectory_counts = BTreeMap::new();
 
         // Convert to DirView structs
         self.dir_index = acc_map
-            .clone() // TODO: fix this abomination
-            .into_iter()
+            .iter()
             .map(|(path, acc)| {
                 let path_arc = Arc::new(path.clone());
                 let subdirectory_count =
-                    count_subdirectories(&path, &acc_map, &mut subdirectory_counts);
+                    count_subdirectories(path, &acc_map, &mut subdirectory_counts);
 
                 let mut entries: Vec<DirTableEntry> = acc
                     .subdirs
@@ -380,9 +381,7 @@ impl DirTable {
 
                         DirTableEntry::new(
                             Arc::new(d.to_owned()),
-                            d.file_name()
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_default(),
+                            d.to_owned(),
                             size,
                             date,
                             c.created,
@@ -396,7 +395,7 @@ impl DirTable {
                 assert_eq!(size, acc.direct_size);
                 assert_eq!(acc.files.len(), acc.direct_count);
 
-                entries.extend(acc.files);
+                entries.extend(acc.files.iter().cloned());
 
                 // Sort the entries
                 if let Some(sort_by) = sort_by {
@@ -417,11 +416,16 @@ impl DirTable {
                     modified: acc.date,
                     created: acc.created,
                 };
-                (path, view)
+                (path.clone(), view)
             })
             .collect();
 
-        debug!("dir_index= {:#?}", self.dir_index);
+        debug!(
+            "update_dirview built {} dirs from {} files in {:?}",
+            self.dir_index.len(),
+            files.len(),
+            build_start.elapsed()
+        );
     }
 
     pub fn update_table(
@@ -430,6 +434,8 @@ impl DirTable {
         file_index: &Arc<RwLock<FileIndex>>,
         sort_by: Option<&Sorting>,
     ) {
+        let update_start = Instant::now();
+
         // Lock the FileIndex only once, then copy out the data we need:
         let (mut entries, total_size, common_path) = {
             let fi = file_index.read().unwrap();
@@ -443,13 +449,17 @@ impl DirTable {
                 let size = fi.file_size(path).unwrap_or_default();
                 let date = fi.file_date_modified(path); // or created
                 let created = fi.file_date_created(path);
-                let display_path = format_path_with_common(path, common_path.as_ref());
+                let relative_path = common_path
+                    .as_ref()
+                    .and_then(|common_path| path.strip_prefix(common_path).ok())
+                    .unwrap_or(path.as_path())
+                    .to_path_buf();
                 let clone_count = fi.file_duplicates_len(path).unwrap_or_default();
                 total_size_acc += size;
 
                 entries_vec.push(DirTableEntry::new(
                     path.clone(),
-                    display_path,
+                    relative_path,
                     size,
                     date,
                     created,
@@ -492,6 +502,14 @@ impl DirTable {
         self.table_len = self.current_entries.len();
         self.scroll_state = ScrollbarState::new(self.table_len);
         self.update_footer();
+
+        debug!(
+            "update_table built {} entries (flattened={}) from {} paths in {:?}",
+            self.table_len,
+            self.flatten_dirs,
+            paths.len(),
+            update_start.elapsed()
+        );
     }
 
     fn update_footer(&mut self) {
@@ -674,6 +692,27 @@ impl DirTable {
         })
     }
 
+    pub fn marked_directory_paths(&self, marked_files: &HashSet<Arc<PathBuf>>) -> HashSet<PathBuf> {
+        marked_files
+            .iter()
+            .filter_map(|marked_file| {
+                self.common_path
+                    .as_ref()
+                    .and_then(|common_path| marked_file.strip_prefix(common_path).ok())
+                    .or(Some(marked_file.as_path()))
+                    .map(Path::to_path_buf)
+            })
+            .flat_map(|relative_path| {
+                relative_path
+                    .ancestors()
+                    .skip(1)
+                    .filter(|ancestor| !ancestor.as_os_str().is_empty())
+                    .map(Path::to_path_buf)
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     fn resolved_dir_path(&self, selected_dir: &Path) -> PathBuf {
         self.common_path
             .as_ref()
@@ -687,6 +726,7 @@ impl DirTable {
         area: Rect,
         focused: bool,
         marked_files: &HashSet<Arc<PathBuf>>,
+        marked_dirs: &HashSet<PathBuf>,
     ) {
         let visible = self.visible_range(area);
         let rows = self.current_entries[visible.start..visible.end]
@@ -694,7 +734,7 @@ impl DirTable {
             .map(|e| {
                 e.to_row(
                     self.mark_marked,
-                    self.entry_is_marked(e, marked_files),
+                    self.entry_is_marked(e, marked_files, marked_dirs),
                     self.show_clone_count,
                     !self.flatten_dirs,
                 )
@@ -736,17 +776,14 @@ impl DirTable {
         );
     }
 
-    fn entry_is_marked(&self, entry: &DirTableEntry, marked_files: &HashSet<Arc<PathBuf>>) -> bool {
+    fn entry_is_marked(
+        &self,
+        entry: &DirTableEntry,
+        marked_files: &HashSet<Arc<PathBuf>>,
+        marked_dirs: &HashSet<PathBuf>,
+    ) -> bool {
         if entry.is_dir {
-            marked_files.iter().any(|marked_file| {
-                let marked_file = self
-                    .common_path
-                    .as_ref()
-                    .and_then(|common_path| marked_file.strip_prefix(common_path).ok())
-                    .unwrap_or(marked_file.as_path());
-
-                marked_file.starts_with(entry.path.as_path())
-            })
+            marked_dirs.contains(entry.path.as_path())
         } else {
             marked_files.contains(&entry.path)
         }
@@ -877,15 +914,6 @@ fn clamp_offset(
     start.min(max_start)
 }
 
-pub fn format_path_with_common(path: &PathBuf, common_path: Option<&PathBuf>) -> String {
-    let relative_path = if let Some(common_path) = common_path {
-        path.strip_prefix(common_path).unwrap_or(path)
-    } else {
-        path
-    };
-    relative_path.to_string_lossy().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -893,7 +921,7 @@ mod tests {
     fn entry(index: usize) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(format!("/tmp/file-{index}"))),
-            format!("file-{index}"),
+            PathBuf::from(format!("file-{index}")),
             index as u64,
             None,
             None,
@@ -903,7 +931,7 @@ mod tests {
     }
 
     fn file_entry(path: Arc<PathBuf>, display_path: &str) -> DirTableEntry {
-        DirTableEntry::new(path, display_path.to_string(), 0, None, None, 0, false)
+        DirTableEntry::new(path, PathBuf::from(display_path), 0, None, None, 0, false)
     }
 
     fn file_entry_with_timestamps(
@@ -915,7 +943,7 @@ mod tests {
     ) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(path)),
-            display_path.to_string(),
+            PathBuf::from(display_path),
             size,
             modified,
             created,
@@ -927,7 +955,7 @@ mod tests {
     fn dir_entry(path: &str) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(path)),
-            path.to_string(),
+            PathBuf::from(path),
             0,
             None,
             None,
@@ -943,7 +971,7 @@ mod tests {
     ) -> DirTableEntry {
         DirTableEntry::new(
             Arc::new(PathBuf::from(path)),
-            path.to_string(),
+            PathBuf::from(path),
             0,
             modified,
             created,
@@ -957,6 +985,10 @@ mod tests {
             .iter()
             .map(|path| Arc::new(PathBuf::from(path)))
             .collect()
+    }
+
+    fn marked_dirs(table: &DirTable, marked: &HashSet<Arc<PathBuf>>) -> HashSet<PathBuf> {
+        table.marked_directory_paths(marked)
     }
 
     fn table_with_common_path(common_path: &str) -> DirTable {
@@ -1033,27 +1065,47 @@ mod tests {
     fn marks_only_real_ancestor_directories() {
         let table = table_with_common_path("/home/user/deckard");
         let marked = marked_files(&["/home/user/deckard/deckard-tui/Cargo.toml"]);
+        let marked_dirs = marked_dirs(&table, &marked);
 
-        assert!(table.entry_is_marked(&dir_entry("deckard-tui"), &marked));
-        assert!(!table.entry_is_marked(&dir_entry("deckard"), &marked));
+        assert!(table.entry_is_marked(&dir_entry("deckard-tui"), &marked, &marked_dirs));
+        assert!(!table.entry_is_marked(&dir_entry("deckard"), &marked, &marked_dirs));
     }
 
     #[test]
     fn root_files_do_not_mark_substring_named_dirs() {
         let table = table_with_common_path("/home/user/deckard");
         let marked = marked_files(&["/home/user/deckard/.gitignore"]);
+        let marked_dirs = marked_dirs(&table, &marked);
 
-        assert!(!table.entry_is_marked(&dir_entry("deckard"), &marked));
-        assert!(!table.entry_is_marked(&dir_entry(".git"), &marked));
+        assert!(!table.entry_is_marked(&dir_entry("deckard"), &marked, &marked_dirs));
+        assert!(!table.entry_is_marked(&dir_entry(".git"), &marked, &marked_dirs));
     }
 
     #[test]
     fn nested_files_mark_component_ancestors() {
         let table = table_with_common_path("/home/user/deckard");
         let marked = marked_files(&["/home/user/deckard/deckard/src/lib.rs"]);
+        let marked_dirs = marked_dirs(&table, &marked);
 
-        assert!(table.entry_is_marked(&dir_entry("deckard"), &marked));
-        assert!(table.entry_is_marked(&dir_entry("deckard/src"), &marked));
+        assert!(table.entry_is_marked(&dir_entry("deckard"), &marked, &marked_dirs));
+        assert!(table.entry_is_marked(&dir_entry("deckard/src"), &marked, &marked_dirs));
+    }
+
+    #[test]
+    fn marked_directory_paths_excludes_file_names_and_root() {
+        let table = table_with_common_path("/home/user/deckard");
+        let marked = marked_files(&[
+            "/home/user/deckard/deckard/src/lib.rs",
+            "/home/user/deckard/deckard-tui/Cargo.toml",
+        ]);
+
+        let marked_dirs = table.marked_directory_paths(&marked);
+
+        assert!(marked_dirs.contains(Path::new("deckard")));
+        assert!(marked_dirs.contains(Path::new("deckard/src")));
+        assert!(marked_dirs.contains(Path::new("deckard-tui")));
+        assert!(!marked_dirs.contains(Path::new("deckard/src/lib.rs")));
+        assert!(!marked_dirs.contains(Path::new("")));
     }
 
     #[test]
@@ -1064,7 +1116,7 @@ mod tests {
             dir_entry("deckard"),
             DirTableEntry::new(
                 file_path.clone(),
-                "file".to_string(),
+                PathBuf::from("file"),
                 0,
                 None,
                 None,
@@ -1338,7 +1390,7 @@ mod tests {
 
         let area = Rect::new(0, 0, 80, 8);
         let mut buf = Buffer::empty(area);
-        table.render(&mut buf, area, true, &HashSet::new());
+        table.render(&mut buf, area, true, &HashSet::new(), &HashSet::new());
 
         let output = buf
             .content()
