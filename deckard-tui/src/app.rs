@@ -784,6 +784,20 @@ impl App {
         }
     }
 
+    fn active_selected_path(&self) -> Option<Arc<PathBuf>> {
+        match self.focused_window {
+            FocusedWindow::Files => self.file_table.selected_resolved_path(),
+            FocusedWindow::Clones => self.clone_table.selected_path(),
+            FocusedWindow::Marked => self.marked_table.selected_path(),
+            FocusedWindow::Popup => None,
+        }
+    }
+
+    fn active_selected_parent_path(&self) -> Option<PathBuf> {
+        self.active_selected_path()
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+    }
+
     fn active_mark_target_exists(&self) -> bool {
         match self.focused_window {
             FocusedWindow::Files => self.file_table.selected_path().is_some(),
@@ -793,12 +807,12 @@ impl App {
     }
 
     fn copy_path(&mut self) {
-        if let Some(selected_file) = self.active_selected_file() {
+        if let Some(selected_path) = self.active_selected_path() {
             self.clipboard.as_mut().map_or_else(
                 || warn!("No Clipboard found"),
                 |clipboard| {
-                    debug!("Copying path to clipboard {:?}", selected_file);
-                    if let Err(e) = clipboard.set_text(selected_file.to_string_lossy()) {
+                    debug!("Copying path to clipboard {:?}", selected_path);
+                    if let Err(e) = clipboard.set_text(selected_path.to_string_lossy()) {
                         error!("Failed to set Clipboard {}", e);
                     }
                 },
@@ -807,15 +821,13 @@ impl App {
     }
 
     fn open_file(&mut self) {
-        if let Some(selected_file) = self.active_selected_file() {
-            _ = open::that_detached(selected_file.as_ref());
+        if let Some(selected_path) = self.active_selected_path() {
+            _ = open::that_detached(selected_path.as_ref());
         }
     }
 
     fn open_path(&mut self) {
-        if let Some(selected_file) = self.active_selected_file()
-            && let Some(path) = selected_file.parent()
-        {
+        if let Some(path) = self.active_selected_parent_path() {
             _ = open::that_detached(path);
         }
     }
@@ -1271,7 +1283,7 @@ impl App {
         } else {
             Style::new().dark_gray().bold()
         };
-        let selected_style = if self.active_selected_file().is_none() {
+        let selected_style = if self.active_selected_path().is_none() {
             Style::new().dark_gray().bold()
         } else {
             Style::new().blue().bold()
@@ -1800,6 +1812,49 @@ mod tests {
         assert!(app.handle_key_event(esc_key_event()).unwrap());
 
         assert!(app.should_exit);
+    }
+
+    #[test]
+    fn active_selected_path_resolves_selected_directory() {
+        let (app, _direct, _nested, _sibling) = app_with_selected_directory();
+
+        assert_eq!(
+            app.active_selected_path().as_deref().map(PathBuf::as_path),
+            Some(PathBuf::from("/tmp/deckard-mark-test/folder").as_path())
+        );
+    }
+
+    #[test]
+    fn active_selected_parent_path_uses_directory_parent() {
+        let (app, _direct, _nested, _sibling) = app_with_selected_directory();
+
+        assert_eq!(
+            app.active_selected_parent_path().as_deref(),
+            Some(PathBuf::from("/tmp/deckard-mark-test").as_path())
+        );
+    }
+
+    #[test]
+    fn active_selected_path_keeps_selected_file_path() {
+        let app = app_with_nested_file_table();
+
+        assert_eq!(
+            app.active_selected_path().as_deref().map(PathBuf::as_path),
+            Some(PathBuf::from("/tmp/deckard-esc-test/deckard-tui/Cargo.toml").as_path())
+        );
+        assert_eq!(
+            app.active_selected_parent_path().as_deref(),
+            Some(PathBuf::from("/tmp/deckard-esc-test/deckard-tui").as_path())
+        );
+    }
+
+    #[test]
+    fn active_selected_path_is_none_without_selection() {
+        let mut app = app_with_nested_file_table();
+        app.file_table.select_none();
+
+        assert!(app.active_selected_path().is_none());
+        assert!(app.active_selected_parent_path().is_none());
     }
 
     #[test]

@@ -472,6 +472,16 @@ impl DirTable {
         self.selected_path.clone()
     }
 
+    /// Returns the selected file path or the resolved filesystem path for a selected directory.
+    pub fn selected_resolved_path(&self) -> Option<Arc<PathBuf>> {
+        let selected_path = self.selected_path.as_ref()?;
+        if self.selected_path_is_dir {
+            Some(Arc::new(self.resolved_dir_path(selected_path.as_path())))
+        } else {
+            Some(selected_path.clone())
+        }
+    }
+
     pub fn selected_path_is_dir(&self) -> bool {
         self.selected_path_is_dir
     }
