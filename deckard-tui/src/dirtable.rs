@@ -49,7 +49,6 @@ impl DirTableEntry {
         relative_path: PathBuf,
         size: u64,
         date: Option<SystemTime>,
-        _created: Option<SystemTime>,
         clone_count: usize,
         is_dir: bool,
     ) -> Self {
@@ -86,7 +85,6 @@ impl DirTableEntry {
             relative_path,
             record.size,
             record.modified,
-            record.created,
             record.clone_count,
             false,
         )
@@ -289,8 +287,7 @@ impl DirTable {
             self.dir_nodes.clear();
         } else {
             let build_start = Instant::now();
-            self.dir_nodes =
-                build_directory_nodes(paths, &fi, self.common_path.as_deref());
+            self.dir_nodes = build_directory_nodes(paths, &fi, self.common_path.as_deref());
             debug!(
                 "built {} compact directory nodes from {} files in {:?}",
                 self.dir_nodes.len(),
@@ -342,7 +339,6 @@ impl DirTable {
                     child_path.clone(),
                     child.total_size,
                     child.modified,
-                    child.created,
                     child.file_count,
                     true,
                 )
@@ -654,10 +650,6 @@ impl DirTable {
                 .map(|d| d.display().to_string())
                 .unwrap_or_default(),
         )
-        .title_bottom(format!(
-            "{:?} {:?}",
-            self.selected_dir_history, self.selected_path
-        ))
     }
 
     fn header(&self) -> Row<'_> {
@@ -940,14 +932,13 @@ mod tests {
             PathBuf::from(format!("file-{index}")),
             index as u64,
             None,
-            None,
             index,
             false,
         )
     }
 
     fn file_entry(path: Arc<PathBuf>, display_path: &str) -> DirTableEntry {
-        DirTableEntry::new(path, PathBuf::from(display_path), 0, None, None, 0, false)
+        DirTableEntry::new(path, PathBuf::from(display_path), 0, None, 0, false)
     }
 
     fn dir_entry(path: &str) -> DirTableEntry {
@@ -955,7 +946,6 @@ mod tests {
             Arc::new(PathBuf::from(path)),
             PathBuf::from(path),
             0,
-            None,
             None,
             0,
             true,
@@ -993,10 +983,7 @@ mod tests {
         Arc::new(PathBuf::from(path))
     }
 
-    fn file_index_with_entries(
-        root: &str,
-        entries: &[TestFileEntry],
-    ) -> Arc<RwLock<FileIndex>> {
+    fn file_index_with_entries(root: &str, entries: &[TestFileEntry]) -> Arc<RwLock<FileIndex>> {
         let mut file_index = FileIndex::new(
             HashSet::from([PathBuf::from(root)]),
             deckard::config::SearchConfig::default(),
@@ -1170,15 +1157,7 @@ mod tests {
         let file_path = Arc::new(PathBuf::from("/tmp/file"));
         table.current_entries = vec![
             dir_entry("deckard"),
-            DirTableEntry::new(
-                file_path.clone(),
-                PathBuf::from("file"),
-                0,
-                None,
-                None,
-                0,
-                false,
-            ),
+            DirTableEntry::new(file_path.clone(), PathBuf::from("file"), 0, None, 0, false),
         ];
 
         assert_eq!(table.current_file_paths(), vec![file_path]);
@@ -1451,7 +1430,10 @@ mod tests {
         let paths = vec![selected.clone(), sibling.clone()];
         let file_index = file_index_with_entries(
             "/tmp/root",
-            &[(selected.clone(), 10, None, None), (sibling, 20, None, None)],
+            &[
+                (selected.clone(), 10, None, None),
+                (sibling, 20, None, None),
+            ],
         );
         let mut table = DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false);
 
@@ -1465,9 +1447,11 @@ mod tests {
 
         assert_eq!(table.selected_dir_file_paths(), vec![selected]);
         assert_eq!(
-            table
-                .selected_dir_info()
-                .map(|info| (info.file_count, info.subdirectory_count, info.total_size)),
+            table.selected_dir_info().map(|info| (
+                info.file_count,
+                info.subdirectory_count,
+                info.total_size
+            )),
             Some((1, 0, 10))
         );
     }
@@ -1491,7 +1475,12 @@ mod tests {
         let small = path("/tmp/root/a/small.txt");
         let large = path("/tmp/root/b/large.txt");
         let nested = path("/tmp/root/b/sub/tiny.txt");
-        let paths = vec![root_file.clone(), small.clone(), large.clone(), nested.clone()];
+        let paths = vec![
+            root_file.clone(),
+            small.clone(),
+            large.clone(),
+            nested.clone(),
+        ];
         let file_index = file_index_with_entries(
             "/tmp/root",
             &[

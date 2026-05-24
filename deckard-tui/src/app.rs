@@ -1265,11 +1265,11 @@ impl App {
             Style::new().blue().bold()
         };
         let instructions_text = vec![
-            "Mark file/folder ".into(),
+            "Mark ".into(),
             "<space>".set_style(mark_style),
             " Mark all clones ".into(),
             "<a>".blue().bold(),
-            " Open file ".into(),
+            " Open ".into(),
             "<o>".set_style(selected_style),
             " Open path ".into(),
             "<p>".set_style(selected_style),
