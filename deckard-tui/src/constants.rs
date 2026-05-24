@@ -17,6 +17,7 @@ pub const HELP_TEXT: &str = concat!(
     "written by ",
     env!("CARGO_PKG_AUTHORS"),
     "\n",
+    "\n",
     env!("CARGO_PKG_DESCRIPTION"),
     "\n",
     "\n",

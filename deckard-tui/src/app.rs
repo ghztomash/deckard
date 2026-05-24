@@ -12,10 +12,13 @@ use futures::StreamExt;
 use ratatui::widgets::Padding;
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Flex, Layout, Rect},
+    layout::{Constraint, Direction, Flex, Layout, Margin, Rect},
     style::{Color, Style, Styled, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, Gauge, Paragraph, Widget, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, Gauge, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, StatefulWidget, Widget, Wrap,
+    },
 };
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -127,6 +130,7 @@ pub struct App {
     frame_count: usize,
     last_render: Instant,
     last_render_took: Duration,
+    about_scroll: u16,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -276,6 +280,7 @@ impl App {
             frame_count: 0,
             last_render: Instant::now(),
             last_render_took: Duration::default(),
+            about_scroll: 0,
         }
     }
 
@@ -366,109 +371,113 @@ impl App {
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<bool> {
         let changed = match self.mode {
             Mode::Normal => {
-                let handled = match key_event.code {
-                    // page move
-                    KeyCode::Char('J') | KeyCode::Down
-                        if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
-                    {
-                        self.next_file(true);
-                        true
-                    }
-                    KeyCode::Char('K') | KeyCode::Up
-                        if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
-                    {
-                        self.previous_file(true);
-                        true
-                    }
-                    // regular move
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        self.next_file(false);
-                        true
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        self.previous_file(false);
-                        true
-                    }
+                let handled = if matches!(self.focused_window, FocusedWindow::Popup) {
+                    self.handle_popup_key_event(key_event)
+                } else {
+                    match key_event.code {
+                        // page move
+                        KeyCode::Char('J') | KeyCode::Down
+                            if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
+                        {
+                            self.next_file(true);
+                            true
+                        }
+                        KeyCode::Char('K') | KeyCode::Up
+                            if key_event.modifiers.contains(KeyModifiers::SHIFT) =>
+                        {
+                            self.previous_file(true);
+                            true
+                        }
+                        // regular move
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            self.next_file(false);
+                            true
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            self.previous_file(false);
+                            true
+                        }
 
-                    // dir navigation
-                    KeyCode::Right if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
-                        self.enter_dir(false);
-                        true
-                    }
-                    KeyCode::Enter => {
-                        self.enter_dir(false);
-                        true
-                    }
-                    KeyCode::Left if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
-                        self.enter_dir(true);
-                        true
-                    }
+                        // dir navigation
+                        KeyCode::Right if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
+                            self.enter_dir(false);
+                            true
+                        }
+                        KeyCode::Enter => {
+                            self.enter_dir(false);
+                            true
+                        }
+                        KeyCode::Left if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
+                            self.enter_dir(true);
+                            true
+                        }
 
-                    KeyCode::Char('q') => self.exit(),
-                    KeyCode::Esc => self.handle_escape(),
-                    KeyCode::Char('i') => {
-                        self.toggle_info();
-                        true
+                        KeyCode::Char('q') => self.exit(),
+                        KeyCode::Esc => self.handle_escape(),
+                        KeyCode::Char('i') => {
+                            self.toggle_info();
+                            true
+                        }
+                        KeyCode::Char('o') => {
+                            self.open_file();
+                            true
+                        }
+                        KeyCode::Char('p') => {
+                            self.open_path();
+                            true
+                        }
+                        KeyCode::Char('D') | KeyCode::Delete => {
+                            self.delete();
+                            true
+                        }
+                        KeyCode::Char('T') | KeyCode::Backspace => {
+                            self.trash();
+                            true
+                        }
+                        KeyCode::Char('c') => {
+                            self.toggle_show_clones_table();
+                            true
+                        }
+                        KeyCode::Char(' ') => {
+                            self.mark();
+                            true
+                        }
+                        KeyCode::Char('a') => {
+                            self.mark_all_clones();
+                            true
+                        }
+                        KeyCode::Char('A') => {
+                            self.clear_marked();
+                            true
+                        }
+                        KeyCode::Char('m') => {
+                            self.toggle_show_marked_table();
+                            true
+                        }
+                        KeyCode::Char('y') => {
+                            self.copy_path();
+                            true
+                        }
+                        KeyCode::Char('.') => {
+                            self.toggle_more_keys();
+                            true
+                        }
+                        KeyCode::Char('?') => self.toggle_about(),
+                        KeyCode::Char('s') => {
+                            self.cycle_sort_by();
+                            true
+                        }
+                        KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
+                            self.focus_next_table();
+                            true
+                        }
+                        KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
+                            self.focus_previus_table();
+                            true
+                        }
+                        KeyCode::Char(':') => self.enter_command_mode(),
+                        _ => false,
                     }
-                    KeyCode::Char('o') => {
-                        self.open_file();
-                        true
-                    }
-                    KeyCode::Char('p') => {
-                        self.open_path();
-                        true
-                    }
-                    KeyCode::Char('D') | KeyCode::Delete => {
-                        self.delete();
-                        true
-                    }
-                    KeyCode::Char('T') | KeyCode::Backspace => {
-                        self.trash();
-                        true
-                    }
-                    KeyCode::Char('c') => {
-                        self.toggle_show_clones_table();
-                        true
-                    }
-                    KeyCode::Char(' ') => {
-                        self.mark();
-                        true
-                    }
-                    KeyCode::Char('a') => {
-                        self.mark_all_clones();
-                        true
-                    }
-                    KeyCode::Char('A') => {
-                        self.clear_marked();
-                        true
-                    }
-                    KeyCode::Char('m') => {
-                        self.toggle_show_marked_table();
-                        true
-                    }
-                    KeyCode::Char('y') => {
-                        self.copy_path();
-                        true
-                    }
-                    KeyCode::Char('.') => {
-                        self.toggle_more_keys();
-                        true
-                    }
-                    KeyCode::Char('?') => self.toggle_about(),
-                    KeyCode::Char('s') => {
-                        self.cycle_sort_by();
-                        true
-                    }
-                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
-                        self.focus_next_table();
-                        true
-                    }
-                    KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
-                        self.focus_previus_table();
-                        true
-                    }
-                    KeyCode::Char(':') => self.enter_command_mode(),
-                    _ => false,
                 };
                 if handled {
                     self.clear_warning();
@@ -516,6 +525,39 @@ impl App {
         Ok(changed)
     }
 
+    fn handle_popup_key_event(&mut self, key_event: KeyEvent) -> bool {
+        match key_event.code {
+            KeyCode::Down if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.scroll_about_down(10);
+                true
+            }
+            KeyCode::Up if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.scroll_about_up(10);
+                true
+            }
+            KeyCode::Down => {
+                self.scroll_about_down(1);
+                true
+            }
+            KeyCode::Up => {
+                self.scroll_about_up(1);
+                true
+            }
+            KeyCode::Esc => self.handle_escape(),
+            KeyCode::Char('?') => self.toggle_about(),
+            KeyCode::Char('q') | KeyCode::Char('Q') => self.exit(),
+            _ => false,
+        }
+    }
+
+    fn scroll_about_down(&mut self, step: u16) {
+        self.about_scroll = self.about_scroll.saturating_add(step);
+    }
+
+    fn scroll_about_up(&mut self, step: u16) {
+        self.about_scroll = self.about_scroll.saturating_sub(step);
+    }
+
     fn toggle_flatten_dirs(&mut self) {
         self.flatten_dirs = !self.flatten_dirs;
         self.file_table.flatten_dirs(self.flatten_dirs);
@@ -527,6 +569,7 @@ impl App {
             self.focused_window = FocusedWindow::Files;
         } else {
             self.focused_window = FocusedWindow::Popup;
+            self.about_scroll = 0;
         }
         true
     }
@@ -1169,7 +1212,7 @@ impl App {
         gauge.render(popup_area, buf);
     }
 
-    fn render_about(&self, buf: &mut Buffer, area: Rect) {
+    fn render_about(&mut self, buf: &mut Buffer, area: Rect) {
         // take up a third of the screen vertically and half horizontally
         let popup_area = popup_area(area, 60, 60);
 
@@ -1179,7 +1222,13 @@ impl App {
             .title(title)
             .title_style(Style::new().bold().white())
             .title_bottom(
-                Line::from(vec![" Hide ".into(), "<?/esc> ".blue().bold()]).right_aligned(),
+                Line::from(vec![
+                    " Scroll ".into(),
+                    "<up/down> ".blue().bold(),
+                    "Hide ".into(),
+                    "<?/esc> ".blue().bold(),
+                ])
+                .right_aligned(),
             )
             .padding(Padding::horizontal(1))
             .borders(Borders::ALL)
@@ -1193,14 +1242,35 @@ impl App {
             constants::HELP_LOGO,
             constants::HELP_TEXT
         ));
+        let content_height = title_block.inner(popup_area).height;
+        self.clamp_about_scroll(content_height);
 
         Paragraph::new(help_text)
             .block(title_block)
             // .gray()
             .left_aligned()
-            // .scroll((self.scroll, 0))
+            .scroll((self.about_scroll, 0))
             // .wrap(Wrap { trim: false })
             .render(popup_area, buf);
+
+        let mut scrollbar_state =
+            ScrollbarState::new(about_scrollbar_content_length(content_height))
+                .viewport_content_length(usize::from(content_height))
+                .position(usize::from(self.about_scroll));
+        Scrollbar::default()
+            .orientation(ScrollbarOrientation::VerticalRight)
+            .render(
+                popup_area.inner(Margin {
+                    vertical: 1,
+                    horizontal: 0,
+                }),
+                buf,
+                &mut scrollbar_state,
+            );
+    }
+
+    fn clamp_about_scroll(&mut self, content_height: u16) {
+        self.about_scroll = self.about_scroll.min(about_max_scroll(content_height));
     }
 
     fn render_summary(&self, buf: &mut Buffer, area: Rect) {
@@ -1554,6 +1624,20 @@ fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     area
 }
 
+fn about_line_count() -> usize {
+    format!("{}\n{}", constants::HELP_LOGO, constants::HELP_TEXT)
+        .lines()
+        .count()
+}
+
+fn about_max_scroll(content_height: u16) -> u16 {
+    about_line_count().saturating_sub(usize::from(content_height)) as u16
+}
+
+fn about_scrollbar_content_length(content_height: u16) -> usize {
+    usize::from(about_max_scroll(content_height)) + 1
+}
+
 fn file_info_lines(file_entry: &FileEntry) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(vec![
@@ -1694,6 +1778,14 @@ mod tests {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
     }
 
+    fn key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn shift_key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
     fn path_arc(path: &str) -> Arc<PathBuf> {
         Arc::new(PathBuf::from(path))
     }
@@ -1802,6 +1894,110 @@ mod tests {
 
         assert!(!app.should_exit);
         assert!(matches!(app.focused_window, FocusedWindow::Files));
+    }
+
+    #[test]
+    fn q_quits_when_about_window_is_focused() {
+        let mut app = app_with_nested_file_table();
+        app.focused_window = FocusedWindow::Popup;
+
+        assert!(app.handle_key_event(key_event(KeyCode::Char('q'))).unwrap());
+
+        assert!(app.should_exit);
+        assert!(app.cancel_flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn uppercase_q_quits_when_about_window_is_focused() {
+        let mut app = app_with_nested_file_table();
+        app.focused_window = FocusedWindow::Popup;
+
+        assert!(app.handle_key_event(key_event(KeyCode::Char('Q'))).unwrap());
+
+        assert!(app.should_exit);
+        assert!(app.cancel_flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn about_arrows_update_scroll_offset() {
+        let mut app = app_with_nested_file_table();
+        app.focused_window = FocusedWindow::Popup;
+
+        assert!(app.handle_key_event(key_event(KeyCode::Down)).unwrap());
+        assert_eq!(app.about_scroll, 1);
+
+        assert!(app.handle_key_event(key_event(KeyCode::Up)).unwrap());
+        assert_eq!(app.about_scroll, 0);
+    }
+
+    #[test]
+    fn about_shift_arrows_update_scroll_by_page_step() {
+        let mut app = app_with_nested_file_table();
+        app.focused_window = FocusedWindow::Popup;
+
+        assert!(
+            app.handle_key_event(shift_key_event(KeyCode::Down))
+                .unwrap()
+        );
+        assert_eq!(app.about_scroll, 10);
+
+        assert!(app.handle_key_event(shift_key_event(KeyCode::Up)).unwrap());
+        assert_eq!(app.about_scroll, 0);
+    }
+
+    #[test]
+    fn about_scroll_clamps_at_top() {
+        let mut app = app_with_nested_file_table();
+
+        app.scroll_about_up(1);
+
+        assert_eq!(app.about_scroll, 0);
+    }
+
+    #[test]
+    fn about_scroll_clamps_at_bottom_for_content_height() {
+        let mut app = app_with_nested_file_table();
+        let content_height = 3;
+        let expected_max = about_max_scroll(content_height);
+        app.about_scroll = u16::MAX;
+
+        app.clamp_about_scroll(content_height);
+
+        assert_eq!(app.about_scroll, expected_max);
+    }
+
+    #[test]
+    fn about_scrollbar_content_length_matches_scroll_range() {
+        let content_height = 3;
+
+        assert_eq!(
+            about_scrollbar_content_length(content_height),
+            usize::from(about_max_scroll(content_height)) + 1
+        );
+    }
+
+    #[test]
+    fn opening_about_resets_scroll_offset() {
+        let mut app = app_with_nested_file_table();
+        app.about_scroll = 5;
+
+        assert!(app.toggle_about());
+
+        assert!(matches!(app.focused_window, FocusedWindow::Popup));
+        assert_eq!(app.about_scroll, 0);
+    }
+
+    #[test]
+    fn about_arrows_do_not_move_selected_table_row() {
+        let mut app = app_with_selected_directory().0;
+        let selected_before = app.file_table.table_state.selected();
+        let path_before = app.file_table.selected_path();
+        app.focused_window = FocusedWindow::Popup;
+
+        assert!(app.handle_key_event(key_event(KeyCode::Down)).unwrap());
+
+        assert_eq!(app.file_table.table_state.selected(), selected_before);
+        assert_eq!(app.file_table.selected_path(), path_before);
     }
 
     #[test]
