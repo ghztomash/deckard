@@ -33,6 +33,9 @@ use std::{
 use tokio::{sync::watch, task::AbortHandle};
 use tracing::{debug, error, warn};
 
+const SHIFT_TABLE_JUMP_DIVISOR: usize = 10;
+const MIN_SHIFT_TABLE_JUMP: usize = 10;
+
 #[derive(Debug, Default)]
 enum FocusedWindow {
     #[default]
@@ -991,7 +994,11 @@ impl App {
     }
 
     pub fn next_file(&mut self, jump: bool) {
-        let step = if jump { 10 } else { 1 };
+        let step = if jump {
+            shift_table_jump_step(self.active_table_len())
+        } else {
+            1
+        };
 
         match self.focused_window {
             FocusedWindow::Files => {
@@ -1009,7 +1016,11 @@ impl App {
     }
 
     pub fn previous_file(&mut self, jump: bool) {
-        let step = if jump { 10 } else { 1 };
+        let step = if jump {
+            shift_table_jump_step(self.active_table_len())
+        } else {
+            1
+        };
 
         match self.focused_window {
             FocusedWindow::Files => {
@@ -1023,6 +1034,15 @@ impl App {
                 self.marked_table.select_previous(step);
             }
             _ => {}
+        }
+    }
+
+    fn active_table_len(&self) -> usize {
+        match self.focused_window {
+            FocusedWindow::Files => self.file_table.table_len,
+            FocusedWindow::Clones => self.clone_table.table_len,
+            FocusedWindow::Marked => self.marked_table.table_len,
+            FocusedWindow::Popup => 0,
         }
     }
 
@@ -1770,6 +1790,12 @@ fn toggle_marked_paths(marked_files: &mut HashSet<Arc<PathBuf>>, paths: &[Arc<Pa
     true
 }
 
+fn shift_table_jump_step(table_len: usize) -> usize {
+    table_len
+        .div_ceil(SHIFT_TABLE_JUMP_DIVISOR)
+        .max(MIN_SHIFT_TABLE_JUMP)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1799,6 +1825,20 @@ mod tests {
 
     fn line_texts(lines: &[Line<'_>]) -> Vec<String> {
         lines.iter().map(line_text).collect()
+    }
+
+    fn app_with_empty_tables() -> App {
+        let target_paths = HashSet::from([PathBuf::from("/tmp/deckard-jump-test")]);
+        let mut app = App::new(
+            target_paths,
+            SearchConfig::default(),
+            true,
+            false,
+            true,
+            false,
+        );
+        app.current_state = State::Done;
+        app
     }
 
     fn app_with_nested_file_table() -> App {
@@ -1894,6 +1934,88 @@ mod tests {
 
         assert!(!app.should_exit);
         assert!(matches!(app.focused_window, FocusedWindow::Files));
+    }
+
+    #[test]
+    fn shift_table_jump_step_keeps_ten_row_minimum() {
+        assert_eq!(shift_table_jump_step(0), 10);
+        assert_eq!(shift_table_jump_step(1), 10);
+        assert_eq!(shift_table_jump_step(10), 10);
+        assert_eq!(shift_table_jump_step(40), 10);
+    }
+
+    #[test]
+    fn shift_table_jump_step_uses_ceiling_quarter_for_large_tables() {
+        assert_eq!(shift_table_jump_step(41), 11);
+        assert_eq!(shift_table_jump_step(100), 25);
+    }
+
+    #[test]
+    fn shift_down_moves_files_by_quarter_of_large_table() {
+        let mut app = app_with_empty_tables();
+        app.file_table.table_len = 100;
+        app.file_table.table_state.select(Some(0));
+
+        assert!(
+            app.handle_key_event(shift_key_event(KeyCode::Down))
+                .unwrap()
+        );
+
+        assert_eq!(app.file_table.table_state.selected(), Some(25));
+    }
+
+    #[test]
+    fn shift_up_moves_files_by_quarter_of_large_table() {
+        let mut app = app_with_empty_tables();
+        app.file_table.table_len = 100;
+        app.file_table.table_state.select(Some(50));
+
+        assert!(app.handle_key_event(shift_key_event(KeyCode::Up)).unwrap());
+
+        assert_eq!(app.file_table.table_state.selected(), Some(25));
+    }
+
+    #[test]
+    fn shift_down_keeps_fixed_minimum_for_small_tables() {
+        let mut app = app_with_empty_tables();
+        app.file_table.table_len = 40;
+        app.file_table.table_state.select(Some(20));
+
+        assert!(
+            app.handle_key_event(shift_key_event(KeyCode::Down))
+                .unwrap()
+        );
+
+        assert_eq!(app.file_table.table_state.selected(), Some(30));
+    }
+
+    #[test]
+    fn shift_down_uses_focused_clones_table_len() {
+        let mut app = app_with_empty_tables();
+        app.file_table.table_len = 40;
+        app.clone_table.table_len = 100;
+        app.clone_table.table_state.select(Some(0));
+        app.focused_window = FocusedWindow::Clones;
+
+        assert!(
+            app.handle_key_event(shift_key_event(KeyCode::Down))
+                .unwrap()
+        );
+
+        assert_eq!(app.clone_table.table_state.selected(), Some(25));
+    }
+
+    #[test]
+    fn shift_up_uses_focused_marked_table_len() {
+        let mut app = app_with_empty_tables();
+        app.file_table.table_len = 40;
+        app.marked_table.table_len = 100;
+        app.marked_table.table_state.select(Some(50));
+        app.focused_window = FocusedWindow::Marked;
+
+        assert!(app.handle_key_event(shift_key_event(KeyCode::Up)).unwrap());
+
+        assert_eq!(app.marked_table.table_state.selected(), Some(25));
     }
 
     #[test]
