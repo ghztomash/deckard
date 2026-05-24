@@ -405,7 +405,7 @@ impl App {
                     }
 
                     KeyCode::Char('q') => self.exit(),
-                    KeyCode::Esc => self.back_dir_or_exit(),
+                    KeyCode::Esc => self.handle_escape(),
                     KeyCode::Char('i') => {
                         self.toggle_info();
                         true
@@ -540,13 +540,28 @@ impl App {
         true
     }
 
-    fn back_dir_or_exit(&mut self) -> bool {
-        if matches!(self.focused_window, FocusedWindow::Files) && self.file_table.back_parent_dir()
-        {
-            self.update_clone_table();
-            true
-        } else {
-            self.exit()
+    fn handle_escape(&mut self) -> bool {
+        if !self.is_done() {
+            return self.exit();
+        }
+
+        match self.focused_window {
+            FocusedWindow::Popup => {
+                self.focus_files_table();
+                true
+            }
+            FocusedWindow::Clones | FocusedWindow::Marked => {
+                self.focus_files_table();
+                true
+            }
+            FocusedWindow::Files => {
+                if self.file_table.back_parent_dir() {
+                    self.update_clone_table();
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 
@@ -1151,7 +1166,9 @@ impl App {
         let title_block = Block::new()
             .title(title)
             .title_style(Style::new().bold().white())
-            .title_bottom(Line::from(vec![" Hide ".into(), "<?> ".blue().bold()]).right_aligned())
+            .title_bottom(
+                Line::from(vec![" Hide ".into(), "<?/esc> ".blue().bold()]).right_aligned(),
+            )
             .padding(Padding::horizontal(1))
             .borders(Borders::ALL)
             .border_type(BorderType::Thick)
@@ -1277,8 +1294,10 @@ impl App {
             "<T/backspace>".set_style(marked_style),
             " Delete ".into(),
             "<D/delete>".set_style(marked_style),
+            " Back ".into(),
+            "<esc>".blue().bold(),
             " Quit ".into(),
-            "<q/esc>".blue().bold(),
+            "<q>".blue().bold(),
             more.into(),
             "<.>".blue().bold(),
         ];
@@ -1694,6 +1713,7 @@ mod tests {
             .update_table(&paths, &app.file_index, Some(&Sorting::Path));
         app.file_table.select_first();
         app.file_table.enter_selected_dir();
+        app.current_state = State::Done;
         app
     }
 
@@ -1730,19 +1750,52 @@ mod tests {
     }
 
     #[test]
-    fn esc_quits_when_files_view_is_at_top_level() {
+    fn esc_does_not_quit_when_files_view_is_at_top_level() {
         let mut app = app_with_nested_file_table();
         app.handle_key_event(esc_key_event()).unwrap();
 
-        assert!(app.handle_key_event(esc_key_event()).unwrap());
+        assert!(!app.handle_key_event(esc_key_event()).unwrap());
 
-        assert!(app.should_exit);
+        assert!(!app.should_exit);
     }
 
     #[test]
-    fn esc_quits_when_non_files_view_is_focused() {
+    fn esc_focuses_files_when_clones_view_is_focused() {
         let mut app = app_with_nested_file_table();
         app.focused_window = FocusedWindow::Clones;
+
+        assert!(app.handle_key_event(esc_key_event()).unwrap());
+
+        assert!(!app.should_exit);
+        assert!(matches!(app.focused_window, FocusedWindow::Files));
+    }
+
+    #[test]
+    fn esc_focuses_files_when_marked_view_is_focused() {
+        let mut app = app_with_nested_file_table();
+        app.focused_window = FocusedWindow::Marked;
+
+        assert!(app.handle_key_event(esc_key_event()).unwrap());
+
+        assert!(!app.should_exit);
+        assert!(matches!(app.focused_window, FocusedWindow::Files));
+    }
+
+    #[test]
+    fn esc_closes_about_window() {
+        let mut app = app_with_nested_file_table();
+        app.focused_window = FocusedWindow::Popup;
+
+        assert!(app.handle_key_event(esc_key_event()).unwrap());
+
+        assert!(!app.should_exit);
+        assert!(matches!(app.focused_window, FocusedWindow::Files));
+    }
+
+    #[test]
+    fn esc_quits_when_working_progress_bar_is_active() {
+        let mut app = app_with_nested_file_table();
+        app.current_state = State::Indexing { done: 1 };
 
         assert!(app.handle_key_event(esc_key_event()).unwrap());
 
