@@ -89,7 +89,6 @@ async fn main() -> Result<()> {
     .await;
 
     tui::restore()?;
-    terminal.clear()?;
 
     if let Err(_e) = &app_result {
         // eprintln!("Error: {:?}", e);
