@@ -136,6 +136,9 @@ pub struct SearchConfig {
     )]
     pub exclude_filter: Option<Vec<String>>,
     pub min_size: u64,
+    /// Maximum accepted file size in bytes, or no upper bound when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<u64>,
     pub hasher_config: HasherConfig,
     pub image_config: ImageConfig,
     pub audio_config: AudioConfig,
@@ -182,6 +185,7 @@ impl Default for SearchConfig {
             include_filter: None,
             exclude_filter: None,
             min_size: 0,
+            max_size: None,
             hasher_config: HasherConfig::default(),
             image_config: ImageConfig::default(),
             audio_config: AudioConfig::default(),

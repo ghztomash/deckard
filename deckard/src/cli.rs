@@ -160,6 +160,14 @@ pub fn commands() -> Command {
                 .help("Filter out files smaller than SIZE"),
         )
         .arg(
+            Arg::new("max_size")
+                .short('M')
+                .long("max_size")
+                .value_parser(parse_size)
+                .value_name("SIZE")
+                .help("Filter out files larger than SIZE"),
+        )
+        .arg(
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
@@ -192,6 +200,9 @@ pub fn augment_config(mut config: SearchConfig, args: &ArgMatches) -> SearchConf
     }
     if let Some(s) = args.get_one::<u64>("min_size") {
         config.min_size = *s;
+    }
+    if let Some(s) = args.get_one::<u64>("max_size") {
+        config.max_size = Some(*s);
     }
 
     let check_image = args.get_flag("check_image");
@@ -310,6 +321,17 @@ mod tests {
                 "{value} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn max_size_short_flag_sets_config() {
+        let matches = commands()
+            .try_get_matches_from(["app", "-M", "2 MB"])
+            .expect("valid maximum size should parse");
+
+        let config = augment_config(SearchConfig::default(), &matches);
+
+        assert_eq!(config.max_size, Some(2_000_000));
     }
 
     #[test]

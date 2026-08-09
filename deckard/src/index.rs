@@ -121,6 +121,15 @@ impl FileIndex {
                                     );
                                     return None;
                                 }
+                                if let Some(max_size) = self.config.max_size
+                                    && file_size > max_size
+                                {
+                                    trace!(
+                                        "Skipping file {}, size {} larger than {}",
+                                        file_name, file_size, max_size,
+                                    );
+                                    return None;
+                                }
 
                                 let path = Arc::new(path);
                                 let file = FileEntry::new(&path, &metadata)
@@ -400,6 +409,35 @@ mod tests {
             .filter_map(|path| path.file_name())
             .collect();
         assert_eq!(names, HashSet::from(["kick.wav".as_ref()]));
+    }
+
+    #[test]
+    fn max_size_keeps_boundary_and_smaller_files() {
+        let dir = TestDir::new();
+        for (name, contents) in [
+            ("smaller.dat", b"four".as_slice()),
+            ("boundary.dat", b"fives".as_slice()),
+            ("larger.dat", b"sixes!".as_slice()),
+        ] {
+            fs::write(dir.0.join(name), contents).expect("test file should be written");
+        }
+        let matches = crate::cli::commands()
+            .try_get_matches_from(["app", "--max_size", "5 B"])
+            .expect("valid maximum size should parse");
+        let config = crate::cli::augment_config(SearchConfig::default(), &matches);
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), config);
+
+        index.index_dirs(None, None);
+
+        let names: HashSet<_> = index
+            .files
+            .keys()
+            .filter_map(|path| path.file_name())
+            .collect();
+        assert_eq!(
+            names,
+            HashSet::from(["smaller.dat".as_ref(), "boundary.dat".as_ref()])
+        );
     }
 
     #[test]

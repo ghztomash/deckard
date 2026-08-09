@@ -11,10 +11,13 @@
 
 ```sh
 cargo run --bin deckard-cli -- test_files
-cargo run --bin deckard-cli -- --min_size 10M test_files
+cargo run --bin deckard-cli -- --min_size 10M --max_size 100M test_files
 cargo run --bin deckard-cli -- --include_filter '*.wav' --include_filter '*.mp3' test_files
 cargo run --bin deckard-tui -- test_files
 ```
+
+`--min_size` and `--max_size` accept decimal byte units such as `kB`, `MB`, and `GB`.
+Both limits are inclusive.
 
 `--include_filter` and `--exclude_filter` accept case-insensitive glob patterns matched against
 file names. Both flags can be repeated; any matching include pattern selects a file, while any
@@ -45,7 +48,7 @@ Workers update relaxed atomics per file. Polling does not run user code or block
 - [ ] Reduce lock time
 - [ ] Better error handling
 - [ ] Flatten dir cli flag
-- [x] --min_size flag use humansize convention
+- [x] --min_size and --max_size flags use humansize convention
 - [x] --include_filter --exclude_filter flags use proper regex or glob
 - [x] Better logging - use tracing
 - [ ] Gradual comparison (process stuff only when needed?)
