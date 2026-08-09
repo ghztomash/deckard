@@ -1,12 +1,11 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;
+use deckard::progress::Progress;
 use std::collections::HashSet;
 use std::fs;
 use std::hint::black_box;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DIRECTORY_COUNT: usize = 64;
@@ -65,13 +64,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     group.bench_function("progress_enabled", |b| {
         b.iter(|| {
-            let latest = Arc::new(AtomicUsize::new(0));
-            let callback_latest = latest.clone();
-            let callback = Arc::new(move |done| callback_latest.store(done, Ordering::Relaxed));
+            let progress = Progress::new();
             let mut index = FileIndex::new(fixture.dirs.clone(), SearchConfig::default());
-            index.index_dirs(Some(callback), None);
+            index.index_dirs(Some(&progress), None);
             black_box(index.files_len());
-            black_box(latest.load(Ordering::Relaxed));
+            black_box(progress.snapshot());
         });
     });
 

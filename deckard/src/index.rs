@@ -7,11 +7,12 @@ use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 
 use std::ffi::OsString;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use crate::config::SearchConfig;
 use crate::file::FileEntry;
+use crate::progress::Progress;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -57,14 +58,12 @@ impl FileIndex {
         }
     }
 
-    pub fn index_dirs(
-        &mut self,
-        callback: Option<Arc<dyn Fn(usize) + Send + Sync>>,
-        cancel: Option<Arc<AtomicBool>>,
-    ) {
+    /// Indexes accepted files and advances progress without publishing a total.
+    ///
+    /// Cancellation is checked while walking, but already scheduled work may still complete.
+    pub fn index_dirs(&mut self, progress: Option<&Progress>, cancel: Option<Arc<AtomicBool>>) {
         let include_filter = build_glob_set(self.config.include_filter.as_deref());
         let exclude_filter = build_glob_set(self.config.exclude_filter.as_deref());
-        let counter = Arc::new(AtomicUsize::new(0));
         let parallelism = if let Some(pool) = self.pool.as_ref() {
             Parallelism::RayonExistingPool {
                 pool: pool.clone(),
@@ -128,10 +127,8 @@ impl FileIndex {
                                     .inspect_err(|e| error!("Error reading File Entry {}", e))
                                     .ok()?;
 
-                                // Update the progress counter
-                                if let Some(ref callback) = callback {
-                                    let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                                    callback(count);
+                                if let Some(progress) = progress {
+                                    progress.advance();
                                 }
                                 return Some((path, file));
                             }
@@ -147,13 +144,12 @@ impl FileIndex {
         }
     }
 
-    pub fn process_files(
-        &mut self,
-        callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
-        cancel: Option<Arc<AtomicBool>>,
-    ) {
-        let counter = Arc::new(AtomicUsize::new(0));
+    /// Processes indexed files and publishes their count as the progress total.
+    pub fn process_files(&mut self, progress: Option<&Progress>, cancel: Option<Arc<AtomicBool>>) {
         let total = self.files_len();
+        if let Some(progress) = progress {
+            progress.publish_total(total);
+        }
 
         let mut process_op = || {
             let _ = self.files.values_mut().par_bridge().try_for_each(|f| {
@@ -168,9 +164,8 @@ impl FileIndex {
                 if let Err(e) = f.process(&self.config) {
                     error!("Error processing file {}", e);
                 }
-                if let Some(ref callback) = callback {
-                    let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    callback(count, total);
+                if let Some(progress) = progress {
+                    progress.advance();
                 }
                 Ok(())
             });
@@ -183,15 +178,18 @@ impl FileIndex {
         }
     }
 
+    /// Compares indexed files and publishes their count as the progress total.
     pub fn find_duplicates(
         &mut self,
-        callback: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+        progress: Option<&Progress>,
         cancel: Option<Arc<AtomicBool>>,
     ) {
         let vec_files: Vec<&FileEntry> = self.files.values().collect();
 
-        let counter = Arc::new(AtomicUsize::new(0));
         let total = vec_files.len();
+        if let Some(progress) = progress {
+            progress.publish_total(total);
+        }
 
         // Use DashMap for concurrent access to the duplicates map
         let duplicates = DashMap::new();
@@ -236,10 +234,8 @@ impl FileIndex {
                                 .insert(this_file.path.clone());
                         }
                     }
-                    // Update the progress counter
-                    if let Some(ref callback) = callback {
-                        let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                        callback(count, total);
+                    if let Some(progress) = progress {
+                        progress.advance();
                     }
                     Ok(())
                 });
@@ -334,6 +330,7 @@ fn build_glob_set(patterns: Option<&[String]>) -> Option<GlobSet> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::{Progress, ProgressSnapshot};
     use std::fs;
     use std::time::UNIX_EPOCH;
 
@@ -403,5 +400,72 @@ mod tests {
             .filter_map(|path| path.file_name())
             .collect();
         assert_eq!(names, HashSet::from(["kick.wav".as_ref()]));
+    }
+
+    #[test]
+    fn indexing_progress_counts_accepted_files() {
+        let dir = TestDir::new();
+        for name in ["kick.wav", "snare.wav", "notes.txt"] {
+            fs::write(dir.0.join(name), b"audio").expect("test file should be written");
+        }
+        let config = SearchConfig {
+            include_filter: Some(vec!["*.wav".into()]),
+            ..SearchConfig::default()
+        };
+        let progress = Progress::new();
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), config);
+
+        index.index_dirs(Some(&progress), None);
+
+        assert_eq!(
+            progress.snapshot(),
+            ProgressSnapshot {
+                done: 2,
+                total: None,
+            }
+        );
+    }
+
+    #[test]
+    fn processing_progress_reports_file_total() {
+        let dir = TestDir::new();
+        for name in ["first.dat", "second.dat"] {
+            fs::write(dir.0.join(name), b"same").expect("test file should be written");
+        }
+        let progress = Progress::new();
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), SearchConfig::default());
+        index.index_dirs(None, None);
+
+        index.process_files(Some(&progress), None);
+
+        assert_eq!(
+            progress.snapshot(),
+            ProgressSnapshot {
+                done: 2,
+                total: Some(2),
+            }
+        );
+    }
+
+    #[test]
+    fn comparison_progress_reports_file_total() {
+        let dir = TestDir::new();
+        for name in ["first.dat", "second.dat"] {
+            fs::write(dir.0.join(name), b"same").expect("test file should be written");
+        }
+        let progress = Progress::new();
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), SearchConfig::default());
+        index.index_dirs(None, None);
+        index.process_files(None, None);
+
+        index.find_duplicates(Some(&progress), None);
+
+        assert_eq!(
+            progress.snapshot(),
+            ProgressSnapshot {
+                done: 2,
+                total: Some(2),
+            }
+        );
     }
 }

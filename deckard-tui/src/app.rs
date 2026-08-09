@@ -8,6 +8,7 @@ use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyM
 use deckard::config::SearchConfig;
 use deckard::file::FileEntry;
 use deckard::index::FileIndex;
+use deckard::progress::Progress;
 use futures::StreamExt;
 use ratatui::widgets::Padding;
 use ratatui::{
@@ -145,11 +146,11 @@ pub enum State {
     },
     Processing {
         done: usize,
-        total: usize,
+        total: Option<usize>,
     },
     Comparing {
         done: usize,
-        total: usize,
+        total: Option<usize>,
     },
     Done,
     Error(String),
@@ -167,15 +168,63 @@ impl State {
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let result = match self {
-            Self::Idle => "Idle",
-            Self::Indexing { done } => &format!("Indexing {done}"),
-            Self::Processing { done, total } => &format!("Processing {done}/{total}"),
-            Self::Comparing { done, total } => &format!("Comparing {done}/{total}"),
-            Self::Done => "Done",
-            Self::Error(e) => &format!("Error: {e}"),
-        };
-        write!(f, "{result}")
+        match self {
+            Self::Idle => write!(f, "Idle"),
+            Self::Indexing { done } => write!(f, "Indexing {done}"),
+            Self::Processing {
+                done,
+                total: Some(total),
+            } => write!(f, "Processing {done}/{total}"),
+            Self::Processing { done, total: None } => write!(f, "Processing {done}"),
+            Self::Comparing {
+                done,
+                total: Some(total),
+            } => write!(f, "Comparing {done}/{total}"),
+            Self::Comparing { done, total: None } => write!(f, "Comparing {done}"),
+            Self::Done => write!(f, "Done"),
+            Self::Error(error) => write!(f, "Error: {error}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+enum WorkerState {
+    #[default]
+    Idle,
+    Indexing(Progress),
+    Processing(Progress),
+    Comparing(Progress),
+    Done,
+    Error(String),
+}
+
+impl WorkerState {
+    fn display_state(&self) -> State {
+        match self {
+            Self::Idle => State::Idle,
+            Self::Indexing(progress) => {
+                let snapshot = progress.snapshot();
+                State::Indexing {
+                    done: snapshot.done,
+                }
+            }
+            Self::Processing(progress) => {
+                let snapshot = progress.snapshot();
+                State::Processing {
+                    done: snapshot.done,
+                    total: snapshot.total,
+                }
+            }
+            Self::Comparing(progress) => {
+                let snapshot = progress.snapshot();
+                State::Comparing {
+                    done: snapshot.done,
+                    total: snapshot.total,
+                }
+            }
+            Self::Done => State::Done,
+            Self::Error(error) => State::Error(error.clone()),
+        }
     }
 }
 
@@ -294,7 +343,7 @@ impl App {
         let mut events = EventStream::new();
 
         // TODO: Handle graceful shutdown
-        let (tx, mut rx) = watch::channel(State::Idle);
+        let (tx, mut rx) = watch::channel(WorkerState::Idle);
         let file_index = self.file_index.clone();
         let task_cancel_flag = self.cancel_flag.clone();
         let disk_usage_mode = self.disk_usage_mode;
@@ -302,21 +351,21 @@ impl App {
             if let Err(e) =
                 index_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
             {
-                let _ = tx.send(State::Error(format!("index_files error: {e}")));
+                let _ = tx.send(WorkerState::Error(format!("index_files error: {e}")));
             }
             if !disk_usage_mode {
                 if let Err(e) =
                     process_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
                 {
-                    let _ = tx.send(State::Error(format!("process_files error: {e}")));
+                    let _ = tx.send(WorkerState::Error(format!("process_files error: {e}")));
                 }
                 if let Err(e) =
                     find_duplicates(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
                 {
-                    let _ = tx.send(State::Error(format!("find_duplicates error: {e}")));
+                    let _ = tx.send(WorkerState::Error(format!("find_duplicates error: {e}")));
                 }
             }
-            let _ = tx.send(State::Done);
+            let _ = tx.send(WorkerState::Done);
         });
         self.abort_handle = Some(task_handle.abort_handle());
 
@@ -325,7 +374,8 @@ impl App {
             tokio::select! {
                 // interval timer
                 _ = interval.tick() => {
-                    should_redraw |= self.handle_state(rx.borrow_and_update().clone());
+                    let state = rx.borrow_and_update().display_state();
+                    should_redraw |= self.handle_state(state);
                     if should_redraw {
                         should_redraw = false;
                         let render_start = Instant::now();
@@ -1207,10 +1257,15 @@ impl App {
         let title = Line::from(" Working ").centered();
         let label = Span::styled(format!("{} files", self.current_state), Style::new().bold());
 
-        let ratio = match self.current_state {
-            State::Processing { done, total } | State::Comparing { done, total } => {
-                done as f64 / total as f64
+        let ratio = match &self.current_state {
+            State::Processing {
+                done,
+                total: Some(total),
             }
+            | State::Comparing {
+                done,
+                total: Some(total),
+            } if *total > 0 => (*done as f64 / *total as f64).clamp(0.0, 1.0),
             _ => 0.0,
         };
 
@@ -1580,17 +1635,14 @@ impl App {
 
 async fn index_files(
     file_index: Arc<RwLock<FileIndex>>,
-    tx: watch::Sender<State>,
+    tx: watch::Sender<WorkerState>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
+    let progress = Progress::new();
+    let _ = tx.send(WorkerState::Indexing(progress.clone()));
     tokio::task::spawn_blocking(move || {
         let mut fi = file_index.write().unwrap();
-
-        let progress_callback = Arc::new(move |done: usize| {
-            let _ = tx.send(State::Indexing { done });
-        });
-
-        fi.index_dirs(Some(progress_callback), Some(cancel_flag));
+        fi.index_dirs(Some(&progress), Some(cancel_flag));
     })
     .await?;
     Ok(())
@@ -1598,19 +1650,14 @@ async fn index_files(
 
 async fn process_files(
     file_index: Arc<RwLock<FileIndex>>,
-    tx: watch::Sender<State>,
+    tx: watch::Sender<WorkerState>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
-    // If the I/O or hashing is heavy, prefer spawn_blocking:
+    let progress = Progress::new();
+    let _ = tx.send(WorkerState::Processing(progress.clone()));
     tokio::task::spawn_blocking(move || {
         let mut fi = file_index.write().unwrap();
-
-        // Provide a callback to `process_files` that sends progress:
-        let progress_callback = Arc::new(move |done: usize, total: usize| {
-            let _ = tx.send(State::Processing { done, total });
-        });
-
-        fi.process_files(Some(progress_callback), Some(cancel_flag));
+        fi.process_files(Some(&progress), Some(cancel_flag));
     })
     .await?;
     Ok(())
@@ -1618,17 +1665,14 @@ async fn process_files(
 
 async fn find_duplicates(
     file_index: Arc<RwLock<FileIndex>>,
-    tx: watch::Sender<State>,
+    tx: watch::Sender<WorkerState>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<()> {
+    let progress = Progress::new();
+    let _ = tx.send(WorkerState::Comparing(progress.clone()));
     tokio::task::spawn_blocking(move || {
         let mut fi = file_index.write().unwrap();
-
-        let progress_callback = Arc::new(move |done: usize, total: usize| {
-            let _ = tx.send(State::Comparing { done, total });
-        });
-
-        fi.find_duplicates(Some(progress_callback), Some(cancel_flag));
+        fi.find_duplicates(Some(&progress), Some(cancel_flag));
         fi.cleanup_index();
     })
     .await?;
@@ -1799,6 +1843,29 @@ fn shift_table_jump_step(table_len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_indexing_state_reads_progress() {
+        let worker_state = WorkerState::Indexing(deckard::progress::Progress::new());
+
+        assert_eq!(worker_state.display_state(), State::Indexing { done: 0 });
+    }
+
+    #[test]
+    fn worker_processing_state_reads_published_total() {
+        let progress = deckard::progress::Progress::new();
+        let mut index = FileIndex::new(HashSet::new(), SearchConfig::default());
+        index.process_files(Some(&progress), None);
+        let worker_state = WorkerState::Processing(progress);
+
+        assert_eq!(
+            worker_state.display_state(),
+            State::Processing {
+                done: 0,
+                total: Some(0),
+            }
+        );
+    }
 
     fn esc_key_event() -> KeyEvent {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
