@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use deckard::collect_paths;
 use deckard::config::{ImageFilterAlgorithm, ImageHashAlgorithm, SearchConfig};
 use deckard::index::FileIndex;

@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use deckard::collect_paths;
 use deckard::config::SearchConfig;
 use deckard::index::FileIndex;

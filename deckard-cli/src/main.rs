@@ -14,7 +14,7 @@ fn collect_sorted_files(
     limit: Option<&usize>,
 ) -> Vec<(Arc<PathBuf>, u64)> {
     let mut vec: Vec<_> = entries.collect();
-    vec.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    vec.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
 
     if let Some(limit) = limit {
         vec.truncate(*limit);

@@ -33,7 +33,7 @@ use std::{
 use tokio::{sync::watch, task::AbortHandle};
 use tracing::{debug, error, warn};
 
-const SHIFT_TABLE_JUMP_DIVISOR: usize = 10;
+const SHIFT_TABLE_JUMP_DIVISOR: usize = 4;
 const MIN_SHIFT_TABLE_JUMP: usize = 10;
 
 #[derive(Debug, Default)]
