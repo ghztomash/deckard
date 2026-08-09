@@ -12,8 +12,13 @@
 ```sh
 cargo run --bin deckard-cli -- test_files
 cargo run --bin deckard-cli -- --min_size 10M test_files
+cargo run --bin deckard-cli -- --include_filter '*.wav' --include_filter '*.mp3' test_files
 cargo run --bin deckard-tui -- test_files
 ```
+
+`--include_filter` and `--exclude_filter` accept case-insensitive glob patterns matched against
+file names. Both flags can be repeated; any matching include pattern selects a file, while any
+matching exclude pattern takes precedence.
 
 ## To-do
 
@@ -25,7 +30,7 @@ cargo run --bin deckard-tui -- test_files
 - [ ] Better error handling
 - [ ] Flatten dir cli flag
 - [x] --min_size flag use humansize convention
-- [ ] --include_filter --exclude_filter flags use proper regex or glob
+- [x] --include_filter --exclude_filter flags use proper regex or glob
 - [x] Better logging - use tracing
 - [ ] Gradual comparison (process stuff only when needed?)
 - [ ] optimize `get_image_hash`

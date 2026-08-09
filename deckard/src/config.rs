@@ -123,12 +123,54 @@ impl Default for AudioConfig {
 pub struct SearchConfig {
     pub skip_hidden: bool,
     pub threads: usize,
-    pub include_filter: Option<String>,
-    pub exclude_filter: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "optional_patterns"
+    )]
+    pub include_filter: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "optional_patterns"
+    )]
+    pub exclude_filter: Option<Vec<String>>,
     pub min_size: u64,
     pub hasher_config: HasherConfig,
     pub image_config: ImageConfig,
     pub audio_config: AudioConfig,
+}
+
+mod optional_patterns {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Patterns {
+        One(String),
+        Many(Vec<String>),
+    }
+
+    pub fn serialize<S>(patterns: &Option<Vec<String>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match patterns {
+            Some(patterns) if patterns.len() == 1 => patterns[0].serialize(serializer),
+            Some(patterns) => patterns.serialize(serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match Patterns::deserialize(deserializer)? {
+            Patterns::One(pattern) => Some(vec![pattern]),
+            Patterns::Many(patterns) => Some(patterns),
+        })
+    }
 }
 
 #[allow(clippy::derivable_impls)]

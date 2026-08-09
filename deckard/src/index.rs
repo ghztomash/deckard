@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
@@ -61,6 +62,8 @@ impl FileIndex {
         callback: Option<Arc<dyn Fn(usize) + Send + Sync>>,
         cancel: Option<Arc<AtomicBool>>,
     ) {
+        let include_filter = build_glob_set(self.config.include_filter.as_deref());
+        let exclude_filter = build_glob_set(self.config.exclude_filter.as_deref());
         let counter = Arc::new(AtomicUsize::new(0));
         let parallelism = if let Some(pool) = self.pool.as_ref() {
             Parallelism::RayonExistingPool {
@@ -92,28 +95,17 @@ impl FileIndex {
                             if path.is_file() && !path.is_symlink() {
                                 // Check filename filter
                                 let file_name = entry.file_name().to_string_lossy();
-                                if let Some(exclude_filter) = self.config.exclude_filter.as_ref()
-                                    && file_name
-                                        .to_lowercase()
-                                        .contains(&exclude_filter.to_lowercase())
+                                if let Some(exclude_filter) = exclude_filter.as_ref()
+                                    && exclude_filter.is_match(file_name.as_ref())
                                 {
-                                    trace!(
-                                        "File '{}' matches exclude filter pattern '{}'",
-                                        file_name, exclude_filter
-                                    );
+                                    trace!("File '{}' matches an exclude filter", file_name);
                                     return None;
                                 }
-                                if let Some(include_filter) = self.config.include_filter.as_ref() {
-                                    if !file_name
-                                        .to_lowercase()
-                                        .contains(&include_filter.to_lowercase())
-                                    {
+                                if let Some(include_filter) = include_filter.as_ref() {
+                                    if !include_filter.is_match(file_name.as_ref()) {
                                         return None;
                                     } else {
-                                        trace!(
-                                            "File '{}' matches include filter pattern '{}'",
-                                            file_name, include_filter
-                                        );
+                                        trace!("File '{}' matches an include filter", file_name);
                                     }
                                 }
 
@@ -319,5 +311,97 @@ impl FileIndex {
         self.files
             .retain(|path, _entry| self.duplicates.contains_key(path));
         self.files.shrink_to_fit();
+    }
+}
+
+fn build_glob_set(patterns: Option<&[String]>) -> Option<GlobSet> {
+    let patterns = patterns?;
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        match GlobBuilder::new(pattern).case_insensitive(true).build() {
+            Ok(glob) => {
+                builder.add(glob);
+            }
+            Err(error) => error!(pattern, %error, "Invalid file filter glob"),
+        }
+    }
+    builder
+        .build()
+        .inspect_err(|error| error!(%error, "Failed building file filters"))
+        .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::UNIX_EPOCH;
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should follow the Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("deckard-filter-{nonce}"));
+            fs::create_dir(&path).expect("test directory should be created");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("test directory should be removed");
+        }
+    }
+
+    #[test]
+    fn include_globs_match_any_file_name_pattern() {
+        let dir = TestDir::new();
+        for name in ["kick.wav", "snare.MP3", "notes.txt"] {
+            fs::write(dir.0.join(name), b"audio").expect("test file should be written");
+        }
+        let config = SearchConfig {
+            include_filter: Some(vec!["*.wav".into(), "*.mp3".into()]),
+            ..SearchConfig::default()
+        };
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), config);
+
+        index.index_dirs(None, None);
+
+        let names: HashSet<_> = index
+            .files
+            .keys()
+            .filter_map(|path| path.file_name())
+            .collect();
+        assert_eq!(
+            names,
+            HashSet::from(["kick.wav".as_ref(), "snare.MP3".as_ref()])
+        );
+    }
+
+    #[test]
+    fn exclude_globs_take_precedence() {
+        let dir = TestDir::new();
+        for name in ["kick.wav", "kick-preview.wav"] {
+            fs::write(dir.0.join(name), b"audio").expect("test file should be written");
+        }
+        let config = SearchConfig {
+            include_filter: Some(vec!["*.wav".into()]),
+            exclude_filter: Some(vec!["*-preview.*".into()]),
+            ..SearchConfig::default()
+        };
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), config);
+
+        index.index_dirs(None, None);
+
+        let names: HashSet<_> = index
+            .files
+            .keys()
+            .filter_map(|path| path.file_name())
+            .collect();
+        assert_eq!(names, HashSet::from(["kick.wav".as_ref()]));
     }
 }

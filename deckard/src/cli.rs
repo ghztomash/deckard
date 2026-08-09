@@ -2,6 +2,12 @@ use crate::SearchConfig;
 use clap::{Arg, ArgAction, ArgMatches, Command, command, value_parser};
 use tracing::{Level, trace};
 
+fn parse_glob(value: &str) -> Result<String, String> {
+    globset::Glob::new(value)
+        .map(|_| value.to_owned())
+        .map_err(|error| error.to_string())
+}
+
 fn parse_size(value: &str) -> Result<u64, String> {
     let value = value.trim();
     let number_end = value
@@ -123,15 +129,19 @@ pub fn commands() -> Command {
             Arg::new("include_filter")
                 .short('f')
                 .long("include_filter")
-                .value_parser(value_parser!(String))
-                .help("Include files that contain filter in their file name"),
+                .action(ArgAction::Append)
+                .value_parser(parse_glob)
+                .value_name("GLOB")
+                .help("Include files whose names match GLOB (repeatable)"),
         )
         .arg(
             Arg::new("exclude_filter")
                 .short('x')
                 .long("exclude_filter")
-                .value_parser(value_parser!(String))
-                .help("Exclude files that contain filter in their file name"),
+                .action(ArgAction::Append)
+                .value_parser(parse_glob)
+                .value_name("GLOB")
+                .help("Exclude files whose names match GLOB (repeatable)"),
         )
         .arg(
             Arg::new("threads")
@@ -161,15 +171,15 @@ pub fn commands() -> Command {
 /// Update provided `SearchConfig` based on CLI arguments from `ArgMatches`.
 pub fn augment_config(mut config: SearchConfig, args: &ArgMatches) -> SearchConfig {
     let include_filter = args
-        .get_one::<String>("include_filter")
-        .map(|v| v.to_owned());
+        .get_many::<String>("include_filter")
+        .map(|values| values.cloned().collect());
     if include_filter.is_some() {
         config.include_filter = include_filter
     }
 
     let exclude_filter = args
-        .get_one::<String>("exclude_filter")
-        .map(|v| v.to_owned());
+        .get_many::<String>("exclude_filter")
+        .map(|values| values.cloned().collect());
     if exclude_filter.is_some() {
         config.exclude_filter = exclude_filter
     }
@@ -237,7 +247,9 @@ mod tests {
         let matches = cmd.get_matches_from(vec![
             "app",
             "--include_filter",
-            "foo",
+            "*.wav",
+            "--include_filter",
+            "*.mp3",
             "--exclude_filter",
             "bar",
             "--skip_hidden",
@@ -252,8 +264,11 @@ mod tests {
 
         let config = augment_config(SearchConfig::default(), &matches);
 
-        assert_eq!(config.include_filter, Some("foo".into()));
-        assert_eq!(config.exclude_filter, Some("bar".into()));
+        assert_eq!(
+            config.include_filter,
+            Some(vec!["*.wav".into(), "*.mp3".into()])
+        );
+        assert_eq!(config.exclude_filter, Some(vec!["bar".into()]));
         assert!(config.skip_hidden);
         assert_eq!(config.min_size, 1024);
         assert_eq!(config.threads, 4);
@@ -295,5 +310,19 @@ mod tests {
                 "{value} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn filters_reject_invalid_globs() {
+        assert!(
+            commands()
+                .try_get_matches_from(["app", "--include_filter", "["])
+                .is_err()
+        );
+        assert!(
+            commands()
+                .try_get_matches_from(["app", "--exclude_filter", "{"])
+                .is_err()
+        );
     }
 }
