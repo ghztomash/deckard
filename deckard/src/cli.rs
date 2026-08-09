@@ -2,6 +2,62 @@ use crate::SearchConfig;
 use clap::{Arg, ArgAction, ArgMatches, Command, command, value_parser};
 use tracing::{Level, trace};
 
+fn parse_size(value: &str) -> Result<u64, String> {
+    let value = value.trim();
+    let number_end = value
+        .find(|character: char| !character.is_ascii_digit() && character != '.')
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(number_end);
+    let unit = unit.trim();
+
+    let multiplier = if unit.is_empty() || unit.eq_ignore_ascii_case("B") {
+        1
+    } else if unit.eq_ignore_ascii_case("K") || unit.eq_ignore_ascii_case("kB") {
+        1_000
+    } else if unit.eq_ignore_ascii_case("M") || unit.eq_ignore_ascii_case("MB") {
+        1_000_000
+    } else if unit.eq_ignore_ascii_case("G") || unit.eq_ignore_ascii_case("GB") {
+        1_000_000_000
+    } else {
+        return Err(format!("unknown size unit `{unit}`"));
+    };
+
+    let mut parts = number.split('.');
+    let whole = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || fraction.is_some_and(|digits| {
+            digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        || parts.next().is_some()
+    {
+        return Err(format!("invalid size `{value}`"));
+    }
+
+    let fraction = fraction.unwrap_or_default();
+    let digits = format!("{whole}{fraction}");
+    let magnitude = digits
+        .parse::<u128>()
+        .map_err(|_| format!("size `{value}` is too large"))?;
+    let divisor = 10_u128
+        .checked_pow(
+            fraction
+                .len()
+                .try_into()
+                .map_err(|_| format!("size `{value}` is too precise"))?,
+        )
+        .ok_or_else(|| format!("size `{value}` is too precise"))?;
+    let scaled = magnitude
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("size `{value}` is too large"))?;
+    if scaled % divisor != 0 {
+        return Err(format!("size `{value}` is not a whole number of bytes"));
+    }
+
+    u64::try_from(scaled / divisor).map_err(|_| format!("size `{value}` is too large"))
+}
+
 /// Common CLI arguments
 pub fn commands() -> Command {
     command!()
@@ -89,8 +145,9 @@ pub fn commands() -> Command {
             Arg::new("min_size")
                 .short('m')
                 .long("min_size")
-                .value_parser(value_parser!(u64))
-                .help("Filter out files smaller than bytes"),
+                .value_parser(parse_size)
+                .value_name("SIZE")
+                .help("Filter out files smaller than SIZE"),
         )
         .arg(
             Arg::new("verbose")
@@ -203,5 +260,40 @@ mod tests {
         assert!(config.image_config.compare);
         assert!(config.audio_config.compare);
         assert!(config.hasher_config.full_hash);
+    }
+
+    #[test]
+    fn min_size_accepts_decimal_units() {
+        for (value, expected) in [
+            ("1024", 1_024),
+            ("1 kB", 1_000),
+            ("1K", 1_000),
+            ("1 K", 1_000),
+            ("1.5MB", 1_500_000),
+            ("1M", 1_000_000),
+            ("1 M", 1_000_000),
+            ("2 GB", 2_000_000_000),
+            ("1G", 1_000_000_000),
+            ("1 G", 1_000_000_000),
+        ] {
+            let matches = commands()
+                .try_get_matches_from(["app", "--min_size", value])
+                .expect("valid minimum size should parse");
+            let config = augment_config(SearchConfig::default(), &matches);
+
+            assert_eq!(config.min_size, expected);
+        }
+    }
+
+    #[test]
+    fn min_size_rejects_invalid_values() {
+        for value in ["0.5 B", "1 XB", "18446744073709551616"] {
+            assert!(
+                commands()
+                    .try_get_matches_from(["app", "--min_size", value])
+                    .is_err(),
+                "{value} should be rejected"
+            );
+        }
     }
 }

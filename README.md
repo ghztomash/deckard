@@ -11,6 +11,7 @@
 
 ```sh
 cargo run --bin deckard-cli -- test_files
+cargo run --bin deckard-cli -- --min_size 10M test_files
 cargo run --bin deckard-tui -- test_files
 ```
 
@@ -22,6 +23,9 @@ cargo run --bin deckard-tui -- test_files
 - [x] Reduce CPU use
 - [ ] Reduce lock time
 - [ ] Better error handling
+- [ ] Flatten dir cli flag
+- [x] --min_size flag use humansize convention
+- [ ] --include_filter --exclude_filter flags use proper regex or glob
 - [x] Better logging - use tracing
 - [ ] Gradual comparison (process stuff only when needed?)
 - [ ] optimize `get_image_hash`
