@@ -4,6 +4,7 @@ pub mod error;
 pub mod file;
 mod hasher;
 pub mod index;
+pub mod progress;
 
 use config::SearchConfig;
 use serde::{Serialize, Serializer};
