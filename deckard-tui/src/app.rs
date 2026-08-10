@@ -273,6 +273,10 @@ impl App {
                 alias: Some("mf"),
             },
             Command {
+                command: "mark_directory",
+                alias: Some("md"),
+            },
+            Command {
                 command: "mark_parent",
                 alias: Some("mp"),
             },
@@ -697,6 +701,9 @@ impl App {
                         self.mark_filter(filter);
                     }
                 }
+                "mark_directory" => {
+                    self.mark_directory();
+                }
                 "mark_parent" => {
                     if let Some(file) = self.active_selected_file()
                         && let Some(parent) = file.parent()
@@ -794,6 +801,20 @@ impl App {
         self.marked_files
             .extend(self.clone_table.current_file_paths());
 
+        self.update_marked_table();
+    }
+
+    fn mark_directory(&mut self) {
+        if !matches!(self.focused_window, FocusedWindow::Files) {
+            return;
+        }
+
+        let paths = self.file_table.selected_dir_file_paths();
+        if paths.is_empty() {
+            return;
+        }
+
+        self.marked_files.extend(paths);
         self.update_marked_table();
     }
 
@@ -2289,6 +2310,30 @@ mod tests {
         assert!(app.marked_files.contains(&direct));
         assert!(app.marked_files.contains(&nested));
         assert!(!app.marked_files.contains(&sibling));
+    }
+
+    #[test]
+    fn mark_directory_command_marks_recursive_files_only() {
+        let (mut app, direct, nested, sibling) = app_with_selected_directory();
+        app.command_processor.input = "mark_directory".to_string();
+
+        app.handle_command();
+
+        assert!(app.marked_files.contains(&direct));
+        assert!(app.marked_files.contains(&nested));
+        assert!(!app.marked_files.contains(&sibling));
+    }
+
+    #[test]
+    fn mark_directory_command_ignores_non_files_view() {
+        let (mut app, direct, nested, _sibling) = app_with_selected_directory();
+        app.focused_window = FocusedWindow::Clones;
+        app.command_processor.input = "mark_directory".to_string();
+
+        app.handle_command();
+
+        assert!(!app.marked_files.contains(&direct));
+        assert!(!app.marked_files.contains(&nested));
     }
 
     #[test]

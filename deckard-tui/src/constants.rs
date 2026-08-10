@@ -26,6 +26,7 @@ pub const HELP_TEXT: &str = concat!(
     "[pf] parent_filter - filter files in parent directory\n",
     "[cf] clear_filter - remove filter\n",
     "[mf] mark_filter <str> - mark files containing <str> in paht\n",
+    "[md] mark_directory - mark files under selected directory recursively\n",
     "[ma] mark_all - mark all displayed files\n",
     "[mp] mark_parent - mark files in parent directory\n",
     "[cm] clear_marked - unmark all files\n",
