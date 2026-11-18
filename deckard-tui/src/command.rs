@@ -1,617 +1,621 @@
-#[derive(Default)]
-pub struct CommandProcessor {
-    pub input: String,
-    pub character_index: usize,
-    pub command_history_index: Option<usize>,
-    max_history_len: usize,
-    history: Vec<String>,
-    saved_input: Option<String>,
-    command_descriptions: Vec<Command>,
+use crossterm::event::{Event, KeyEvent};
+use reedline::{
+    EditCommand, EditMode, Emacs, Reedline, ReedlineEvent, ReedlineRawEvent, Span, Suggestion,
+};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    path::Path,
+};
+
+const HISTORY_LIMIT: usize = 16;
+const PATH_LIMIT: usize = 24;
+
+/// The paths a filter command can act on.
+#[derive(Clone, Copy)]
+pub(crate) enum FilterScope {
+    /// All files eligible for the Files table.
+    Indexed,
+    /// File rows in the current Files view.
+    Current,
 }
 
-pub struct Command {
-    pub command: &'static str,
-    pub alias: Option<&'static str>,
+struct Command {
+    name: &'static str,
+    alias: &'static str,
+    help: &'static str,
+    filter_scope: Option<FilterScope>,
 }
 
-pub struct CommandResult {
-    pub name: String,
-    pub args: Vec<String>,
-}
-
-impl CommandProcessor {
-    pub fn new(commands: Vec<Command>, max_history_len: usize) -> Self {
+impl Command {
+    const fn new(name: &'static str, alias: &'static str, help: &'static str) -> Self {
         Self {
-            input: String::new(),
-            history: Vec::with_capacity(max_history_len),
-            character_index: 0,
-            command_history_index: None,
-            max_history_len,
-            saved_input: None,
-            command_descriptions: commands,
+            name,
+            alias,
+            help,
+            filter_scope: None,
         }
     }
 
-    pub fn move_cursor_left(&mut self) {
-        let cursor_moved_left = self.character_index.saturating_sub(1);
-        self.character_index = self.clamp_cursor(cursor_moved_left);
+    const fn filter(mut self, scope: FilterScope) -> Self {
+        self.filter_scope = Some(scope);
+        self
     }
 
-    pub fn move_cursor_right(&mut self) {
-        let cursor_moved_right = self.character_index.saturating_add(1);
-        self.character_index = self.clamp_cursor(cursor_moved_right);
+    fn label(&self) -> String {
+        let argument = if self.filter_scope.is_some() {
+            " <str>"
+        } else {
+            ""
+        };
+        format!("[{}] {}{argument}", self.alias, self.name)
+    }
+}
+
+const COMMANDS: &[Command] = &[
+    Command::new("filter", "f", "show only files containing <str> in path")
+        .filter(FilterScope::Indexed),
+    Command::new(
+        "parent_filter",
+        "pf",
+        "filter files in the parent directory",
+    ),
+    Command::new("clear_filter", "cf", "remove filter"),
+    Command::new("mark_filter", "mf", "mark files containing <str> in path")
+        .filter(FilterScope::Current),
+    Command::new(
+        "mark_directory",
+        "md",
+        "mark files under selected directory recursively",
+    ),
+    Command::new("mark_all", "ma", "mark all displayed files"),
+    Command::new("mark_parent", "mp", "mark files in parent directory"),
+    Command::new("clear_marked", "cm", "unmark all files"),
+    Command::new("flatten_dirs", "fd", "display all files at once"),
+    Command::new("help", "h", "show this window"),
+    Command::new("quit", "q", "quit deckard"),
+];
+
+fn find_command(name: &str) -> Option<&'static Command> {
+    COMMANDS
+        .iter()
+        .find(|command| name == command.name || name == command.alias)
+}
+
+/// Render the command section of the About window from the command definitions.
+pub(crate) fn command_help() -> String {
+    COMMANDS
+        .iter()
+        .map(|command| format!("{} - {}\n", command.label(), command.help))
+        .collect()
+}
+
+/// Resolve an alias and parse the optional first filter argument.
+pub(crate) fn parse_command(input: &str) -> Result<(&'static str, Option<String>), &'static str> {
+    let input = input.trim_start();
+    let name_end = word_end(input);
+    let command = find_command(&input[..name_end]).ok_or("Unknown command")?;
+    let argument = if command.filter_scope.is_some() {
+        let argument = input[name_end..].trim_start();
+        if argument.is_empty() {
+            None
+        } else {
+            let (value, end, closed) = filter_argument(argument);
+            if !closed {
+                return Err("Unclosed quote");
+            }
+            let rest = &argument[end..];
+            if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+                return Err("Invalid filter");
+            }
+            if value.is_empty() {
+                return Err("Empty filter");
+            }
+            Some(value)
+        }
+    } else {
+        None
+    };
+    Ok((command.name, argument))
+}
+
+fn word_end(input: &str) -> usize {
+    input.find(char::is_whitespace).unwrap_or(input.len())
+}
+
+// Decode the first argument and return its byte length, including any quotes.
+fn filter_argument(input: &str) -> (String, usize, bool) {
+    let Some(quoted) = input.strip_prefix('"') else {
+        let end = word_end(input);
+        return (input[..end].to_owned(), end, true);
+    };
+    let mut value = String::new();
+    let mut chars = quoted.char_indices().peekable();
+    while let Some((offset, character)) = chars.next() {
+        match character {
+            '"' => return (value, offset + 2, true),
+            '\\' if matches!(chars.peek(), Some((_, '"' | '\\'))) => {
+                if let Some((_, escaped)) = chars.next() {
+                    value.push(escaped);
+                }
+            }
+            _ => value.push(character),
+        }
+    }
+    (value, input.len(), false)
+}
+
+fn quote_filter(value: &str) -> String {
+    if value.contains('"') || value.chars().any(char::is_whitespace) {
+        let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{escaped}\"")
+    } else {
+        value.to_owned()
+    }
+}
+
+fn suggestions(
+    line: &str,
+    cursor: usize,
+    paths: impl FnOnce(FilterScope, &str, Span) -> Vec<Suggestion>,
+) -> Vec<Suggestion> {
+    let input = line.trim_start();
+    let name_start = line.len() - input.len();
+    let name_end = name_start + word_end(input);
+    if input.is_empty() || (name_start..=name_end).contains(&cursor) {
+        let name_start = name_start.min(cursor);
+        let Some(prefix) = line.get(name_start..cursor) else {
+            return Vec::new();
+        };
+        let mut matches: Vec<_> = COMMANDS
+            .iter()
+            .filter(|command| command.name.starts_with(prefix) || command.alias.starts_with(prefix))
+            .map(|command| Suggestion {
+                value: command.name.into(),
+                description: Some(command.help.into()),
+                display_override: Some(command.label()),
+                span: Span::new(name_start, if input.is_empty() { cursor } else { name_end }),
+                append_whitespace: command.filter_scope.is_some() && name_end == line.len(),
+                ..Suggestion::default()
+            })
+            .collect();
+        matches.sort_unstable_by(|left, right| left.value.cmp(&right.value));
+        return matches;
     }
 
-    pub fn enter_char(&mut self, new_char: char) {
-        let index = self.byte_index();
-        self.input.insert(index, new_char);
-        self.move_cursor_right();
-        self.reset_history();
+    let Some(scope) =
+        find_command(&line[name_start..name_end]).and_then(|command| command.filter_scope)
+    else {
+        return Vec::new();
+    };
+    let argument = line[name_end..].trim_start();
+    let start = line.len() - argument.len();
+    if argument.is_empty() && cursor > name_end && cursor <= start {
+        return paths(scope, "", Span::new(cursor, cursor));
     }
-
-    pub fn byte_index(&self) -> usize {
-        self.input
-            .char_indices()
-            .map(|(i, _)| i)
-            .nth(self.character_index)
-            .unwrap_or(self.input.len())
+    let (_, length, _) = filter_argument(argument);
+    let end = start + length;
+    if !(start..=end).contains(&cursor) {
+        return Vec::new();
     }
+    let Some(prefix) = line.get(start..cursor) else {
+        return Vec::new();
+    };
+    let (query, _, _) = filter_argument(prefix);
+    paths(scope, &query, Span::new(start, end))
+}
 
-    pub fn delete_char(&mut self) {
-        if self.character_index != 0 {
-            let current_index = self.character_index;
-            let from_left_to_current_index = current_index - 1;
+/// Return a bounded, sorted list of path suggestions for a filter argument.
+pub(crate) fn path_suggestions<'a>(
+    paths: impl Iterator<Item = &'a Path>,
+    query: &str,
+    span: Span,
+) -> Vec<Suggestion> {
+    let mut matches = BTreeSet::new();
+    for path in paths {
+        let path = path.to_string_lossy();
+        if path.contains(query) && !path.chars().any(char::is_control) {
+            matches.insert(path);
+            if matches.len() > PATH_LIMIT {
+                matches.pop_last();
+            }
+        }
+    }
+    matches
+        .into_iter()
+        .map(|path| Suggestion {
+            value: quote_filter(&path),
+            span,
+            ..Suggestion::default()
+        })
+        .collect()
+}
 
-            let before_char_to_delete = self.input.chars().take(from_left_to_current_index);
-            let after_char_to_delete = self.input.chars().skip(current_index);
+/// What a key did in the command prompt.
+pub(crate) enum CommandEdit {
+    /// The key had no applicable action.
+    Ignored,
+    /// The prompt needs to be redrawn.
+    Changed,
+    /// The user submitted the line.
+    Submit(String),
+    /// The user dismissed the prompt.
+    Cancel,
+}
 
-            self.input = before_char_to_delete.chain(after_char_to_delete).collect();
-            self.move_cursor_left();
-            self.reset_history();
+struct HistoryNavigation {
+    index: usize,
+    draft: String,
+    cursor: usize,
+}
+
+struct CompletionCycle {
+    original: String,
+    suggestions: Vec<Suggestion>,
+    selected: usize,
+}
+
+/// Reedline editing state and the history of submitted Deckard commands.
+pub(crate) struct CommandEditor {
+    editor: Reedline,
+    keys: Emacs,
+    history: VecDeque<String>,
+    navigation: Option<HistoryNavigation>,
+    completion: Option<CompletionCycle>,
+}
+
+impl CommandEditor {
+    /// Create an empty editor and session history.
+    pub(crate) fn new() -> Self {
+        Self {
+            editor: Reedline::create(),
+            keys: Emacs::default(),
+            history: VecDeque::with_capacity(HISTORY_LIMIT),
+            navigation: None,
+            completion: None,
         }
     }
 
-    fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
-        new_cursor_pos.clamp(0, self.input.chars().count())
+    /// Begin a prompt with an empty buffer.
+    pub(crate) fn open(&mut self) -> std::io::Result<()> {
+        // Dropping the previous prompt releases its undo stack and disables raw mode.
+        let raw_mode = crossterm::terminal::is_raw_mode_enabled()?;
+        self.editor = Reedline::create();
+        if raw_mode {
+            crossterm::terminal::enable_raw_mode()?;
+        }
+        self.close();
+        Ok(())
     }
 
-    fn reset_cursor(&mut self) {
-        self.character_index = 0;
+    /// Dismiss any history navigation or completion menu.
+    pub(crate) fn close(&mut self) {
+        self.navigation = None;
+        self.completion = None;
     }
 
-    fn append_cursor(&mut self) {
-        self.character_index = self.input.chars().count();
+    /// Text in the prompt.
+    pub(crate) fn buffer(&self) -> &str {
+        self.editor.current_buffer_contents()
     }
 
-    pub fn reset_command(&mut self) {
-        self.input.clear();
-        self.reset_cursor();
-        self.reset_history();
+    /// Cursor as a byte offset in the prompt text.
+    pub(crate) fn cursor(&self) -> usize {
+        self.editor.current_insertion_point()
     }
 
-    fn reset_history(&mut self) {
-        self.command_history_index = None;
-        self.saved_input = None;
+    /// Candidates and the index of the one currently inserted.
+    pub(crate) fn completions(&self) -> Option<(&[Suggestion], usize)> {
+        self.completion
+            .as_ref()
+            .filter(|cycle| !cycle.suggestions.is_empty())
+            .map(|cycle| (cycle.suggestions.as_slice(), cycle.selected))
     }
 
-    pub fn last_command(&mut self) {
+    /// Translate and apply one key without reading from or writing to the terminal.
+    pub(crate) fn handle_key(&mut self, key: KeyEvent) -> CommandEdit {
+        let Ok(event) = ReedlineRawEvent::try_from(Event::Key(key)) else {
+            return CommandEdit::Ignored;
+        };
+        let event = self.keys.parse_event(event);
+        self.apply_event(event)
+    }
+
+    fn apply_event(&mut self, event: ReedlineEvent) -> CommandEdit {
+        match event {
+            ReedlineEvent::Enter => {
+                let input = self.buffer().to_owned();
+                if !input.trim().is_empty() {
+                    if self.history.len() == HISTORY_LIMIT {
+                        self.history.pop_back();
+                    }
+                    self.history.push_front(input.clone());
+                }
+                CommandEdit::Submit(input)
+            }
+            ReedlineEvent::CtrlC | ReedlineEvent::Esc => CommandEdit::Cancel,
+            ReedlineEvent::PreviousHistory | ReedlineEvent::Up => self.recall_older(),
+            ReedlineEvent::NextHistory | ReedlineEvent::Down => self.recall_newer(),
+            ReedlineEvent::Left => self.edit(&[EditCommand::MoveLeft { select: false }]),
+            ReedlineEvent::Right => self.edit(&[EditCommand::MoveRight { select: false }]),
+            ReedlineEvent::ToStart => self.edit(&[EditCommand::MoveToStart { select: false }]),
+            ReedlineEvent::ToEnd => self.edit(&[EditCommand::MoveToEnd { select: false }]),
+            ReedlineEvent::CtrlD => self.edit(&[EditCommand::Delete]),
+            ReedlineEvent::Edit(commands) => self.edit(&commands),
+            ReedlineEvent::UntilFound(events) => events
+                .into_iter()
+                .map(|event| self.apply_event(event))
+                .find(|result| !matches!(result, CommandEdit::Ignored))
+                .unwrap_or(CommandEdit::Ignored),
+            _ => CommandEdit::Ignored,
+        }
+    }
+
+    fn edit(&mut self, commands: &[EditCommand]) -> CommandEdit {
+        if commands.iter().any(|command| match command {
+            // The single-line prompt has no selection highlight.
+            EditCommand::SelectAll
+            | EditCommand::MoveLeft { select: true }
+            | EditCommand::MoveRight { select: true }
+            | EditCommand::MoveWordLeft { select: true }
+            | EditCommand::MoveWordRight { select: true }
+            | EditCommand::MoveLineUp { select: true }
+            | EditCommand::MoveLineDown { select: true }
+            | EditCommand::MoveToLineStart { select: true }
+            | EditCommand::MoveToLineEnd { select: true }
+            | EditCommand::MoveToStart { select: true }
+            | EditCommand::MoveToEnd { select: true } => true,
+            EditCommand::InsertNewline
+            | EditCommand::InsertNewlineAbove
+            | EditCommand::InsertNewlineBelow => true,
+            EditCommand::InsertChar(character) => character.is_control(),
+            _ => false,
+        }) {
+            return CommandEdit::Ignored;
+        }
+
+        self.completion = None;
+        self.editor.run_edit_commands(commands);
+        if let Some(navigation) = &self.navigation
+            && self.buffer() != self.history[navigation.index]
+        {
+            self.navigation = None;
+        }
+        CommandEdit::Changed
+    }
+
+    fn recall_older(&mut self) -> CommandEdit {
+        let cleared = self.completion.take().is_some();
         if self.history.is_empty() {
-            return;
+            return if cleared {
+                CommandEdit::Changed
+            } else {
+                CommandEdit::Ignored
+            };
+        }
+        let navigation = match &mut self.navigation {
+            Some(navigation) => {
+                navigation.index = (navigation.index + 1).min(self.history.len() - 1);
+                navigation
+            }
+            None => self.navigation.insert(HistoryNavigation {
+                index: 0,
+                draft: self.editor.current_buffer_contents().to_owned(),
+                cursor: self.editor.current_insertion_point(),
+            }),
+        };
+        let input = self.history[navigation.index].clone();
+        let cursor = input.len();
+        self.replace_buffer(input, cursor);
+        CommandEdit::Changed
+    }
+
+    fn recall_newer(&mut self) -> CommandEdit {
+        let cleared = self.completion.take().is_some();
+        let Some(navigation) = &mut self.navigation else {
+            return if cleared {
+                CommandEdit::Changed
+            } else {
+                CommandEdit::Ignored
+            };
+        };
+        if navigation.index == 0 {
+            if let Some(draft) = self.navigation.take() {
+                self.replace_buffer(draft.draft, draft.cursor);
+            }
+        } else {
+            navigation.index -= 1;
+            let input = self.history[navigation.index].clone();
+            let cursor = input.len();
+            self.replace_buffer(input, cursor);
+        }
+        CommandEdit::Changed
+    }
+
+    /// Insert or cycle a completion, consulting the path source only at the start of a cycle.
+    pub(crate) fn complete(
+        &mut self,
+        backwards: bool,
+        paths: impl FnOnce(FilterScope, &str, Span) -> Vec<Suggestion>,
+    ) -> bool {
+        if let Some(cycle) = &mut self.completion {
+            let count = cycle.suggestions.len();
+            if count == 0 {
+                return false;
+            }
+            cycle.selected = if backwards {
+                (cycle.selected + count - 1) % count
+            } else {
+                (cycle.selected + 1) % count
+            };
+        } else {
+            let suggestions = suggestions(self.buffer(), self.cursor(), paths);
+            let selected = if backwards {
+                suggestions.len().saturating_sub(1)
+            } else {
+                0
+            };
+            self.completion = Some(CompletionCycle {
+                original: self.buffer().to_owned(),
+                suggestions,
+                selected,
+            });
         }
 
-        if self.command_history_index.is_none() {
-            self.saved_input = Some(self.input.clone());
+        if let Some(cycle) = &self.completion
+            && let Some(candidate) = cycle.suggestions.get(cycle.selected)
+        {
+            let finished_command = cycle.suggestions.len() == 1 && candidate.append_whitespace;
+            let mut line = cycle.original.clone();
+            let span = candidate.span;
+            line.replace_range(span.start..span.end, &candidate.value);
+            let mut cursor = span.start + candidate.value.len();
+            if candidate.append_whitespace {
+                line.insert(cursor, ' ');
+                cursor += 1;
+            }
+            self.navigation = None;
+            self.replace_buffer(line, cursor);
+            if finished_command {
+                // A unique command has been accepted. The next Tab can complete its argument.
+                self.completion = None;
+            }
+            return true;
         }
+        false
+    }
 
-        self.command_history_index = Some(
-            self.command_history_index
-                .map(|i| (i + 1).min(self.history.len() - 1))
-                .unwrap_or(0),
+    fn replace_buffer(&mut self, input: String, cursor: usize) {
+        self.editor.run_edit_commands(&[
+            EditCommand::Clear,
+            EditCommand::InsertString(input),
+            EditCommand::MoveToPosition {
+                position: cursor,
+                select: false,
+            },
+        ]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::path::PathBuf;
+
+    #[test]
+    fn command_completion_matches_alias_once_and_cycles_both_ways() {
+        let mut editor = CommandEditor::new();
+        for character in "ma".chars() {
+            editor.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert!(editor.complete(false, |_, _, _| unreachable!()));
+        let (matches, selected) = editor.completions().unwrap();
+        assert_eq!(selected, 0);
+        assert_eq!(
+            matches
+                .iter()
+                .filter(|item| item.value == "mark_all")
+                .count(),
+            1
         );
+        let last = matches.len() - 1;
+        assert!(editor.complete(true, |_, _, _| unreachable!()));
+        assert_eq!(editor.completions().unwrap().1, last);
+        assert!(editor.complete(false, |_, _, _| unreachable!()));
+        assert_eq!(editor.completions().unwrap().1, 0);
 
-        if let Some(idx) = self.command_history_index {
-            self.input = self.history[idx].clone();
-            self.append_cursor();
+        editor.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert!(editor.completions().is_none());
+    }
+
+    #[test]
+    fn filter_completion_reuses_an_empty_lookup_until_edit() {
+        let mut editor = CommandEditor::new();
+        for character in "f absent".chars() {
+            editor.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
         }
+        let mut lookups = 0;
+        let mut empty_lookup = |_, _: &str, _| {
+            lookups += 1;
+            Vec::new()
+        };
+        assert!(!editor.complete(false, &mut empty_lookup));
+        assert!(!editor.complete(true, &mut empty_lookup));
+        editor.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert!(!editor.complete(false, &mut empty_lookup));
+        assert_eq!(lookups, 2);
     }
 
-    pub fn next_command(&mut self) {
-        if self.history.is_empty() {
-            return;
+    #[test]
+    fn command_mode_undo_cannot_restore_a_previous_prompt() {
+        let mut editor = CommandEditor::new();
+        editor.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        editor.open().unwrap();
+        editor.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        editor.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert!(editor.buffer().is_empty());
+        editor.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert!(editor.buffer().is_empty());
+    }
+
+    #[test]
+    fn command_completion_decodes_a_partial_quote_and_preserves_following_text() {
+        let line = r#"mf "reports 2026" trailing"#;
+        let cursor = line.find("2026").unwrap();
+        let matches = suggestions(line, cursor, |scope, query, span| {
+            assert!(matches!(scope, FilterScope::Current));
+            assert_eq!(query, "reports ");
+            let path = Path::new("reports 2025");
+            path_suggestions(std::iter::once(path), query, span)
+        });
+        let candidate = &matches[0];
+        let mut completed = line.to_owned();
+        completed.replace_range(candidate.span.start..candidate.span.end, &candidate.value);
+        assert_eq!(
+            parse_command(&completed),
+            Ok(("mark_filter", Some("reports 2025".to_owned())))
+        );
+        assert_eq!(
+            &completed[candidate.span.start + candidate.value.len()..],
+            " trailing"
+        );
+    }
+
+    #[test]
+    fn command_completion_filter_quoting_round_trips() {
+        let value = r#"one "two"\three"#;
+        let encoded = quote_filter(value);
+        assert_eq!(
+            parse_command(&format!("f {encoded}")),
+            Ok(("filter", Some(value.to_owned())))
+        );
+        assert_eq!(
+            parse_command("f reports extra"),
+            Ok(("filter", Some("reports".to_owned())))
+        );
+        assert!(parse_command("mf \"").is_err());
+        assert!(parse_command("mf \"\"").is_err());
+    }
+
+    #[test]
+    fn filter_completion_caps_unique_matches_in_lexical_order() {
+        let mut paths: Vec<PathBuf> = (0..30)
+            .rev()
+            .map(|index| format!("report-{index:02}").into())
+            .collect();
+        paths.extend([
+            "report-00".into(),
+            "report-\u{1b}".into(),
+            "Report-00".into(),
+        ]);
+        let span = Span::new(0, 0);
+        let suggestions = path_suggestions(paths.iter().map(PathBuf::as_path), "report", span);
+        assert_eq!(suggestions.len(), PATH_LIMIT);
+        for (index, item) in suggestions.iter().enumerate() {
+            assert_eq!(
+                Path::new(&item.value),
+                Path::new(&format!("report-{index:02}"))
+            );
         }
-        match self.command_history_index {
-            Some(0) => {
-                // Exit history mode and restore saved input
-                self.command_history_index = None;
-                self.input = self.saved_input.take().unwrap_or_default();
-                self.append_cursor();
-            }
-            Some(i) => {
-                let new_index = i - 1;
-                self.command_history_index = Some(new_index);
-                self.input = self.history[new_index].clone();
-                self.append_cursor();
-            }
-            None => {}
-        }
-    }
-
-    pub fn submit_command(&mut self) -> Option<CommandResult> {
-        let mut result = None;
-
-        if !self.input.trim().is_empty() {
-            // store command in history
-            self.history.insert(0, self.input.clone());
-            if self.history.len() > self.max_history_len {
-                self.history.truncate(self.max_history_len);
-            }
-
-            let mut parts = self.input.split_whitespace();
-            if let Some(cmd_name) = parts.next()
-                && let Some(cmd) = self
-                    .command_descriptions
-                    .iter()
-                    .find(|c| c.command == cmd_name || c.alias == Some(cmd_name))
-            {
-                let args: Vec<String> = parts.map(|s| s.to_string()).collect();
-                result = Some(CommandResult {
-                    name: cmd.command.to_string(),
-                    args,
-                });
-            }
-        }
-
-        self.reset_command();
-        result
-    }
-}
-
-#[cfg(test)]
-mod tests_chars {
-    use super::*;
-    use pretty_assertions::assert_eq;
-
-    fn new_processor() -> CommandProcessor {
-        CommandProcessor::new(vec![], 10)
-    }
-
-    #[test]
-    fn test_enter_char_appends_at_cursor() {
-        let mut cp = new_processor();
-        cp.enter_char('h');
-        cp.enter_char('e');
-        cp.enter_char('l');
-        cp.enter_char('l');
-        cp.enter_char('o');
-
-        assert_eq!(cp.input, "hello");
-        assert_eq!(cp.character_index, 5);
-    }
-
-    #[test]
-    fn test_cursor_moves_left_and_right() {
-        let mut cp = new_processor();
-        for c in "hello".chars() {
-            cp.enter_char(c);
-        }
-
-        cp.move_cursor_left();
-        cp.move_cursor_left();
-        assert_eq!(cp.character_index, 3);
-
-        cp.move_cursor_right();
-        assert_eq!(cp.character_index, 4);
-
-        cp.move_cursor_right(); // should not overflow
-        cp.move_cursor_right();
-        assert_eq!(cp.character_index, 5);
-    }
-
-    #[test]
-    fn test_enter_char_inserts_in_middle() {
-        let mut cp = new_processor();
-        for c in "helo".chars() {
-            cp.enter_char(c);
-        }
-
-        // Move cursor to after 'l'
-        cp.move_cursor_left();
-        cp.move_cursor_left();
-        assert_eq!(cp.character_index, 2);
-        cp.enter_char('r');
-
-        assert_eq!(cp.input, "herlo");
-        assert_eq!(cp.character_index, 3);
-    }
-
-    #[test]
-    fn test_delete_char_deletes_before_cursor() {
-        let mut cp = new_processor();
-        for c in "hello".chars() {
-            cp.enter_char(c);
-        }
-
-        // Move cursor to after 'e'
-        cp.move_cursor_left();
-        cp.move_cursor_left();
-        cp.move_cursor_left();
-        assert_eq!(cp.character_index, 2);
-        cp.delete_char();
-
-        assert_eq!(cp.input, "hllo");
-        assert_eq!(cp.character_index, 1);
-    }
-
-    #[test]
-    fn test_delete_char_at_start_does_nothing() {
-        let mut cp = new_processor();
-        for c in "hi".chars() {
-            cp.enter_char(c);
-        }
-
-        cp.move_cursor_left();
-        cp.move_cursor_left();
-        assert_eq!(cp.character_index, 0);
-        cp.delete_char();
-
-        assert_eq!(cp.input, "hi");
-        assert_eq!(cp.character_index, 0);
-    }
-
-    #[test]
-    fn test_reset_command_clears_input_and_cursor() {
-        let mut cp = new_processor();
-        cp.input = "something".into();
-        cp.character_index = 5;
-        cp.command_history_index = Some(1);
-        cp.saved_input = Some("saved".into());
-
-        cp.reset_command();
-
-        assert_eq!(cp.input, "");
-        assert_eq!(cp.character_index, 0);
-        assert_eq!(cp.command_history_index, None);
-        assert_eq!(cp.saved_input, None);
-    }
-
-    #[test]
-    fn test_byte_index_multibyte_chars() {
-        let mut cp = new_processor();
-        cp.input = "h🙂i".to_string(); // '🙂' is 4 bytes
-        cp.character_index = 1;
-
-        // Should be the byte index of '🙂'
-        let index = cp.byte_index();
-        assert_eq!(index, 1); // 'h' is one byte
-
-        cp.character_index = 2;
-        let index = cp.byte_index();
-        assert_eq!(index, 5); // '🙂' is 4 bytes, so total 5
-    }
-
-    #[test]
-    fn enter_chars() {
-        let mut cp = CommandProcessor::new(vec![], 3);
-        let chars = ['a', 'b', 'c'];
-
-        for c in chars {
-            cp.enter_char(c);
-        }
-
-        let s: String = chars.into_iter().collect();
-        assert_eq!(cp.input, s);
-    }
-
-    #[test]
-    fn delete_chars() {
-        let mut cp = CommandProcessor::new(vec![], 3);
-        let chars = ['a', 'b', 'c'];
-
-        for c in chars {
-            cp.enter_char(c);
-        }
-
-        for _ in 0..chars.len() {
-            cp.delete_char();
-        }
-
-        assert!(cp.input.is_empty());
-
-        cp.enter_char('x');
-        assert_eq!(cp.input, "x".to_string());
-
-        cp.delete_char();
-        assert!(cp.input.is_empty());
-    }
-}
-
-#[cfg(test)]
-mod tests_command_history {
-    use super::*;
-    use pretty_assertions::assert_eq;
-
-    fn create_processor_with_history(commands: &[&str]) -> CommandProcessor {
-        let mut processor = CommandProcessor::new(vec![], 10);
-        processor.history = commands.iter().map(|s| s.to_string()).collect();
-        processor
-    }
-
-    #[test]
-    fn entering_history_saves_input() {
-        let mut processor = create_processor_with_history(&["cmd1", "cmd2"]);
-        processor.input = "draft command".into();
-        processor.character_index = processor.input.chars().count();
-
-        processor.last_command(); // Enter history mode
-
-        assert_eq!(processor.command_history_index, Some(0));
-        assert_eq!(processor.saved_input, Some("draft command".to_string()));
-        assert_eq!(processor.input, "cmd1"); // First history entry (most recent)
-    }
-
-    #[test]
-    fn navigating_back_and_forth_restores_input() {
-        let mut processor = create_processor_with_history(&["cmd1", "cmd2"]);
-        processor.input = "temp input".into();
-
-        // Enter history mode
-        processor.last_command(); // cmd1
-        processor.last_command(); // cmd2
-
-        assert_eq!(processor.command_history_index, Some(1));
-        assert_eq!(processor.input, "cmd2");
-
-        // Exit history mode
-        processor.next_command(); // back to cmd1
-        assert_eq!(processor.input, "cmd1");
-        processor.next_command(); // back to live input
-        assert_eq!(processor.input, "temp input");
-        assert_eq!(processor.command_history_index, None);
-        assert_eq!(processor.saved_input, None);
-    }
-
-    #[test]
-    fn submit_command_clears_saved_input_and_index() {
-        let mut processor = create_processor_with_history(&[]);
-
-        processor.input = "hello world".into();
-        processor.saved_input = Some("should be cleared".into());
-        processor.command_history_index = Some(0);
-
-        processor.submit_command();
-
-        assert_eq!(processor.input, "");
-        assert_eq!(processor.command_history_index, None);
-        assert_eq!(processor.saved_input, None);
-        assert_eq!(processor.history.len(), 1);
-        assert_eq!(processor.history[0], "hello world");
-    }
-
-    #[test]
-    fn next_command_does_not_crash_without_saved_input() {
-        let mut processor = create_processor_with_history(&["cmd1"]);
-        processor.command_history_index = Some(0);
-        processor.saved_input = None;
-
-        processor.next_command(); // Should exit history and reset input
-        assert_eq!(processor.command_history_index, None);
-        assert_eq!(processor.input, "");
-    }
-
-    #[test]
-    fn history_truncates_at_max_size() {
-        let mut processor = CommandProcessor::new(vec![], 3);
-
-        processor.input = "one".into();
-        processor.submit_command();
-        processor.input = "two".into();
-        processor.submit_command();
-        processor.input = "three".into();
-        processor.submit_command();
-        processor.input = "four".into();
-        processor.submit_command();
-
-        assert_eq!(processor.history.len(), 3);
-        assert_eq!(processor.history, vec!["four", "three", "two"]);
-    }
-
-    #[test]
-    fn command_history_filled() {
-        let mut cp = CommandProcessor::new(vec![], 3);
-        let commands = ["aaa", "bbb", "ccc"];
-
-        for command in commands {
-            for c in command.chars() {
-                cp.enter_char(c);
-            }
-            cp.submit_command();
-        }
-        assert_eq!(cp.history.len(), commands.len());
-
-        for (index, command) in commands.iter().rev().enumerate() {
-            assert_eq!(cp.history[index], command.to_string());
-        }
-    }
-
-    #[test]
-    fn command_history_limit() {
-        let max_limit = 2;
-        let mut cp = CommandProcessor::new(vec![], max_limit);
-        let mut commands = ["aaa", "bbb", "ccc", "ddd"];
-
-        for command in commands {
-            for c in command.chars() {
-                cp.enter_char(c);
-            }
-            cp.submit_command();
-        }
-        assert_eq!(cp.history.len(), max_limit);
-
-        commands.reverse();
-        let commands = &commands[..max_limit];
-        for (index, command) in commands.iter().enumerate() {
-            assert_eq!(cp.history[index], command.to_string());
-        }
-    }
-
-    #[test]
-    fn command_history_limit_zero() {
-        let mut cp = CommandProcessor::new(vec![], 0);
-        let commands = ["aaa", "bbb", "ccc", "ddd"];
-
-        for command in commands {
-            for c in command.chars() {
-                cp.enter_char(c);
-            }
-            cp.submit_command();
-        }
-        assert!(cp.history.is_empty());
-    }
-
-    #[test]
-    fn command_history_last_restore() {
-        let commands = ["a", "bb", "ccc", "dddd"];
-        let mut cp = CommandProcessor::new(vec![], commands.len());
-
-        for command in commands {
-            for c in command.chars() {
-                cp.enter_char(c);
-            }
-            cp.submit_command();
-        }
-        assert_eq!(cp.history.len(), commands.len());
-
-        for command in commands.iter().rev() {
-            cp.last_command();
-            assert_eq!(cp.input, command.to_string());
-        }
-
-        cp.last_command();
-        assert_eq!(cp.input, commands.first().unwrap().to_string());
-    }
-
-    #[test]
-    fn command_history_next_restore() {
-        let commands = ["a", "bb", "ccc", "dddd"];
-        let mut cp = CommandProcessor::new(vec![], commands.len());
-
-        for command in commands {
-            for c in command.chars() {
-                cp.enter_char(c);
-            }
-            cp.submit_command();
-        }
-        assert_eq!(cp.history.len(), commands.len());
-
-        for _ in 0..commands.len() {
-            cp.last_command();
-        }
-        assert_eq!(cp.input, commands.first().unwrap().to_string());
-        cp.last_command();
-        assert_eq!(cp.input, commands.first().unwrap().to_string());
-
-        for command in &commands[1..] {
-            cp.next_command();
-            assert_eq!(cp.input, command.to_string());
-        }
-
-        cp.next_command();
-        assert_eq!(cp.input, "".to_string());
-    }
-}
-
-#[cfg(test)]
-mod tests_command_processing {
-    use super::*;
-    use pretty_assertions::assert_eq;
-
-    fn create_processor_with_commands() -> CommandProcessor {
-        let commands = vec![
-            Command {
-                command: "test",
-                alias: None,
-            },
-            Command {
-                command: "run",
-                alias: None,
-            },
-            Command {
-                command: "quit",
-                alias: Some("q"),
-            },
-        ];
-        CommandProcessor::new(commands, 5)
-    }
-
-    #[test]
-    fn test_submit_command() {
-        let mut cp = create_processor_with_commands();
-
-        cp.input = "test arg1 arg2".into();
-        let result = cp.submit_command().unwrap();
-
-        // Command should be in history
-        assert_eq!(cp.history.len(), 1);
-        assert_eq!(cp.history[0], "test arg1 arg2");
-
-        // Input should be cleared
-        assert_eq!(cp.input, "");
-
-        // Cursor should be reset
-        assert_eq!(cp.character_index, 0);
-
-        assert_eq!(result.name, "test");
-        assert_eq!(result.args, vec!["arg1", "arg2"]);
-    }
-
-    #[test]
-    fn test_submit_ignores_unknown_command() {
-        let mut cp = create_processor_with_commands();
-
-        cp.input = "unknown cmd".into();
-        let result = cp.submit_command();
-
-        // History still stores the input
-        assert_eq!(cp.history.len(), 1);
-        assert_eq!(cp.history[0], "unknown cmd");
-
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_submit_empty_input_does_nothing() {
-        let mut cp = create_processor_with_commands();
-
-        cp.input = "   ".into();
-        let result = cp.submit_command();
-
-        assert!(cp.history.is_empty());
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_submit_multiple_commands() {
-        let mut cp = create_processor_with_commands();
-
-        cp.input = "test arg1 arg2".into();
-        let res1 = cp.submit_command().unwrap();
-        cp.input = "quit".into();
-        let res2 = cp.submit_command().unwrap();
-
-        assert_eq!(res1.name, "test");
-        assert_eq!(res1.args, vec!["arg1", "arg2"]);
-        assert_eq!(res2.name, "quit");
-        assert!(res2.args.is_empty());
-    }
-
-    #[test]
-    fn test_submit_alias_command() {
-        let mut cp = create_processor_with_commands();
-
-        cp.input = "q".into();
-        let res = cp.submit_command().unwrap();
-
-        assert_eq!(res.name, "quit");
-        assert!(res.args.is_empty());
     }
 }

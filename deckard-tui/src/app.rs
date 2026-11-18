@@ -1,4 +1,4 @@
-use crate::command::{Command, CommandProcessor};
+use crate::command::{self, CommandEdit, CommandEditor, FilterScope};
 use crate::constants;
 use crate::dirtable::{DirTable, DirectoryInfo};
 use arboard::Clipboard;
@@ -13,7 +13,7 @@ use futures::StreamExt;
 use ratatui::widgets::Padding;
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Flex, Layout, Margin, Rect},
+    layout::{Constraint, Direction, Flex, Layout, Margin, Position, Rect},
     style::{Color, Style, Styled, Stylize},
     text::{Line, Span, Text},
     widgets::{
@@ -123,7 +123,7 @@ pub struct App {
     current_state: State,
     sort_by: Sorting,
     mode: Mode,
-    command_processor: CommandProcessor,
+    command_editor: CommandEditor,
     clipboard: Option<Clipboard>,
     cancel_flag: Arc<AtomicBool>,
     abort_handle: Option<AbortHandle>,
@@ -247,53 +247,6 @@ impl App {
             Some,
         );
 
-        let commands = vec![
-            Command {
-                command: "quit",
-                alias: Some("q"),
-            },
-            Command {
-                command: "help",
-                alias: Some("h"),
-            },
-            Command {
-                command: "filter",
-                alias: Some("f"),
-            },
-            Command {
-                command: "parent_filter",
-                alias: Some("pf"),
-            },
-            Command {
-                command: "clear_filter",
-                alias: Some("cf"),
-            },
-            Command {
-                command: "mark_filter",
-                alias: Some("mf"),
-            },
-            Command {
-                command: "mark_directory",
-                alias: Some("md"),
-            },
-            Command {
-                command: "mark_parent",
-                alias: Some("mp"),
-            },
-            Command {
-                command: "mark_all",
-                alias: Some("ma"),
-            },
-            Command {
-                command: "clear_marked",
-                alias: Some("cm"),
-            },
-            Command {
-                command: "flatten_dirs",
-                alias: Some("fd"),
-            },
-        ];
-
         // don't show clone count for disk_usage mode
         let file_table = if disk_usage {
             DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false)
@@ -326,7 +279,7 @@ impl App {
             clipboard,
             sort_by: Sorting::default(),
             mode: Mode::Normal,
-            command_processor: CommandProcessor::new(commands, 16),
+            command_editor: CommandEditor::new(),
             dry_run,
             remove_dirs,
             display_filter: None,
@@ -384,7 +337,9 @@ impl App {
                         should_redraw = false;
                         let render_start = Instant::now();
                         terminal.draw(|frame| {
-                            self.render_ui(frame.area(), frame.buffer_mut());
+                            if let Some(cursor) = self.render_ui(frame.area(), frame.buffer_mut()) {
+                                frame.set_cursor_position(cursor);
+                            }
                             self.frame_count = frame.count();
                         })?;
                         self.last_render_took = render_start.elapsed();
@@ -532,7 +487,7 @@ impl App {
                             self.focus_previus_table();
                             true
                         }
-                        KeyCode::Char(':') => self.enter_command_mode(),
+                        KeyCode::Char(':') => self.enter_command_mode()?,
                         _ => false,
                     }
                 };
@@ -541,43 +496,7 @@ impl App {
                 }
                 handled
             }
-            Mode::Command => match key_event.code {
-                KeyCode::Esc => {
-                    self.command_processor.reset_command();
-                    self.exit_command_mode();
-                    true
-                }
-                KeyCode::Enter => {
-                    self.handle_command();
-                    true
-                }
-                KeyCode::Backspace => {
-                    self.command_processor.delete_char();
-                    true
-                }
-                KeyCode::Tab => false,
-                KeyCode::Up => {
-                    self.command_processor.last_command();
-                    true
-                }
-                KeyCode::Down => {
-                    self.command_processor.next_command();
-                    true
-                }
-                KeyCode::Left => {
-                    self.command_processor.move_cursor_left();
-                    true
-                }
-                KeyCode::Right => {
-                    self.command_processor.move_cursor_right();
-                    true
-                }
-                KeyCode::Char(c) => {
-                    self.command_processor.enter_char(c);
-                    true
-                }
-                _ => false,
-            },
+            Mode::Command => self.handle_command_key(key_event),
         };
         Ok(changed)
     }
@@ -665,78 +584,137 @@ impl App {
         }
     }
 
-    fn enter_command_mode(&mut self) -> bool {
+    fn enter_command_mode(&mut self) -> Result<bool> {
         if matches!(self.mode, Mode::Normal)
             && matches!(self.current_state, State::Done)
             && !matches!(self.focused_window, FocusedWindow::Popup)
         {
+            self.command_editor.open()?;
             self.mode = Mode::Command;
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
     fn exit_command_mode(&mut self) {
+        self.command_editor.close();
         self.mode = Mode::Normal;
     }
 
-    fn handle_command(&mut self) {
-        if let Some(command) = self.command_processor.submit_command() {
-            match command.name.as_str() {
-                "quit" => {
-                    self.exit();
-                }
-                "help" => {
-                    self.toggle_about();
-                }
-                "mark_all" => {
-                    self.mark_all();
-                }
-                "clear_marked" => {
-                    self.clear_marked();
-                }
-                "mark_filter" => {
-                    if let Some(filter) = command.args.first() {
-                        self.mark_filter(filter);
+    fn handle_command_key(&mut self, key: KeyEvent) -> bool {
+        let backwards = match key.code {
+            KeyCode::BackTab => Some(true),
+            KeyCode::Tab => Some(key.modifiers.contains(KeyModifiers::SHIFT)),
+            _ => None,
+        };
+        if let Some(backwards) = backwards {
+            let table = &self.file_table;
+            let index = &self.file_index;
+            let disk_usage = self.disk_usage_mode;
+            return self
+                .command_editor
+                .complete(backwards, |scope, query, span| match scope {
+                    FilterScope::Current => command::path_suggestions(
+                        table.current_file_paths().map(|path| path.as_path()),
+                        query,
+                        span,
+                    ),
+                    FilterScope::Indexed => {
+                        let Ok(index) = index.read() else {
+                            warn!("could not read the file index for command completion");
+                            return Vec::new();
+                        };
+                        if disk_usage {
+                            command::path_suggestions(
+                                index.files.keys().map(|path| path.as_path()),
+                                query,
+                                span,
+                            )
+                        } else {
+                            command::path_suggestions(
+                                index.duplicates.keys().map(|path| path.as_path()),
+                                query,
+                                span,
+                            )
+                        }
                     }
-                }
-                "mark_directory" => {
-                    self.mark_directory();
-                }
-                "mark_parent" => {
-                    if let Some(file) = self.active_selected_file()
-                        && let Some(parent) = file.parent()
-                    {
-                        self.mark_filter(&parent.to_string_lossy());
-                    }
-                }
-                "parent_filter" => {
-                    if let Some(file) = self.active_selected_file()
-                        && let Some(parent) = file.parent()
-                    {
-                        self.set_filter(&parent.to_string_lossy());
-                    }
-                }
-                "clear_filter" => {
-                    self.clear_filter();
-                }
-                "filter" => {
-                    if let Some(filter) = command.args.first() {
-                        self.set_filter(filter);
-                    }
-                }
-                "flatten_dirs" => {
-                    self.toggle_flatten_dirs();
-                }
-                _ => {
-                    self.set_warning(format!("Failed to match command: {}", command.name));
+                });
+        }
+
+        match self.command_editor.handle_key(key) {
+            CommandEdit::Ignored => false,
+            CommandEdit::Changed => true,
+            CommandEdit::Submit(line) => {
+                self.exit_command_mode();
+                self.handle_command(&line);
+                true
+            }
+            CommandEdit::Cancel => {
+                self.exit_command_mode();
+                true
+            }
+        }
+    }
+
+    fn handle_command(&mut self, line: &str) {
+        let (name, argument) = match command::parse_command(line) {
+            Ok(command) => command,
+            Err(message) => {
+                self.set_warning(message.to_owned());
+                return;
+            }
+        };
+        match name {
+            "quit" => {
+                self.exit();
+            }
+            "help" => {
+                self.toggle_about();
+            }
+            "mark_all" => {
+                self.mark_all();
+            }
+            "clear_marked" => {
+                self.clear_marked();
+            }
+            "mark_filter" => {
+                if let Some(filter) = argument.as_deref() {
+                    self.mark_filter(filter);
                 }
             }
-        } else {
-            self.set_warning("Unknown command".to_string());
+            "mark_directory" => {
+                self.mark_directory();
+            }
+            "mark_parent" => {
+                if let Some(file) = self.active_selected_file()
+                    && let Some(parent) = file.parent()
+                {
+                    self.mark_filter(&parent.to_string_lossy());
+                }
+            }
+            "parent_filter" => {
+                if let Some(file) = self.active_selected_file()
+                    && let Some(parent) = file.parent()
+                {
+                    self.set_filter(&parent.to_string_lossy());
+                }
+            }
+            "clear_filter" => {
+                self.clear_filter();
+            }
+            "filter" => {
+                if let Some(filter) = argument.as_deref() {
+                    self.set_filter(filter);
+                }
+            }
+            "flatten_dirs" => {
+                self.toggle_flatten_dirs();
+            }
+            _ => {
+                self.set_warning(format!("Failed to match command: {name}"));
+            }
         }
-        self.exit_command_mode();
     }
 
     fn set_filter(&mut self, filter: &str) {
@@ -792,14 +770,14 @@ impl App {
 
     fn mark_all(&mut self) {
         self.marked_files
-            .extend(self.file_table.current_file_paths());
+            .extend(self.file_table.current_file_paths().cloned());
 
         self.update_marked_table();
     }
 
     fn mark_all_clones(&mut self) {
         self.marked_files
-            .extend(self.clone_table.current_file_paths());
+            .extend(self.clone_table.current_file_paths().cloned());
 
         self.update_marked_table();
     }
@@ -821,7 +799,7 @@ impl App {
     fn mark_filter(&mut self, filter: &str) {
         for p in self.file_table.current_file_paths() {
             if p.to_string_lossy().contains(filter) {
-                self.marked_files.insert(p);
+                self.marked_files.insert(p.clone());
             }
         }
 
@@ -1333,13 +1311,14 @@ impl App {
 
         Clear.render(popup_area, buf);
 
-        let help_text = Text::raw(format!(
-            "{}\n{}",
-            constants::HELP_LOGO,
-            constants::HELP_TEXT
-        ));
+        let help_text = Text::raw(about_text());
         let content_height = title_block.inner(popup_area).height;
-        self.clamp_about_scroll(content_height);
+        let max_scroll = help_text
+            .height()
+            .saturating_sub(usize::from(content_height));
+        self.about_scroll = self
+            .about_scroll
+            .min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
 
         Paragraph::new(help_text)
             .block(title_block)
@@ -1349,10 +1328,9 @@ impl App {
             // .wrap(Wrap { trim: false })
             .render(popup_area, buf);
 
-        let mut scrollbar_state =
-            ScrollbarState::new(about_scrollbar_content_length(content_height))
-                .viewport_content_length(usize::from(content_height))
-                .position(usize::from(self.about_scroll));
+        let mut scrollbar_state = ScrollbarState::new(max_scroll + 1)
+            .viewport_content_length(usize::from(content_height))
+            .position(usize::from(self.about_scroll));
         Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
             .render(
@@ -1365,44 +1343,21 @@ impl App {
             );
     }
 
-    fn clamp_about_scroll(&mut self, content_height: u16) {
-        self.about_scroll = self.about_scroll.min(about_max_scroll(content_height));
-    }
-
-    fn render_summary(&self, buf: &mut Buffer, area: Rect) {
-        // Acquire the lock to pull needed data, then drop it.
-        let dirs: Vec<PathBuf> = {
-            let file_index = self.file_index.read().unwrap();
-            file_index.dirs.clone().into_iter().collect()
-        };
-
-        let dir_lines: Vec<String> = dirs
-            .iter()
-            .map(|d| format!("./{}", deckard::to_relative_path(d).display()))
-            .collect();
-
-        let dir_joined = dir_lines.join(" ");
-
+    fn render_summary(&self, buf: &mut Buffer, area: Rect) -> Option<Position> {
         let path_line = match self.mode {
-            Mode::Normal => Line::from(if self.warning_message.is_none() {
-                vec!["Paths: ".into(), dir_joined.yellow()]
-            } else {
-                vec![
-                    self.warning_message
-                        .as_ref()
-                        .unwrap_or(&"".to_string())
-                        .to_string()
-                        .set_style(Style::default().fg(if self.warning_message.is_none() {
-                            Color::default()
-                        } else {
-                            Color::Red
-                        })),
-                ]
-            }),
-            Mode::Command => Line::from(vec![
-                ":".into(),
-                self.command_processor.input.clone().into(),
-            ]),
+            Mode::Command => Line::default(),
+            Mode::Normal => match &self.warning_message {
+                Some(warning) => Line::from(warning.as_str().red()),
+                None => {
+                    let dirs = self.file_index.read().unwrap().dirs.clone();
+                    let paths = dirs
+                        .iter()
+                        .map(|dir| format!("./{}", deckard::to_relative_path(dir).display()))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    Line::from(vec!["Paths: ".into(), paths.yellow()])
+                }
+            },
         };
 
         let summary_lines = vec![
@@ -1428,14 +1383,16 @@ impl App {
             path_line,
         ];
 
-        let summary_text = Text::from(summary_lines);
+        let block = Block::bordered().border_type(BorderType::Plain);
+        let inner = block.inner(area);
+        Paragraph::new(summary_lines).block(block).render(area, buf);
 
-        let summary = Paragraph::new(summary_text).style(Style::new()).block(
-            Block::bordered()
-                .border_type(BorderType::Plain)
-                .border_style(Style::new()),
-        );
-        summary.render(area, buf)
+        if matches!(self.mode, Mode::Command) && inner.height >= 2 {
+            let prompt = Rect::new(inner.x, inner.y + 1, inner.width, 1);
+            render_command_prompt(buf, prompt, &self.command_editor)
+        } else {
+            None
+        }
     }
 
     fn render_footer(&self, buf: &mut Buffer, area: Rect) {
@@ -1608,29 +1565,46 @@ impl App {
         }
     }
 
-    fn render_ui(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_ui(&mut self, area: Rect, buf: &mut Buffer) -> Option<Position> {
         let footer_height = if self.show_more_keys { 2 } else { 1 };
-
-        let rects = Layout::vertical([
-            Constraint::Length(1),             // header
-            Constraint::Min(5),                // main content
-            Constraint::Max(4),                // summary
-            Constraint::Length(footer_height), // footer
-        ])
-        .split(area);
-
-        self.render_header(buf, rects[0]);
-
-        if self.is_done() {
-            self.render_main(buf, rects[1]);
-            self.render_summary(buf, rects[2]);
-            self.render_footer(buf, rects[3]);
-            if matches!(self.focused_window, FocusedWindow::Popup) {
-                self.render_about(buf, area);
-            }
+        let menu = if matches!(self.mode, Mode::Command) {
+            self.command_editor.completions()
         } else {
+            None
+        };
+        let menu_rows = menu.map_or(0, |(suggestions, _)| {
+            let available = area.height.saturating_sub(1 + 5 + 4 + footer_height);
+            available
+                .min(4)
+                .min(u16::try_from(suggestions.len()).unwrap_or(u16::MAX))
+        });
+
+        let [header, main, completions, summary, footer] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(5),
+            Constraint::Length(menu_rows),
+            Constraint::Max(4),
+            Constraint::Length(footer_height),
+        ])
+        .areas(area);
+
+        self.render_header(buf, header);
+
+        if !self.is_done() {
             self.render_progress_bar(buf, area);
+            return None;
         }
+
+        if let Some((suggestions, selected)) = menu {
+            render_command_completions(buf, completions, suggestions, selected);
+        }
+        self.render_main(buf, main);
+        let cursor = self.render_summary(buf, summary);
+        self.render_footer(buf, footer);
+        if matches!(self.focused_window, FocusedWindow::Popup) {
+            self.render_about(buf, area);
+        }
+        cursor
     }
 
     fn handle_state(&mut self, state: State) -> bool {
@@ -1700,7 +1674,49 @@ async fn find_duplicates(
     Ok(())
 }
 
-/// helper function to create a centered rect using up certain percentage of the available rect `r`
+fn render_command_prompt(buf: &mut Buffer, area: Rect, editor: &CommandEditor) -> Option<Position> {
+    if area.is_empty() {
+        return None;
+    }
+    Line::from(":".blue().bold()).render(area, buf);
+    let width = area.width.checked_sub(1).filter(|width| *width > 0)?;
+    let input = editor.buffer();
+    let prefix = Span::raw(input.get(..editor.cursor())?);
+    let mut column = prefix.width();
+    let mut start = 0;
+    for grapheme in prefix.styled_graphemes(Style::default()) {
+        if column < usize::from(width) {
+            break;
+        }
+        start += grapheme.symbol.len();
+        column = column.saturating_sub(Span::raw(grapheme.symbol).width());
+    }
+    let input_area = Rect::new(area.x + 1, area.y, width, 1);
+    Line::raw(&input[start..]).render(input_area, buf);
+    let column = u16::try_from(column).ok()?;
+    Some(Position::new(input_area.x + column, input_area.y))
+}
+
+fn render_command_completions(
+    buf: &mut Buffer,
+    area: Rect,
+    suggestions: &[reedline::Suggestion],
+    selected: usize,
+) {
+    let rows = usize::from(area.height).min(suggestions.len());
+    let start = (selected + 1).saturating_sub(rows);
+    for (row, suggestion) in (0..area.height).zip(suggestions.iter().skip(start).take(rows)) {
+        let mut line = Line::from(suggestion.display_value());
+        if let Some(description) = &suggestion.description {
+            line.push_span(format!("  {description}").dark_gray());
+        }
+        if start + usize::from(row) == selected {
+            line = line.blue().bold();
+        }
+        line.render(Rect::new(area.x, area.y + row, area.width, 1), buf);
+    }
+}
+
 fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     let vertical = Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center);
     let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
@@ -1709,18 +1725,13 @@ fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     area
 }
 
-fn about_line_count() -> usize {
-    format!("{}\n{}", constants::HELP_LOGO, constants::HELP_TEXT)
-        .lines()
-        .count()
-}
-
-fn about_max_scroll(content_height: u16) -> u16 {
-    about_line_count().saturating_sub(usize::from(content_height)) as u16
-}
-
-fn about_scrollbar_content_length(content_height: u16) -> usize {
-    usize::from(about_max_scroll(content_height)) + 1
+fn about_text() -> String {
+    format!(
+        "{}\n{}\n\n[alias] command <input> - description\n{}",
+        constants::HELP_LOGO,
+        constants::ABOUT_TEXT,
+        command::command_help(),
+    )
 }
 
 fn file_info_lines(file_entry: &FileEntry) -> Vec<Line<'static>> {
@@ -1898,6 +1909,245 @@ mod tests {
 
     fn shift_key_event(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    fn command_keys(app: &mut App, input: &str) {
+        for character in input.chars() {
+            app.handle_key_event(key_event(KeyCode::Char(character)))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn command_mode_emacs_editing() {
+        let mut app = app_with_empty_tables();
+        command_keys(&mut app, ":uit");
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+            .unwrap();
+        command_keys(&mut app, "q");
+        assert!(!app.should_exit);
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        assert!(app.should_exit);
+    }
+
+    #[test]
+    fn command_mode_cancel_leaves_directory() {
+        let mut app = app_with_nested_file_table();
+        let directory = app.file_table.selected_resolved_path();
+        command_keys(&mut app, ":q");
+        app.handle_key_event(esc_key_event()).unwrap();
+        assert!(matches!(app.mode, Mode::Normal));
+        assert!(!app.should_exit);
+        assert_eq!(app.file_table.selected_resolved_path(), directory);
+    }
+
+    #[test]
+    fn command_mode_history_restores_the_draft_and_cursor() {
+        let mut app = app_with_empty_tables();
+        for _ in 0..2 {
+            command_keys(&mut app, ":unknown");
+            app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        }
+        command_keys(&mut app, ":ab");
+        app.handle_key_event(key_event(KeyCode::Left)).unwrap();
+        for _ in 0..2 {
+            app.handle_key_event(key_event(KeyCode::Up)).unwrap();
+            assert_eq!(app.command_editor.buffer(), "unknown");
+        }
+        for _ in 0..2 {
+            app.handle_key_event(key_event(KeyCode::Down)).unwrap();
+        }
+        assert_eq!(app.command_editor.buffer(), "ab");
+        assert_eq!(app.command_editor.cursor(), 1);
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert!(matches!(app.mode, Mode::Normal));
+        command_keys(&mut app, ":");
+        assert!(app.command_editor.buffer().is_empty());
+        app.handle_key_event(key_event(KeyCode::Up)).unwrap();
+        assert_eq!(app.command_editor.buffer(), "unknown");
+    }
+
+    #[test]
+    fn command_mode_history_keeps_the_last_sixteen_submissions() {
+        let mut app = app_with_empty_tables();
+        for number in 0..17 {
+            command_keys(&mut app, &format!(":unknown{number}"));
+            app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        }
+        command_keys(&mut app, ": ");
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+
+        command_keys(&mut app, ":");
+        for number in (1..17).rev() {
+            app.handle_key_event(key_event(KeyCode::Up)).unwrap();
+            assert_eq!(app.command_editor.buffer(), format!("unknown{number}"));
+        }
+        app.handle_key_event(key_event(KeyCode::Up)).unwrap();
+        assert_eq!(app.command_editor.buffer(), "unknown1");
+    }
+
+    #[test]
+    fn command_completion_replaces_the_entire_word() {
+        let mut app = app_with_empty_tables();
+        command_keys(&mut app, ":filtXX reports");
+        for _ in 0.."XX reports".len() {
+            app.handle_key_event(key_event(KeyCode::Left)).unwrap();
+        }
+        app.handle_key_event(key_event(KeyCode::Tab)).unwrap();
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        assert_eq!(app.display_filter.as_deref(), Some("reports"));
+    }
+
+    #[test]
+    fn command_completion_quoted_filter_uses_all_words() {
+        let mut app = app_with_empty_tables();
+        command_keys(&mut app, r#":f "reports 2026""#);
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        assert_eq!(app.display_filter.as_deref(), Some("reports 2026"));
+    }
+
+    #[test]
+    fn malformed_quoted_filter_preserves_marks() {
+        let mut app = app_with_empty_tables();
+        let marked = path_arc("/tmp/deckard-jump-test/keep");
+        let report = path_arc("/tmp/deckard-jump-test/reports");
+        app.file_table.update_table(
+            &vec![report, marked.clone()],
+            &app.file_index,
+            Some(&Sorting::Path),
+        );
+        app.marked_files.insert(marked.clone());
+        command_keys(&mut app, r#":mf "reports"2026"#);
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        assert_eq!(app.marked_files, HashSet::from([marked]));
+    }
+
+    #[test]
+    fn shift_left_keeps_prompt_text_when_typing() {
+        let mut app = app_with_empty_tables();
+        command_keys(&mut app, ":f ab");
+        app.handle_key_event(shift_key_event(KeyCode::Left))
+            .unwrap();
+        command_keys(&mut app, "c");
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        assert_eq!(app.display_filter.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn filter_completion_marks_the_inserted_path_without_redraw() {
+        let mut app = app_with_empty_tables();
+        let first = path_arc("/tmp/deckard-jump-test/reports alpha");
+        let second = path_arc("/tmp/deckard-jump-test/reports bravo");
+        app.file_table.update_table(
+            &vec![second, first.clone()],
+            &app.file_index,
+            Some(&Sorting::Path),
+        );
+        app.focused_window = FocusedWindow::Clones;
+        command_keys(&mut app, ":mf reports");
+        app.handle_key_event(key_event(KeyCode::Tab)).unwrap();
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        assert_eq!(app.marked_files, HashSet::from([first]));
+    }
+
+    #[test]
+    fn filter_completion_uses_the_unfiltered_index_for_the_scan_mode() {
+        let mut app = app_with_empty_tables();
+        let hidden = path_arc("/tmp/deckard-jump-test/hidden");
+        let visible = path_arc("/tmp/deckard-jump-test/visible");
+        let nonduplicate = path_arc("/tmp/deckard-jump-test/solo");
+        {
+            let mut index = app.file_index.write().unwrap();
+            for path in [&hidden, &visible, &nonduplicate] {
+                index.files.insert(
+                    path.clone(),
+                    FileEntry {
+                        path: path.clone(),
+                        size: 1,
+                        created: None,
+                        modified: None,
+                        hash: None,
+                        image_hash: None,
+                        audio_hash: None,
+                    },
+                );
+            }
+            index.duplicates.insert(hidden.clone(), HashSet::new());
+            index.duplicates.insert(visible, HashSet::new());
+        }
+        app.disk_usage_mode = false;
+        app.set_filter("visible");
+
+        command_keys(&mut app, ":filter");
+        assert!(app.handle_key_event(key_event(KeyCode::Tab)).unwrap());
+        assert!(app.handle_key_event(key_event(KeyCode::Tab)).unwrap());
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        // The empty query lists both scan paths. The hidden one sorts first.
+        assert_eq!(app.display_filter.as_deref(), hidden.to_str());
+
+        command_keys(&mut app, ":f solo");
+        assert!(!app.handle_key_event(key_event(KeyCode::Tab)).unwrap());
+        app.handle_key_event(esc_key_event()).unwrap();
+        app.disk_usage_mode = true;
+        command_keys(&mut app, ":f solo");
+        assert!(app.handle_key_event(key_event(KeyCode::Tab)).unwrap());
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        assert_eq!(app.display_filter.as_deref(), nonduplicate.to_str());
+    }
+
+    #[test]
+    fn filter_completion_marking_respects_the_current_file_rows() {
+        let (mut app, direct, nested, sibling) = app_with_selected_directory();
+        app.current_state = State::Done;
+        app.file_table.enter_selected_dir();
+        assert_eq!(
+            app.file_table.current_file_paths().collect::<Vec<_>>(),
+            vec![&direct]
+        );
+        command_keys(&mut app, ":mf nested");
+        assert!(!app.handle_key_event(key_event(KeyCode::Tab)).unwrap());
+        app.handle_key_event(esc_key_event()).unwrap();
+
+        app.file_table.flatten_dirs(true);
+        app.file_table.update_table(
+            &vec![direct, nested.clone(), sibling],
+            &app.file_index,
+            Some(&Sorting::Path),
+        );
+        command_keys(&mut app, ":mf nested");
+        assert!(app.handle_key_event(key_event(KeyCode::Tab)).unwrap());
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
+        assert_eq!(app.marked_files, HashSet::from([nested]));
+    }
+
+    #[test]
+    fn command_render_scrolls_by_grapheme_and_hides_cursor_on_close() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut app = app_with_empty_tables();
+        command_keys(&mut app, ":界e\u{301}");
+        let mut terminal = Terminal::new(TestBackend::new(6, 15)).unwrap();
+        terminal
+            .draw(|frame| {
+                let cursor = app.render_ui(frame.area(), frame.buffer_mut()).unwrap();
+                // The input area has three cells. The wide glyph scrolls out whole.
+                assert_eq!(cursor.x, 3);
+                frame.set_cursor_position(cursor);
+            })
+            .unwrap();
+        assert_eq!(terminal.get_cursor_position().unwrap().x, 3);
+
+        let narrow = Rect::new(0, 0, 1, 1);
+        assert!(
+            render_command_prompt(&mut Buffer::empty(narrow), narrow, &app.command_editor)
+                .is_none()
+        );
+        app.handle_key_event(esc_key_event()).unwrap();
+        terminal
+            .draw(|frame| assert!(app.render_ui(frame.area(), frame.buffer_mut()).is_none()))
+            .unwrap();
     }
 
     fn path_arc(path: &str) -> Arc<PathBuf> {
@@ -2167,22 +2417,13 @@ mod tests {
     #[test]
     fn about_scroll_clamps_at_bottom_for_content_height() {
         let mut app = app_with_nested_file_table();
-        let content_height = 3;
-        let expected_max = about_max_scroll(content_height);
+        let area = Rect::new(0, 0, 80, 20);
+        let viewport_height = usize::from(popup_area(area, 60, 60).height - 2);
         app.about_scroll = u16::MAX;
-
-        app.clamp_about_scroll(content_height);
-
-        assert_eq!(app.about_scroll, expected_max);
-    }
-
-    #[test]
-    fn about_scrollbar_content_length_matches_scroll_range() {
-        let content_height = 3;
-
+        app.render_about(&mut Buffer::empty(area), area);
         assert_eq!(
-            about_scrollbar_content_length(content_height),
-            usize::from(about_max_scroll(content_height)) + 1
+            usize::from(app.about_scroll),
+            about_text().lines().count() - viewport_height
         );
     }
 
@@ -2315,9 +2556,9 @@ mod tests {
     #[test]
     fn mark_directory_command_marks_recursive_files_only() {
         let (mut app, direct, nested, sibling) = app_with_selected_directory();
-        app.command_processor.input = "mark_directory".to_string();
-
-        app.handle_command();
+        app.current_state = State::Done;
+        command_keys(&mut app, ":mark_directory");
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
 
         assert!(app.marked_files.contains(&direct));
         assert!(app.marked_files.contains(&nested));
@@ -2328,9 +2569,9 @@ mod tests {
     fn mark_directory_command_ignores_non_files_view() {
         let (mut app, direct, nested, _sibling) = app_with_selected_directory();
         app.focused_window = FocusedWindow::Clones;
-        app.command_processor.input = "mark_directory".to_string();
-
-        app.handle_command();
+        app.current_state = State::Done;
+        command_keys(&mut app, ":mark_directory");
+        app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
 
         assert!(!app.marked_files.contains(&direct));
         assert!(!app.marked_files.contains(&nested));

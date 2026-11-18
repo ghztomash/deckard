@@ -247,12 +247,11 @@ impl DirTable {
     }
 
     /// Returns paths for currently visible file rows only.
-    pub fn current_file_paths(&self) -> Vec<Arc<PathBuf>> {
+    pub fn current_file_paths(&self) -> impl Iterator<Item = &Arc<PathBuf>> {
         self.current_entries
             .iter()
             .filter(|e| !e.is_dir)
-            .map(|e| e.path.clone())
-            .collect()
+            .map(|e| &e.path)
     }
 
     pub fn update_table(
@@ -1170,7 +1169,10 @@ mod tests {
             DirTableEntry::new(file_path.clone(), PathBuf::from("file"), 0, None, 0, false),
         ];
 
-        assert_eq!(table.current_file_paths(), vec![file_path]);
+        assert_eq!(
+            table.current_file_paths().collect::<Vec<_>>(),
+            vec![&file_path]
+        );
     }
 
     #[test]
