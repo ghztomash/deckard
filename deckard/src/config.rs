@@ -119,6 +119,25 @@ impl Default for AudioConfig {
     }
 }
 
+/// Filename normalization settings for duplicate-name scans.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(default)]
+pub struct NameConfig {
+    /// Strip a leading track number from the title.
+    pub ignore_track_numbers: bool,
+    /// Remove whitespace, hyphens, underscores and dots.
+    pub ignore_separators: bool,
+}
+
+impl Default for NameConfig {
+    fn default() -> Self {
+        Self {
+            ignore_track_numbers: true,
+            ignore_separators: false,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SearchConfig {
     pub skip_hidden: bool,
@@ -145,6 +164,9 @@ pub struct SearchConfig {
     pub hasher_config: HasherConfig,
     pub image_config: ImageConfig,
     pub audio_config: AudioConfig,
+    /// Comparison rules used by duplicate-name scans.
+    #[serde(default)]
+    pub name_config: NameConfig,
 }
 
 mod optional_patterns {
@@ -193,6 +215,7 @@ impl Default for SearchConfig {
             hasher_config: HasherConfig::default(),
             image_config: ImageConfig::default(),
             audio_config: AudioConfig::default(),
+            name_config: NameConfig::default(),
         }
     }
 }

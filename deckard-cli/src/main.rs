@@ -1,6 +1,7 @@
 use clap::{Arg, value_parser};
 use color_eyre::eyre::Result;
 use colored::*;
+use deckard::cli::ScanMode;
 use deckard::index::FileIndex;
 use deckard::{SerializablePath, config::SearchConfig};
 use std::{io::stderr, path::PathBuf, sync::Arc, time::Instant};
@@ -53,7 +54,7 @@ fn main() -> Result<()> {
                 .help("Display the biggest directories at the top in descending order"),
         );
     let args = cli.get_matches();
-    let disk_usage_mode = args.get_flag("disk_usage");
+    let scan_mode = ScanMode::from_args(&args);
 
     // setup logging
     let log_level = deckard::cli::log_level(args.get_count("verbose"));
@@ -99,8 +100,32 @@ fn main() -> Result<()> {
         );
     }
 
-    // Only display the size
-    if disk_usage_mode {
+    if scan_mode == ScanMode::Names {
+        file_index.find_name_matches(None, None);
+        let limit = args
+            .get_one::<usize>("lines_number")
+            .copied()
+            .unwrap_or(usize::MAX);
+        let mut groups: Vec<_> = file_index.name_groups().take(limit).collect();
+        if args.get_flag("reverse") {
+            groups.reverse();
+        }
+        if json {
+            let paths: Vec<Vec<_>> = groups
+                .iter()
+                .map(|group| group.iter().map(SerializablePath::from).collect())
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&paths)?);
+        } else {
+            println!("{}", "Name matches:".bold());
+            for group in groups {
+                println!();
+                for path in group {
+                    println!("  {}", path.display());
+                }
+            }
+        }
+    } else if scan_mode == ScanMode::DiskUsage {
         // Sort indexed files by size
         let now = Instant::now();
         let files = collect_sorted_files(

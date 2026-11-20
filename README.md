@@ -23,6 +23,13 @@ Both limits are inclusive.
 file names. Both flags can be repeated; any matching include pattern selects a file, while any
 matching exclude pattern takes precedence.
 
+## Matching filenames
+Use `--duplicate_names` to compare filenames across directories without reading file contents.
+The mode ignores case and the final extension. Files can match across formats and sizes.
+
+```sh
+deckard-tui --duplicate_names Music
+```
 ## Library progress
 
 Long-running `FileIndex` stages accept an optional pollable `Progress` handle. Use a fresh handle

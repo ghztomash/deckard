@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
 
     let dry_run = args.get_flag("dry_run");
     let remove_dirs = args.get_flag("no_remove_dirs");
-    let disk_usage = args.get_flag("disk_usage");
+    let scan_mode = deckard::cli::ScanMode::from_args(&args);
 
     let target_dirs = match args.get_many::<String>("params") {
         Some(values) => values.map(|v| v.as_str()).collect::<Vec<&str>>(),
@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
         config,
         dry_run,
         remove_dirs,
-        disk_usage,
+        scan_mode,
         log_level >= tracing::Level::INFO,
     )
     .run(&mut terminal)

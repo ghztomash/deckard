@@ -4,6 +4,7 @@ pub mod error;
 pub mod file;
 mod hasher;
 pub mod index;
+mod names;
 pub mod progress;
 
 use config::SearchConfig;

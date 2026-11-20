@@ -1017,6 +1017,7 @@ dependencies = [
  "thiserror 2.0.16",
  "tracing",
  "tree_magic",
+ "unicase",
 ]
 
 [[package]]

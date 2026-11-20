@@ -64,6 +64,30 @@ fn parse_size(value: &str) -> Result<u64, String> {
     u64::try_from(scaled / divisor).map_err(|_| format!("size `{value}` is too large"))
 }
 
+/// Selects the work to perform after indexing files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanMode {
+    /// Compare file contents or configured media fingerprints.
+    Content,
+    /// Report matches from filenames alone.
+    Names,
+    /// Display sizes from indexed metadata.
+    DiskUsage,
+}
+
+impl ScanMode {
+    /// Reads the mutually exclusive mode flags shared by both binaries.
+    pub fn from_args(args: &ArgMatches) -> Self {
+        if args.get_flag("duplicate_names") {
+            Self::Names
+        } else if args.get_flag("disk_usage") {
+            Self::DiskUsage
+        } else {
+            Self::Content
+        }
+    }
+}
+
 /// Common CLI arguments
 pub fn commands() -> Command {
     command!()
@@ -104,6 +128,13 @@ pub fn commands() -> Command {
                 .long("disk_usage")
                 .action(ArgAction::SetTrue)
                 .help("Index the files only and display the size"),
+        )
+        .arg(
+            Arg::new("duplicate_names")
+                .long("duplicate_names")
+                .conflicts_with("disk_usage")
+                .action(ArgAction::SetTrue)
+                .help("Report matching filenames"),
         )
         .arg(
             Arg::new("depth")

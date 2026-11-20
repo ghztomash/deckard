@@ -734,11 +734,7 @@ fn file_record_from_index(path: &Arc<PathBuf>, file_index: &FileIndex) -> FileRe
         size: file.map(|entry| entry.size).unwrap_or_default(),
         modified: file.and_then(|entry| entry.modified),
         created: file.and_then(|entry| entry.created),
-        clone_count: file_index
-            .duplicates
-            .get(path)
-            .map(|duplicates| duplicates.len())
-            .unwrap_or_default(),
+        clone_count: file_index.file_duplicates_len(path).unwrap_or_default(),
     }
 }
 
@@ -873,11 +869,14 @@ fn path_depth(path: &Path) -> usize {
 
 fn sort_entries(entries: &mut [DirTableEntry], sort_by: Option<Sorting>) {
     if let Some(sort_by) = sort_by {
-        entries.sort_by(|a, b| match sort_by {
-            Sorting::Path => a.path.cmp(&b.path),
-            Sorting::Size => b.size.cmp(&a.size),
-            Sorting::Date => b.date.cmp(&a.date),
-            Sorting::Count => b.clone_count.cmp(&a.clone_count),
+        entries.sort_by(|a, b| {
+            let order = match sort_by {
+                Sorting::Path => a.path.cmp(&b.path),
+                Sorting::Size => b.size.cmp(&a.size),
+                Sorting::Date => b.date.cmp(&a.date),
+                Sorting::Count => b.clone_count.cmp(&a.clone_count),
+            };
+            order.then_with(|| a.path.cmp(&b.path))
         });
     }
 }

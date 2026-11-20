@@ -5,6 +5,7 @@ use arboard::Clipboard;
 use chrono::{DateTime, Local};
 use color_eyre::eyre::{Result, WrapErr};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use deckard::cli::ScanMode;
 use deckard::config::SearchConfig;
 use deckard::file::FileEntry;
 use deckard::index::FileIndex;
@@ -118,7 +119,7 @@ pub struct App {
     marked_table: DirTable,
     marked_files: HashSet<Arc<PathBuf>>,
     marked_dirs: HashSet<PathBuf>,
-    disk_usage_mode: bool,
+    scan_mode: ScanMode,
     show_clones_table: bool,
     show_marked_table: bool,
     show_file_info: bool,
@@ -239,7 +240,7 @@ impl App {
         config: SearchConfig,
         dry_run: bool,
         remove_dirs: bool,
-        disk_usage: bool,
+        scan_mode: ScanMode,
         debug: bool,
     ) -> Self {
         let clipboard = Clipboard::new().map_or_else(
@@ -250,6 +251,7 @@ impl App {
             Some,
         );
 
+        let disk_usage = scan_mode == ScanMode::DiskUsage;
         // don't show clone count for disk_usage mode
         let file_table = if disk_usage {
             DirTable::new(vec![" ", "File", "Date", "Size"], true, false, false)
@@ -271,7 +273,7 @@ impl App {
             marked_table: DirTable::new(vec![" ", "Marked"], false, false, true),
             marked_files: HashSet::new(),
             marked_dirs: HashSet::new(),
-            disk_usage_mode: disk_usage,
+            scan_mode,
             show_marked_table: true,
             show_clones_table: !disk_usage,
             show_file_info: true,
@@ -306,24 +308,27 @@ impl App {
         let (tx, mut rx) = watch::channel(WorkerState::Idle);
         let file_index = self.file_index.clone();
         let task_cancel_flag = self.cancel_flag.clone();
-        let disk_usage_mode = self.disk_usage_mode;
+        let scan_mode = self.scan_mode;
         let task_handle = tokio::spawn(async move {
             if let Err(e) =
                 index_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
             {
                 let _ = tx.send(WorkerState::Error(format!("index_files error: {e}")));
+                return;
             }
-            if !disk_usage_mode {
-                if let Err(e) =
+            if scan_mode == ScanMode::Content
+                && let Err(e) =
                     process_files(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
-                {
-                    let _ = tx.send(WorkerState::Error(format!("process_files error: {e}")));
-                }
-                if let Err(e) =
-                    find_duplicates(file_index.clone(), tx.clone(), task_cancel_flag.clone()).await
-                {
-                    let _ = tx.send(WorkerState::Error(format!("find_duplicates error: {e}")));
-                }
+            {
+                let _ = tx.send(WorkerState::Error(format!("process_files error: {e}")));
+                return;
+            }
+            if scan_mode != ScanMode::DiskUsage
+                && let Err(e) =
+                    find_duplicates(file_index, tx.clone(), task_cancel_flag, scan_mode).await
+            {
+                let _ = tx.send(WorkerState::Error(format!("find_duplicates error: {e}")));
+                return;
             }
             let _ = tx.send(WorkerState::Done);
         });
@@ -339,7 +344,7 @@ impl App {
                     let state = rx.borrow_and_update().display_state();
                     should_redraw |= self.handle_state(state);
                     if should_redraw {
-                        if self.is_done() && self.show_file_info && !self.disk_usage_mode && info_hash_task.is_empty() {
+                        if self.is_done() && self.show_file_info && self.scan_mode == ScanMode::Content && info_hash_task.is_empty() {
                             let selected = self.active_selected_file();
                             if selected != last_hash_request {
                                 if let Some(path) = &selected {
@@ -631,7 +636,7 @@ impl App {
         if let Some(backwards) = backwards {
             let table = &self.file_table;
             let index = &self.file_index;
-            let disk_usage = self.disk_usage_mode;
+            let disk_usage = self.scan_mode == ScanMode::DiskUsage;
             return self
                 .command_editor
                 .complete(backwards, |scope, query, span| match scope {
@@ -653,7 +658,7 @@ impl App {
                             )
                         } else {
                             command::path_suggestions(
-                                index.duplicates.keys().map(|path| path.as_path()),
+                                index.matched_paths().map(|path| path.as_path()),
                                 query,
                                 span,
                             )
@@ -1117,7 +1122,7 @@ impl App {
 
     fn update_file_table(&mut self) {
         let update_start = Instant::now();
-        let paths: Vec<Arc<PathBuf>> = if self.disk_usage_mode {
+        let paths: Vec<Arc<PathBuf>> = if self.scan_mode == ScanMode::DiskUsage {
             // use files map for disk usage mode
             self.file_index
                 .read()
@@ -1136,8 +1141,7 @@ impl App {
             self.file_index
                 .read()
                 .unwrap()
-                .duplicates
-                .keys()
+                .matched_paths()
                 .filter(|k| {
                     self.display_filter
                         .as_ref()
@@ -1169,18 +1173,10 @@ impl App {
         if let Some(selected_file) = self.file_table.selected_path().as_ref()
             && !self.file_table.selected_path_is_dir()
         {
-            if let Some(clone_paths) = self
-                .file_index
-                .read()
-                .unwrap()
-                .duplicates
-                .get(selected_file)
-            {
-                let paths = clone_paths.iter().cloned().collect();
-                self.clone_table
-                    .update_table(&paths, &self.file_index, Some(&Sorting::Path));
-                self.clone_table.select_none();
-            }
+            let paths = self.file_index.read().unwrap().peer_paths(selected_file);
+            self.clone_table
+                .update_table(&paths, &self.file_index, Some(&Sorting::Path));
+            self.clone_table.select_none();
         } else {
             // Empty the table
             self.clone_table.clear();
@@ -1276,23 +1272,17 @@ impl App {
     }
 
     fn selected_info_lines(&self) -> Vec<Line<'static>> {
-        if let Some(file_entry) = self.selected_file_entry() {
-            file_info_lines(&file_entry)
-        } else if let Some(dir_info) = self.selected_directory_info() {
+        if let Some(path) = self.active_selected_file()
+            && let Ok(index) = self.file_index.read()
+            && let Some(entry) = index.files.get(&path)
+        {
+            return file_info_lines(entry);
+        }
+        if let Some(dir_info) = self.selected_directory_info() {
             directory_info_lines(&dir_info)
         } else {
             vec![Line::from(vec!["none".into()])]
         }
-    }
-
-    fn selected_file_entry(&self) -> Option<FileEntry> {
-        let selected_file = self.active_selected_file()?;
-        self.file_index
-            .read()
-            .unwrap()
-            .files
-            .get(&selected_file)
-            .cloned()
     }
 
     fn selected_directory_info(&self) -> Option<DirectoryInfo> {
@@ -1715,13 +1705,20 @@ async fn find_duplicates(
     file_index: Arc<RwLock<FileIndex>>,
     tx: watch::Sender<WorkerState>,
     cancel_flag: Arc<AtomicBool>,
+    scan_mode: ScanMode,
 ) -> Result<()> {
     let progress = Progress::new();
     let _ = tx.send(WorkerState::Comparing(progress.clone()));
     tokio::task::spawn_blocking(move || {
         let mut fi = file_index.write().unwrap();
-        fi.find_duplicates(Some(&progress), Some(cancel_flag));
-        fi.cleanup_index();
+        if scan_mode == ScanMode::Names {
+            fi.find_name_matches(Some(&progress), Some(cancel_flag.clone()));
+        } else {
+            fi.find_duplicates(Some(&progress), Some(cancel_flag.clone()));
+        }
+        if !cancel_flag.load(Ordering::Relaxed) {
+            fi.cleanup_index();
+        }
     })
     .await?;
     Ok(())
@@ -1788,16 +1785,17 @@ fn about_text() -> String {
 }
 
 fn file_info_lines(file_entry: &FileEntry) -> Vec<Line<'static>> {
+    let name_line = Line::from(vec![
+        "name: ".into(),
+        file_entry
+            .name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
+            .yellow(),
+    ]);
     let mut lines = vec![
-        Line::from(vec![
-            "name: ".into(),
-            file_entry
-                .name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-                .yellow(),
-        ]),
+        name_line,
         Line::from(vec![
             "size: ".into(),
             humansize::format_size(file_entry.size, humansize::DECIMAL)
@@ -1928,6 +1926,58 @@ fn shift_table_jump_step(table_len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_names_use_path_selection() {
+        let mut app = App::new(
+            HashSet::from([PathBuf::from("/music")]),
+            SearchConfig::default(),
+            true,
+            false,
+            ScanMode::Names,
+            false,
+        );
+        let paths = [
+            "Reed Wisp.wav",
+            "other/reed-wisp.mp3",
+            "pre-order/ReedWisp.flac",
+            "Thimblewake.wav",
+            "other/12 thimblewake.aiff",
+        ]
+        .map(|name| Arc::new(PathBuf::from("/music").join(name)));
+        {
+            let mut index = app.file_index.write().unwrap();
+            index.config.name_config.ignore_separators = true;
+            for (size, path) in paths.iter().enumerate() {
+                index.files.insert(
+                    path.clone(),
+                    FileEntry {
+                        path: path.clone(),
+                        size: size as u64,
+                        created: None,
+                        modified: None,
+                        hash: None,
+                        image_hash: None,
+                        audio_hash: None,
+                    },
+                );
+            }
+            index.find_name_matches(None, None);
+        }
+        app.update_tables();
+
+        app.set_filter("Wisp.wav");
+        assert_eq!(app.active_selected_file().as_ref(), Some(&paths[0]));
+        assert_eq!(app.clone_table.current_file_paths().count(), 2);
+        app.focus_clones_table();
+        assert_ne!(app.active_selected_file().as_ref(), Some(&paths[0]));
+        app.file_index.write().unwrap().remove_from_index(&paths[1]);
+        app.update_tables();
+        assert_eq!(app.clone_table.current_file_paths().count(), 1);
+        app.file_index.write().unwrap().remove_from_index(&paths[2]);
+        app.update_tables();
+        assert_eq!(app.file_table.current_file_paths().count(), 0);
+    }
 
     #[tokio::test]
     async fn file_info_caches_deferred_digest() {
@@ -2151,7 +2201,7 @@ mod tests {
             index.duplicates.insert(hidden.clone(), HashSet::new());
             index.duplicates.insert(visible, HashSet::new());
         }
-        app.disk_usage_mode = false;
+        app.scan_mode = ScanMode::Content;
         app.set_filter("visible");
 
         command_keys(&mut app, ":filter");
@@ -2164,7 +2214,7 @@ mod tests {
         command_keys(&mut app, ":f solo");
         assert!(!app.handle_key_event(key_event(KeyCode::Tab)).unwrap());
         app.handle_key_event(esc_key_event()).unwrap();
-        app.disk_usage_mode = true;
+        app.scan_mode = ScanMode::DiskUsage;
         command_keys(&mut app, ":f solo");
         assert!(app.handle_key_event(key_event(KeyCode::Tab)).unwrap());
         app.handle_key_event(key_event(KeyCode::Enter)).unwrap();
@@ -2246,7 +2296,7 @@ mod tests {
             SearchConfig::default(),
             true,
             false,
-            true,
+            ScanMode::DiskUsage,
             false,
         );
         app.current_state = State::Done;
@@ -2261,7 +2311,7 @@ mod tests {
             SearchConfig::default(),
             true,
             false,
-            true,
+            ScanMode::DiskUsage,
             false,
         );
         let paths = vec![Arc::new(root.join("deckard-tui/Cargo.toml"))];
@@ -2281,7 +2331,7 @@ mod tests {
             SearchConfig::default(),
             true,
             false,
-            true,
+            ScanMode::DiskUsage,
             false,
         );
         let direct = Arc::new(root.join("folder/direct.txt"));

@@ -13,8 +13,9 @@ use std::time::{Duration, SystemTime};
 
 use crate::config::SearchConfig;
 use crate::file::FileEntry;
+pub use crate::names::NameMatches;
 use crate::progress::Progress;
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{BTreeSet, HashMap, HashSet, hash_map::Entry};
 use std::path::PathBuf;
 
 use tracing::{debug, error, trace, warn};
@@ -24,6 +25,8 @@ pub struct FileIndex {
     pub dirs: HashSet<PathBuf>,
     pub files: HashMap<Arc<PathBuf>, FileEntry>,
     pub duplicates: HashMap<Arc<PathBuf>, HashSet<Arc<PathBuf>>>,
+    /// Filename-only matches from the most recent comparison.
+    pub name_matches: NameMatches,
     pub config: SearchConfig,
     pub pool: Option<Arc<ThreadPool>>,
 }
@@ -53,6 +56,7 @@ impl FileIndex {
             dirs,
             files: HashMap::new(),
             duplicates: HashMap::new(),
+            name_matches: NameMatches::default(),
             config,
             pool,
         }
@@ -178,6 +182,7 @@ impl FileIndex {
         }
         self.files = index;
         self.duplicates = HashMap::new();
+        self.name_matches = NameMatches::default();
     }
 
     /// Hashes content only for repeated sizes and processes all enabled media candidates.
@@ -237,6 +242,7 @@ impl FileIndex {
             progress.publish_total(self.files.len());
         }
         self.duplicates = HashMap::new();
+        self.name_matches = NameMatches::default();
         let cancelled = || {
             cancel
                 .as_ref()
@@ -363,7 +369,7 @@ impl FileIndex {
     }
 
     pub fn duplicates_len(&self) -> usize {
-        self.duplicates.len()
+        self.duplicates.len() + self.name_matches.by_path.len()
     }
 
     pub fn file_name(&self, file: &PathBuf) -> Option<OsString> {
@@ -386,12 +392,100 @@ impl FileIndex {
         self.files.get(file).map(|f| f.created)?
     }
 
+    /// Groups indexed paths by filtered filename without opening files.
+    /// Cancellation preserves the previously published matches.
+    pub fn find_name_matches(
+        &mut self,
+        progress: Option<&Progress>,
+        cancel: Option<Arc<AtomicBool>>,
+    ) {
+        if let Some(progress) = progress {
+            progress.publish_total(self.files.len());
+        }
+        let cancelled = || {
+            cancel
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        };
+        let mut candidates = Vec::with_capacity(self.files.len());
+        for path in self.files.keys() {
+            if cancelled() {
+                return;
+            }
+            if let Some(key) = self.config.name_config.filtered_name(path) {
+                candidates.push((key, path));
+            }
+            if let Some(progress) = progress {
+                progress.advance();
+            }
+        }
+        candidates.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let mut matches = NameMatches::default();
+        for group in candidates.chunk_by(|a, b| a.0 == b.0) {
+            if cancelled() {
+                return;
+            }
+            matches.insert_group(group);
+        }
+        if !cancelled() {
+            self.name_matches = matches;
+            self.duplicates.clear();
+        }
+    }
+
+    /// Returns name groups in filtered-name order, each with its paths in order.
+    pub fn name_groups(&self) -> impl DoubleEndedIterator<Item = &BTreeSet<Arc<PathBuf>>> {
+        self.name_matches.groups.values()
+    }
+
+    /// All paths with a match in the last content or filename comparison.
+    pub fn matched_paths(&self) -> impl Iterator<Item = &Arc<PathBuf>> {
+        self.duplicates
+            .keys()
+            .chain(self.name_matches.by_path.keys())
+    }
+
+    /// Returns the filtered filename that matched this indexed path.
+    pub fn matched_name(&self, path: &PathBuf) -> Option<std::borrow::Cow<'_, str>> {
+        self.name_matches
+            .by_path
+            .get(path)
+            .map(|key| String::from_utf8_lossy(key))
+    }
+
+    /// Returns the other paths matching the selected file.
+    pub fn peer_paths(&self, path: &PathBuf) -> Vec<Arc<PathBuf>> {
+        if let Some(peers) = self.name_matches.members(path) {
+            return peers
+                .iter()
+                .filter(|p| p.as_ref() != path)
+                .cloned()
+                .collect();
+        }
+        self.duplicates
+            .get(path)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
     /// Get number of duplicates a file has
     pub fn file_duplicates_len(&self, file: &PathBuf) -> Option<usize> {
-        Some(self.duplicates.get(file)?.len())
+        self.name_matches
+            .members(file)
+            .map(|group| group.len() - 1)
+            .or_else(|| self.duplicates.get(file).map(HashSet::len))
     }
 
     pub fn remove_from_index(&mut self, file: &PathBuf) {
+        if self.name_matches.by_path.contains_key(file) {
+            self.files.remove(file);
+            if let Some(singleton) = self.name_matches.remove(file) {
+                self.files.remove(&singleton);
+            }
+            return;
+        }
         // get the given file
         if let Some(clones) = self.duplicates.remove(file) {
             // check the clones of the file
@@ -411,8 +505,9 @@ impl FileIndex {
 
     pub fn cleanup_index(&mut self) {
         // Clean index from files without duplicates
-        self.files
-            .retain(|path, _entry| self.duplicates.contains_key(path));
+        self.files.retain(|path, _entry| {
+            self.duplicates.contains_key(path) || self.name_matches.by_path.contains_key(path)
+        });
         self.files.shrink_to_fit();
     }
 }

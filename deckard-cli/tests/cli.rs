@@ -182,3 +182,81 @@ fn test_audio_duplicates() {
         .success()
         .stdout(predicate);
 }
+
+#[test]
+fn duplicate_names_config_defaults() {
+    for (section, expected) in [
+        (None, (true, false)),
+        (
+            Some(serde_json::json!({"ignore_track_numbers": false})),
+            (false, false),
+        ),
+        (
+            Some(serde_json::json!({"ignore_separators": true})),
+            (true, true),
+        ),
+    ] {
+        let mut value = serde_json::to_value(SearchConfig::default()).unwrap();
+        let fields = value.as_object_mut().unwrap();
+        fields.remove("name_config");
+        if let Some(section) = section {
+            fields.insert("name_config".into(), section);
+        }
+        let config: SearchConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            (
+                config.name_config.ignore_track_numbers,
+                config.name_config.ignore_separators
+            ),
+            expected
+        );
+    }
+}
+
+#[test]
+fn duplicate_names_reports_ordered_paths() {
+    let root = env::temp_dir().join(format!("deckard-names-cli-{}", std::process::id()));
+    let data = root.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let names = [
+        "album/Avenquill - 04 Thimblewake.wav",
+        "pre-order/avenquill - Thimblewake.flac",
+        "album/COVER.jpg",
+        "pre-order/cover.png",
+        "bonus/cover.gif",
+        "solo",
+    ];
+    let paths = names.map(|name| data.join(name));
+    for (i, path) in paths.iter().enumerate() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, vec![0; i + 1]).unwrap();
+    }
+    let run = |extra: &[&str]| {
+        let out = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+            .unwrap()
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("APPDATA", root.join("config"))
+            .args(["--duplicate_names", "--json", "--check_audio"])
+            .args(extra)
+            .arg(&data)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<Vec<Vec<PathBuf>>>(&out.stdout).unwrap()
+    };
+    let all = run(&[]);
+    let filtered = run(&["-f", "*Thimblewake*"]);
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(
+        all,
+        vec![
+            paths[..2].to_vec(),
+            vec![paths[2].clone(), paths[4].clone(), paths[3].clone()]
+        ]
+    );
+    assert_eq!(filtered, vec![paths[..2].to_vec()]);
+}
