@@ -7,6 +7,16 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let mut g = c.benchmark_group("process");
     g.sample_size(10);
 
+    g.bench_function("sampled_sha1", |b| {
+        let path = std::sync::Arc::new(std::path::PathBuf::from("../test_files/images/Sapeck.jpg"));
+        let mut file = deckard::file::FileEntry::new(&path, &path.metadata().unwrap()).unwrap();
+        let config = SearchConfig::default();
+        b.iter(|| {
+            file.process(&config).unwrap();
+            std::hint::black_box(&file.hash);
+        });
+    });
+
     g.bench_function("test_files", |b| {
         b.iter(|| {
             let mut index = black_box(FileIndex::new(

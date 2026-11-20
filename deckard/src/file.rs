@@ -131,13 +131,16 @@ impl FileEntry {
     }
 
     pub fn compare(&self, other: &Self, config: &SearchConfig) -> bool {
-        if self.size == other.size
-            && let (Some(this_hash), Some(other_hash)) = (self.hash.as_ref(), other.hash.as_ref())
-            && this_hash == other_hash
-        {
-            return true;
-        }
+        self.matches_hash(other) || self.compare_media(other, config)
+    }
 
+    /// Returns whether both the indexed sizes and available content digests match.
+    pub(crate) fn matches_hash(&self, other: &Self) -> bool {
+        self.size == other.size && self.hash.is_some() && self.hash == other.hash
+    }
+
+    /// Compares the enabled media fingerprints using their configured thresholds.
+    pub(crate) fn compare_media(&self, other: &Self, config: &SearchConfig) -> bool {
         if config.image_config.compare
             && let (Some(this_image), Some(other_image)) =
                 (self.image_hash.as_ref(), other.image_hash.as_ref())

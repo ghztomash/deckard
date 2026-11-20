@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{Candidate, GlobBuilder, GlobSet, GlobSetBuilder};
 use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
@@ -29,13 +29,6 @@ pub struct FileIndex {
 
 impl FileIndex {
     pub fn new(dirs: HashSet<PathBuf>, config: SearchConfig) -> Self {
-        let target_threads = if config.threads == 0 {
-            rayon::current_num_threads()
-        } else {
-            config.threads
-        };
-        debug!("Building local Rayon thread pool with {target_threads} threads",);
-
         // Build a local thread pool
         let pool = ThreadPoolBuilder::new()
             .num_threads(config.threads)
@@ -48,6 +41,12 @@ impl FileIndex {
             })
             .map(Arc::new)
             .ok();
+        if let Some(pool) = &pool {
+            debug!(
+                "Built local Rayon thread pool with {} threads",
+                pool.current_num_threads()
+            );
+        }
 
         FileIndex {
             dirs,
@@ -103,30 +102,35 @@ impl FileIndex {
                         continue;
                     }
                 };
-                let path = entry.path();
-                if !path.is_file() || path.is_symlink() {
+                if !entry.file_type().is_file() || entry.path_is_symlink() {
                     continue;
                 }
 
-                let file_name = entry.file_name().to_string_lossy();
-                if exclude_filter
-                    .as_ref()
-                    .is_some_and(|filter| filter.is_match(file_name.as_ref()))
-                {
-                    trace!("File '{}' matches an exclude filter", file_name);
-                    continue;
-                }
-                if let Some(filter) = &include_filter {
-                    if !filter.is_match(file_name.as_ref()) {
+                let file_name = entry.file_name();
+                if include_filter.is_some() || exclude_filter.is_some() {
+                    let file_name = file_name.to_string_lossy();
+                    let candidate = Candidate::new(file_name.as_ref());
+                    if exclude_filter
+                        .as_ref()
+                        .is_some_and(|filter| filter.is_match_candidate(&candidate))
+                    {
+                        trace!("File '{}' matches an exclude filter", file_name);
                         continue;
                     }
-                    trace!("File '{}' matches an include filter", file_name);
+                    if let Some(filter) = &include_filter {
+                        if !filter.is_match_candidate(&candidate) {
+                            continue;
+                        }
+                        trace!("File '{}' matches an include filter", file_name);
+                    }
                 }
 
-                let metadata = match entry.metadata() {
+                let path = entry.path();
+                let metadata = match path.symlink_metadata() {
+                    Ok(metadata) if !metadata.is_file() => continue,
                     Ok(metadata) => metadata,
                     Err(error) => {
-                        error!("Error reading metadata {}", error);
+                        error!("Error reading metadata for {}: {}", path.display(), error);
                         continue;
                     }
                 };
@@ -134,7 +138,9 @@ impl FileIndex {
                 if file_size < self.config.min_size {
                     trace!(
                         "Skipping file {}, size {} smaller than {}",
-                        file_name, file_size, self.config.min_size
+                        file_name.display(),
+                        file_size,
+                        self.config.min_size
                     );
                     continue;
                 }
@@ -143,20 +149,22 @@ impl FileIndex {
                 {
                     trace!(
                         "Skipping file {}, size {} larger than {}",
-                        file_name, file_size, max_size
+                        file_name.display(),
+                        file_size,
+                        max_size
                     );
                     continue;
                 }
 
                 let path = Arc::new(path);
-                let file = match FileEntry::new(&path, &metadata) {
-                    Ok(file) => file,
-                    Err(error) => {
-                        error!("Error reading File Entry {}", error);
-                        continue;
-                    }
-                };
                 if let Entry::Vacant(entry) = index.entry(path) {
+                    let file = match FileEntry::new(entry.key(), &metadata) {
+                        Ok(file) => file,
+                        Err(error) => {
+                            error!("Error reading File Entry {}", error);
+                            continue;
+                        }
+                    };
                     entry.insert(file);
                     if let Some(progress) = progress {
                         progress.advance();
@@ -168,7 +176,7 @@ impl FileIndex {
             return;
         }
         self.files = index;
-        self.duplicates.clear();
+        self.duplicates = HashMap::new();
     }
 
     /// Processes indexed files and publishes their count as the progress total.
@@ -211,71 +219,122 @@ impl FileIndex {
         progress: Option<&Progress>,
         cancel: Option<Arc<AtomicBool>>,
     ) {
-        let vec_files: Vec<&FileEntry> = self.files.values().collect();
-
-        let total = vec_files.len();
         if let Some(progress) = progress {
-            progress.publish_total(total);
+            progress.publish_total(self.files.len());
+        }
+        self.duplicates = HashMap::new();
+        let cancelled = || {
+            cancel
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        };
+        let needs_media = |file: &FileEntry| {
+            (self.config.image_config.compare && file.image_hash.is_some())
+                || (self.config.audio_config.compare && file.audio_hash.is_some())
+        };
+        let mut media = Vec::new();
+        let mut first_by_hash = HashMap::new();
+        let mut copies_by_first = HashMap::new();
+
+        for file in self.files.values() {
+            if cancelled() {
+                return;
+            }
+            let media_candidate = needs_media(file);
+            if media_candidate {
+                media.push(file);
+            }
+            if let Some(hash) = &file.hash {
+                match first_by_hash.entry((file.size, hash)) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(&file.path);
+                    }
+                    Entry::Occupied(entry) => {
+                        copies_by_first
+                            .entry(*entry.get())
+                            .or_insert_with(Vec::new)
+                            .push(file);
+                        // Count this copy when its peer set is ready.
+                        continue;
+                    }
+                }
+            }
+            if !media_candidate && let Some(progress) = progress {
+                progress.advance();
+            }
+        }
+        drop(first_by_hash);
+
+        for (first, others) in copies_by_first {
+            let mut members: HashSet<_> = others.iter().map(|file| file.path.clone()).collect();
+            members.insert(first.clone());
+
+            // Publish complete groups so cancellation always leaves symmetric peer links.
+            let mut rows = Vec::with_capacity(others.len());
+            for file in others {
+                if cancelled() {
+                    return;
+                }
+                let mut peers = members.clone();
+                peers.remove(&file.path);
+                rows.push((file.path.clone(), peers));
+                if let Some(progress) = progress
+                    && !needs_media(file)
+                {
+                    progress.advance();
+                }
+            }
+            members.remove(first);
+            self.duplicates.insert(first.clone(), members);
+            self.duplicates.extend(rows);
         }
 
-        // Use DashMap for concurrent access to the duplicates map
-        let duplicates = DashMap::new();
-
-        let min_len = if self.config.image_config.compare
-            || self.config.audio_config.compare
-            || total > 10000
-        {
-            // Each parallel iterator will have at least one item.
-            1
-        } else {
-            // Make parallel iterator behave sequentially, it's faster when we do short comparisons
-            vec_files.len()
-        };
-        // Parallelize the outer loop using rayon
-        let compare_op = || {
-            let _ = vec_files
-                .par_iter()
-                .with_min_len(min_len)
-                .enumerate()
-                .try_for_each(|(i, this_file)| {
-                    if let Some(cancel) = cancel.as_ref()
-                        && cancel.load(Ordering::Relaxed)
-                    {
-                        // short circit the parallel iterator
-                        return Err(());
-                    }
-
-                    for other_file in vec_files.iter().skip(i + 1) {
-                        // Check if the files are matching
-                        if this_file.compare(other_file, &self.config) {
-                            // Insert into the duplicates map
-                            duplicates
-                                .entry(this_file.path.clone())
-                                .or_insert(HashSet::new())
-                                .insert(other_file.path.clone());
-
-                            // Insert the reverse mapping as well
-                            duplicates
-                                .entry(other_file.path.clone())
-                                .or_insert(HashSet::new())
-                                .insert(this_file.path.clone());
-                        }
-                    }
-                    if let Some(progress) = progress {
-                        progress.advance();
-                    }
-                    Ok(())
-                });
-        };
-
-        if let Some(pool) = self.pool.as_ref() {
-            pool.install(compare_op);
-        } else {
-            compare_op();
+        if media.len() < 2 {
+            if media.len() == 1
+                && let Some(progress) = progress
+            {
+                progress.advance();
+            }
+            return;
         }
 
-        // Collect the results from the DashMap back into the `self.duplicates` HashMap
-        self.duplicates = duplicates.into_iter().collect();
+        let media_matches = DashMap::<_, HashSet<_>>::new();
+        let compare_media = || {
+            let _ = media.par_iter().enumerate().try_for_each(|(i, file)| {
+                if cancelled() {
+                    return Err(());
+                }
+                for other in &media[i + 1..] {
+                    if !file.matches_hash(other) && file.compare_media(other, &self.config) {
+                        media_matches
+                            .entry(file.path.clone())
+                            .or_default()
+                            .insert(other.path.clone());
+                        media_matches
+                            .entry(other.path.clone())
+                            .or_default()
+                            .insert(file.path.clone());
+                    }
+                }
+                if let Some(progress) = progress {
+                    progress.advance();
+                }
+                Ok(())
+            });
+        };
+        if let Some(pool) = &self.pool {
+            pool.install(compare_media);
+        } else {
+            compare_media();
+        }
+        for (path, peers) in media_matches {
+            match self.duplicates.entry(path) {
+                Entry::Vacant(entry) => {
+                    entry.insert(peers);
+                }
+                Entry::Occupied(mut entry) => entry.get_mut().extend(peers),
+            }
+        }
     }
 
     pub fn files_len(&self) -> usize {
@@ -361,6 +420,75 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn grouped_matches_agree_with_pairwise_comparison() {
+        let mut index = FileIndex::default();
+        index.config.image_config.threshold = 1;
+        // Include a three-way exact match, missing digests, and a non-transitive image match.
+        let entries = [
+            (8, Some(1), Some(0)),
+            (8, Some(1), None),
+            (8, Some(1), None),
+            (9, Some(1), Some(1)),
+            (9, None, Some(3)),
+            (9, None, None),
+            (8, Some(2), None),
+            (8, Some(2), Some(2)),
+        ];
+        for (id, (size, digest, image)) in entries.into_iter().enumerate() {
+            let path = Arc::new(PathBuf::from(format!("file-{id}")));
+            index.files.insert(
+                path.clone(),
+                FileEntry {
+                    path,
+                    size,
+                    hash: digest.map(|v| chksum::sha1::hash([v]).into()),
+                    image_hash: image.map(|v| image_hasher::ImageHash::from_bytes(&[v]).unwrap()),
+                    audio_hash: None,
+                    modified: None,
+                    created: None,
+                },
+            );
+        }
+        for compare_images in [true, false] {
+            index.config.image_config.compare = compare_images;
+            let mut expected = HashMap::new();
+            for file in index.files.values() {
+                for other in index.files.values() {
+                    if file.path != other.path && file.compare(other, &index.config) {
+                        expected
+                            .entry(file.path.clone())
+                            .or_insert_with(HashSet::new)
+                            .insert(other.path.clone());
+                    }
+                }
+            }
+            let progress = Progress::new();
+            index.find_duplicates(Some(&progress), None);
+            assert_eq!(index.duplicates, expected);
+            assert_eq!(progress.snapshot().done, entries.len());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_skips_file_symlinks_and_matches_lossy_names() {
+        use std::os::unix::{ffi::OsStringExt, fs::symlink};
+        let dir = TestDir::new();
+        let regular = dir.0.join(OsString::from_vec(b"track-\xff".to_vec()));
+        let link = dir.0.join("track-link");
+        fs::write(&regular, b"hello").unwrap();
+        symlink(&regular, &link).unwrap();
+        let config = SearchConfig {
+            include_filter: Some(vec!["*�".into(), "*link".into()]),
+            ..SearchConfig::default()
+        };
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone(), link]), config);
+        index.index_dirs(None, None);
+        assert_eq!(index.files_len(), 1);
+        assert!(index.files.contains_key(&regular));
+    }
 
     #[test]
     fn scan_depth_limits_index() {
@@ -464,6 +592,26 @@ mod tests {
         assert_eq!(index.files_len(), 1);
         assert!(index.files.contains_key(&top));
         assert!(index.duplicates.is_empty());
+        assert_eq!(index.duplicates.capacity(), 0);
+    }
+
+    #[test]
+    fn empty_comparison_releases_previous_results() {
+        let dir = TestDir::new();
+        for name in ["first", "second"] {
+            fs::write(dir.0.join(name), b"copy").unwrap();
+        }
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), SearchConfig::default());
+        index.index_dirs(None, None);
+        index.process_files(None, None);
+        index.find_duplicates(None, None);
+        assert_eq!(index.duplicates.len(), 2);
+
+        fs::write(dir.0.join("second"), b"diff").unwrap();
+        index.process_files(None, None);
+        index.find_duplicates(None, None);
+        assert!(index.duplicates.is_empty());
+        assert_eq!(index.duplicates.capacity(), 0);
     }
 
     struct TestDir(PathBuf);

@@ -21,36 +21,50 @@ use symphonia::core::{
 };
 use tracing::warn;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Hash(Vec<u8>);
+/// Content digest produced by the configured file hash algorithm.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct Hash(DigestBytes);
+
+// Keep the default SHA-1 digest inline without making every file entry carry 64 bytes.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+enum DigestBytes {
+    Md5([u8; 16]),
+    Sha1([u8; 20]),
+    Long(Box<[u8]>),
+}
 
 impl From<md5::Digest> for Hash {
     fn from(d: md5::Digest) -> Self {
-        Hash(d.as_bytes().to_owned())
+        Hash(DigestBytes::Md5(d.into_inner()))
     }
 }
 
 impl From<sha1::Digest> for Hash {
     fn from(d: sha1::Digest) -> Self {
-        Hash(d.as_bytes().to_owned())
+        Hash(DigestBytes::Sha1(d.into_inner()))
     }
 }
 
 impl From<sha2_256::Digest> for Hash {
     fn from(d: sha2_256::Digest) -> Self {
-        Hash(d.as_bytes().to_owned())
+        Hash(DigestBytes::Long(Box::new(d.into_inner())))
     }
 }
 
 impl From<sha2_512::Digest> for Hash {
     fn from(d: sha2_512::Digest) -> Self {
-        Hash(d.as_bytes().to_owned())
+        Hash(DigestBytes::Long(Box::new(d.into_inner())))
     }
 }
 
 impl Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for b in self.0.as_slice() {
+        let bytes: &[u8] = match &self.0 {
+            DigestBytes::Md5(bytes) => bytes,
+            DigestBytes::Sha1(bytes) => bytes,
+            DigestBytes::Long(bytes) => bytes,
+        };
+        for b in bytes {
             write!(f, "{b:02x}")?;
         }
         Ok(())
@@ -87,34 +101,45 @@ pub fn get_quick_hash(
         return get_full_hash(hash, file);
     }
 
-    let step = std::cmp::max(1, file_len / splits);
-    // println!("step {}", step);
-
-    let mut total_buffer = Vec::with_capacity((chunk_size * splits) as usize + 8);
-    let mut temp = vec![0u8; chunk_size as usize];
-
-    for i in 0..splits {
-        let offset = i * step;
-        if offset >= file_len {
-            break;
+    match hash {
+        HashAlgorithm::MD5 => hash_samples::<md5::MD5>(file, file_len, chunk_size, splits),
+        HashAlgorithm::SHA1 => hash_samples::<sha1::SHA1>(file, file_len, chunk_size, splits),
+        HashAlgorithm::SHA256 => {
+            hash_samples::<sha2_256::SHA2_256>(file, file_len, chunk_size, splits)
         }
-
-        let to_read = std::cmp::min(chunk_size, file_len - offset) as usize;
-        // println!("reading {} bytes at {} of {}", to_read, offset, file_len);
-
-        file.seek(std::io::SeekFrom::Start(offset))?;
-        file.read_exact(&mut temp[..to_read])?;
-        total_buffer.extend_from_slice(&temp[..to_read]);
+        HashAlgorithm::SHA512 => {
+            hash_samples::<sha2_512::SHA2_512>(file, file_len, chunk_size, splits)
+        }
     }
-    // append size to the hash, otherwise files that start with the same bytes match
-    total_buffer.extend_from_slice(&file_len.to_le_bytes());
+}
 
-    Ok(match hash {
-        HashAlgorithm::MD5 => md5::chksum(&total_buffer).map(Hash::from)?,
-        HashAlgorithm::SHA1 => sha1::chksum(&total_buffer).map(Hash::from)?,
-        HashAlgorithm::SHA256 => sha2_256::chksum(&total_buffer).map(Hash::from)?,
-        HashAlgorithm::SHA512 => sha2_512::chksum(&total_buffer).map(Hash::from)?,
-    })
+fn hash_samples<H: chksum::Hash>(
+    file: &mut File,
+    file_len: u64,
+    chunk_size: u64,
+    splits: u64,
+) -> Result<Hash, DeckardError>
+where
+    H::Digest: Into<Hash>,
+{
+    let mut hash = H::default();
+    let mut buffer = [0; 8192];
+    // The whole-file fallback guarantees that every sample fits, including the last.
+    let step = file_len / splits;
+    for i in 0..splits {
+        if i == 0 || step != chunk_size {
+            file.seek(std::io::SeekFrom::Start(i * step))?;
+        }
+        let mut remaining = chunk_size;
+        while remaining > 0 {
+            let n = remaining.min(buffer.len() as u64) as usize;
+            file.read_exact(&mut buffer[..n])?;
+            hash.update(&buffer[..n]);
+            remaining -= n as u64;
+        }
+    }
+    hash.update(file_len.to_le_bytes());
+    Ok(hash.digest().into())
 }
 
 #[inline]
@@ -230,6 +255,37 @@ pub fn get_audio_hash<P: AsRef<Path> + std::fmt::Debug>(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn sampled_digests_match_concatenated_bytes() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test_files/images/Sapeck.jpg");
+        let bytes = std::fs::read(&path).unwrap();
+        let mut file = File::open(path).unwrap();
+        let size = bytes.len();
+        for (chunk, splits) in [(1024, 8), (10_000, 3), (size / 4, 4), (0, 8), (1, 0)] {
+            let mut sampled = Vec::new();
+            let input = if chunk == 0 || splits == 0 {
+                bytes.as_slice()
+            } else {
+                for i in 0..splits {
+                    let offset = i * (size / splits);
+                    sampled.extend_from_slice(&bytes[offset..offset + chunk]);
+                }
+                sampled.extend_from_slice(&(size as u64).to_le_bytes());
+                sampled.as_slice()
+            };
+            for (algorithm, expected) in [
+                (HashAlgorithm::MD5, Hash::from(md5::hash(input))),
+                (HashAlgorithm::SHA1, Hash::from(sha1::hash(input))),
+                (HashAlgorithm::SHA256, Hash::from(sha2_256::hash(input))),
+                (HashAlgorithm::SHA512, Hash::from(sha2_512::hash(input))),
+            ] {
+                let actual =
+                    get_quick_hash(&algorithm, chunk as u64, splits as u64, &mut file).unwrap();
+                assert_eq!(actual, expected);
+            }
+        }
+    }
 
     fn audio_fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))

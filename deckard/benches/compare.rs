@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicBool;
 use criterion::{Criterion, criterion_group, criterion_main};
 use deckard::collect_paths;
 use deckard::config::SearchConfig;
+use deckard::file::FileEntry;
 use deckard::index::FileIndex;
 use deckard::progress::Progress;
 use std::hint::black_box;
@@ -11,6 +12,35 @@ use std::hint::black_box;
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut g = c.benchmark_group("compare");
     g.sample_size(10);
+
+    for (name, count, distinct_hashes) in [
+        ("8192_equal_size_distinct", 8192, 8192u64),
+        ("1024_identical", 1024, 1),
+    ] {
+        g.bench_function(name, |b| {
+            let mut index = FileIndex::default();
+            for id in 0..count {
+                let path = Arc::new(std::path::PathBuf::from(format!("file-{id}")));
+                let hash = chksum::sha1::hash((id % distinct_hashes).to_le_bytes()).into();
+                index.files.insert(
+                    path.clone(),
+                    FileEntry {
+                        path,
+                        size: 8,
+                        created: None,
+                        modified: None,
+                        hash: Some(hash),
+                        image_hash: None,
+                        audio_hash: None,
+                    },
+                );
+            }
+            b.iter(|| {
+                index.find_duplicates(None, None);
+                black_box(&index.duplicates);
+            });
+        });
+    }
 
     g.bench_function("test_files", |b| {
         b.iter(|| {
