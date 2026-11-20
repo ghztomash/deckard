@@ -4,6 +4,7 @@ use jwalk::Parallelism;
 use rayon::iter::ParallelIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge};
 use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
+use rusty_chromaprint::Configuration;
 
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -311,6 +312,11 @@ impl FileIndex {
             return;
         }
 
+        let audio_preset = self
+            .config
+            .audio_config
+            .compare
+            .then(Configuration::preset_test1);
         let media_matches = DashMap::<_, HashSet<_>>::new();
         let compare_media = || {
             let _ = media.par_iter().enumerate().try_for_each(|(i, file)| {
@@ -318,7 +324,9 @@ impl FileIndex {
                     return Err(());
                 }
                 for other in &media[i + 1..] {
-                    if !file.matches_hash(other) && file.compare_media(other, &self.config) {
+                    if !file.matches_hash(other)
+                        && file.compare_media(other, &self.config, audio_preset.as_ref())
+                    {
                         media_matches
                             .entry(file.path.clone())
                             .or_default()

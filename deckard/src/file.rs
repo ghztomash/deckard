@@ -150,8 +150,16 @@ impl FileEntry {
         Ok(())
     }
 
+    /// Compares content digests and enabled media fingerprints for a single pair.
     pub fn compare(&self, other: &Self, config: &SearchConfig) -> bool {
-        self.matches_hash(other) || self.compare_media(other, config)
+        if self.matches_hash(other) {
+            return true;
+        }
+        let audio_preset = (config.audio_config.compare
+            && self.audio_hash.is_some()
+            && other.audio_hash.is_some())
+        .then(Configuration::preset_test1);
+        self.compare_media(other, config, audio_preset.as_ref())
     }
 
     /// Returns whether both the indexed sizes and available content digests match.
@@ -160,7 +168,12 @@ impl FileEntry {
     }
 
     /// Compares the enabled media fingerprints using their configured thresholds.
-    pub(crate) fn compare_media(&self, other: &Self, config: &SearchConfig) -> bool {
+    pub(crate) fn compare_media(
+        &self,
+        other: &Self,
+        config: &SearchConfig,
+        audio_preset: Option<&Configuration>,
+    ) -> bool {
         if config.image_config.compare
             && let (Some(this_image), Some(other_image)) =
                 (self.image_hash.as_ref(), other.image_hash.as_ref())
@@ -177,16 +190,14 @@ impl FileEntry {
             }
         }
 
-        if config.audio_config.compare
+        if let Some(audio_preset) = audio_preset
             && let (Some(this_audio), Some(other_audio)) =
                 (self.audio_hash.as_ref(), other.audio_hash.as_ref())
         {
-            let chroma_config = Configuration::preset_test1();
-
             let segments = match rusty_chromaprint::match_fingerprints(
                 this_audio,
                 other_audio,
-                &chroma_config,
+                audio_preset,
             ) {
                 Ok(s) => s,
                 Err(e) => {
