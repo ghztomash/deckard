@@ -9,9 +9,10 @@ use image::{ImageFormat, ImageReader};
 use image_hasher::{HasherConfig, ImageHash};
 use rusty_chromaprint::{Configuration, Fingerprinter};
 use std::{
+    cell::RefCell,
     fmt::Display,
     fs::File,
-    io::{BufReader, Read, Seek},
+    io::{BufReader, ErrorKind, IsTerminal, Read, Seek, SeekFrom},
     path::Path,
 };
 use symphonia::core::{
@@ -74,86 +75,89 @@ impl Display for Hash {
 }
 
 impl FileHasherConfig {
-    /// Computes the configured full or sampled content digest of an open file.
-    #[inline]
+    /// Computes the configured digest from the start of an open file.
     pub fn hash_file(&self, file: &mut File) -> Result<Hash, DeckardError> {
-        if self.full_hash {
-            get_full_hash(&self.hash_algorithm, file)
+        let sampled_len = if self.full_hash || self.size == 0 || self.splits == 0 {
+            None
         } else {
-            get_quick_hash(&self.hash_algorithm, self.size, self.splits, file)
-        }
-    }
-}
-
-#[inline]
-pub fn get_full_hash(hash: &HashAlgorithm, file: &mut File) -> Result<Hash, DeckardError> {
-    file.rewind()?;
-    Ok(match hash {
-        HashAlgorithm::MD5 => md5::chksum(file).map(Hash::from)?,
-        HashAlgorithm::SHA1 => sha1::chksum(file).map(Hash::from)?,
-        HashAlgorithm::SHA256 => sha2_256::chksum(file).map(Hash::from)?,
-        HashAlgorithm::SHA512 => sha2_512::chksum(file).map(Hash::from)?,
-    })
-}
-
-#[inline]
-pub fn get_quick_hash(
-    hash: &HashAlgorithm,
-    chunk_size: u64,
-    splits: u64,
-    file: &mut File,
-) -> Result<Hash, DeckardError> {
-    let file_len = file.metadata()?.len();
-    // Decide if we need to read the whole file
-    let read_whole_file = file_len == 0
-        || chunk_size == 0
-        || splits == 0
-        || splits >= file_len
-        || (file_len / splits) < chunk_size;
-
-    if read_whole_file {
-        return get_full_hash(hash, file);
+            let len = file.metadata()?.len();
+            (self.splits < len && self.size <= len / self.splits).then_some(len)
+        };
+        self.hash_content(file, sampled_len)
     }
 
-    match hash {
-        HashAlgorithm::MD5 => hash_samples::<md5::MD5>(file, file_len, chunk_size, splits),
-        HashAlgorithm::SHA1 => hash_samples::<sha1::SHA1>(file, file_len, chunk_size, splits),
-        HashAlgorithm::SHA256 => {
-            hash_samples::<sha2_256::SHA2_256>(file, file_len, chunk_size, splits)
+    fn hash_content(
+        &self,
+        file: &mut File,
+        sampled_len: Option<u64>,
+    ) -> Result<Hash, DeckardError> {
+        // A worker initializes only the algorithms it uses. All share one read buffer.
+        thread_local! {
+            static BUFFER: RefCell<[u8; 8192]> = const { RefCell::new([0; 8192]) };
+            static MD5: RefCell<md5::MD5> = RefCell::default();
+            static SHA1: RefCell<sha1::SHA1> = RefCell::default();
+            static SHA256: RefCell<sha2_256::SHA2_256> = RefCell::default();
+            static SHA512: RefCell<sha2_512::SHA2_512> = RefCell::default();
         }
-        HashAlgorithm::SHA512 => {
-            hash_samples::<sha2_512::SHA2_512>(file, file_len, chunk_size, splits)
-        }
-    }
-}
 
-fn hash_samples<H: chksum::Hash>(
-    file: &mut File,
-    file_len: u64,
-    chunk_size: u64,
-    splits: u64,
-) -> Result<Hash, DeckardError>
-where
-    H::Digest: Into<Hash>,
-{
-    let mut hash = H::default();
-    let mut buffer = [0; 8192];
-    // The whole-file fallback guarantees that every sample fits, including the last.
-    let step = file_len / splits;
-    for i in 0..splits {
-        if i == 0 || step != chunk_size {
-            file.seek(std::io::SeekFrom::Start(i * step))?;
-        }
-        let mut remaining = chunk_size;
-        while remaining > 0 {
-            let n = remaining.min(buffer.len() as u64) as usize;
-            file.read_exact(&mut buffer[..n])?;
-            hash.update(&buffer[..n]);
-            remaining -= n as u64;
-        }
+        BUFFER.with_borrow_mut(|buffer| match self.hash_algorithm {
+            HashAlgorithm::MD5 => {
+                MD5.with_borrow_mut(|hash| self.hash_with(hash, buffer, file, sampled_len))
+            }
+            HashAlgorithm::SHA1 => {
+                SHA1.with_borrow_mut(|hash| self.hash_with(hash, buffer, file, sampled_len))
+            }
+            HashAlgorithm::SHA256 => {
+                SHA256.with_borrow_mut(|hash| self.hash_with(hash, buffer, file, sampled_len))
+            }
+            HashAlgorithm::SHA512 => {
+                SHA512.with_borrow_mut(|hash| self.hash_with(hash, buffer, file, sampled_len))
+            }
+        })
     }
-    hash.update(file_len.to_le_bytes());
-    Ok(hash.digest().into())
+
+    fn hash_with<H: chksum::Hash>(
+        &self,
+        hash: &mut H,
+        buffer: &mut [u8],
+        file: &mut File,
+        sampled_len: Option<u64>,
+    ) -> Result<Hash, DeckardError>
+    where
+        H::Digest: Into<Hash>,
+    {
+        hash.reset();
+        file.rewind()?;
+        if let Some(len) = sampled_len {
+            let step = len / self.splits;
+            for i in 0..self.splits {
+                if i > 0 && step != self.size {
+                    file.seek(SeekFrom::Start(i * step))?;
+                }
+                let mut remaining = self.size;
+                while remaining > 0 {
+                    let n = remaining.min(buffer.len() as u64) as usize;
+                    file.read_exact(&mut buffer[..n])?;
+                    hash.update(&buffer[..n]);
+                    remaining -= n as u64;
+                }
+            }
+            hash.update(len.to_le_bytes());
+        } else {
+            if file.is_terminal() {
+                return Err(chksum::Error::IsTerminal.into());
+            }
+            loop {
+                match file.read(buffer) {
+                    Ok(0) => break,
+                    Ok(n) => hash.update(&buffer[..n]),
+                    Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(chksum::Error::Io(e).into()),
+                }
+            }
+        }
+        Ok(hash.digest().into())
+    }
 }
 
 #[inline]
@@ -294,10 +298,51 @@ mod tests {
                 (HashAlgorithm::SHA256, Hash::from(sha2_256::hash(input))),
                 (HashAlgorithm::SHA512, Hash::from(sha2_512::hash(input))),
             ] {
-                let actual =
-                    get_quick_hash(&algorithm, chunk as u64, splits as u64, &mut file).unwrap();
+                let config = FileHasherConfig {
+                    hash_algorithm: algorithm,
+                    size: chunk as u64,
+                    splits: splits as u64,
+                    full_hash: false,
+                };
+                let actual = config.hash_file(&mut file).unwrap();
                 assert_eq!(actual, expected);
             }
+        }
+    }
+
+    #[test]
+    fn digest_recovers_after_incomplete_sample() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test_files");
+        let short = root.join("file.txt");
+        let len = short.metadata().unwrap().len();
+        assert!(len > 0);
+        let next = root.join("images/Sapeck.jpg");
+        let bytes = std::fs::read(&next).unwrap();
+        for (algorithm, expected) in [
+            (HashAlgorithm::MD5, Hash::from(md5::hash(&bytes))),
+            (HashAlgorithm::SHA1, Hash::from(sha1::hash(&bytes))),
+            (HashAlgorithm::SHA256, Hash::from(sha2_256::hash(&bytes))),
+            (HashAlgorithm::SHA512, Hash::from(sha2_512::hash(&bytes))),
+        ] {
+            let mut config = FileHasherConfig {
+                hash_algorithm: algorithm,
+                size: len,
+                splits: 2,
+                full_hash: false,
+            };
+            // Simulate a file shortened after metadata was read. The first sample succeeds.
+            let err = config
+                .hash_content(&mut File::open(&short).unwrap(), Some(2 * len))
+                .unwrap_err();
+            assert!(
+                matches!(err, DeckardError::IoError(e) if e.kind() == ErrorKind::UnexpectedEof)
+            );
+
+            config.full_hash = true;
+            assert_eq!(
+                config.hash_file(&mut File::open(&next).unwrap()).unwrap(),
+                expected
+            );
         }
     }
 
