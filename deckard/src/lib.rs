@@ -32,11 +32,24 @@ impl Serialize for SerializablePath {
 }
 
 pub fn collect_paths<P: AsRef<Path>>(target_paths: Vec<P>) -> HashSet<PathBuf> {
+    collect_paths_with_depth(&target_paths, None)
+}
+
+/// Collects normalized scan roots, retaining explicit descendants when depth is bounded.
+pub fn collect_paths_with_depth<P: AsRef<Path>>(
+    target_paths: &[P],
+    depth: Option<usize>,
+) -> HashSet<PathBuf> {
     let mut paths: HashSet<PathBuf> = HashSet::with_capacity(target_paths.len());
 
     for path in target_paths {
         let path: PathBuf = path.as_ref().components().collect();
         let path = fs::canonicalize(&path).unwrap_or(path);
+
+        if depth.is_some() {
+            paths.insert(path);
+            continue;
+        }
 
         let mut to_insert = true;
 

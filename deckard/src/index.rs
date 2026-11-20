@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 use crate::config::SearchConfig;
 use crate::file::FileEntry;
 use crate::progress::Progress;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::path::PathBuf;
 
 use tracing::{debug, error, trace, warn};
@@ -58,9 +58,10 @@ impl FileIndex {
         }
     }
 
-    /// Indexes accepted files and advances progress without publishing a total.
+    /// Replaces the indexed files and clears previous duplicate results on completion.
     ///
-    /// Cancellation is checked while walking, but already scheduled work may still complete.
+    /// Progress counts accepted files without publishing a total. Cancellation preserves
+    /// the previous index and duplicate results.
     pub fn index_dirs(&mut self, progress: Option<&Progress>, cancel: Option<Arc<AtomicBool>>) {
         let include_filter = build_glob_set(self.config.include_filter.as_deref());
         let exclude_filter = build_glob_set(self.config.exclude_filter.as_deref());
@@ -74,83 +75,100 @@ impl FileIndex {
                 busy_timeout: Duration::from_secs(1),
             }
         };
+        let mut index = HashMap::new();
+        let cancelled = || {
+            cancel
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        };
         for dir in &self.dirs {
-            let index: HashMap<Arc<PathBuf>, FileEntry> = jwalk::WalkDir::new(dir)
+            if cancelled() {
+                return;
+            }
+            let mut walker = jwalk::WalkDir::new(dir)
                 .parallelism(parallelism.to_owned())
                 .sort(false)
-                .skip_hidden(self.config.skip_hidden)
-                .into_iter()
-                .filter_map(|entry| {
-                    if let Some(cancel) = cancel.as_ref()
-                        && cancel.load(Ordering::Relaxed)
-                    {
-                        // TODO: this doesn't really short circuit the parallel iterator
-                        return None;
+                .skip_hidden(self.config.skip_hidden);
+            if let Some(depth) = self.config.depth {
+                walker = walker.max_depth(depth);
+            }
+            for entry in walker {
+                if cancelled() {
+                    return;
+                }
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        warn!("failed indexing file {}", error);
+                        continue;
                     }
-                    match entry {
-                        Ok(entry) => {
-                            let path = entry.path();
+                };
+                let path = entry.path();
+                if !path.is_file() || path.is_symlink() {
+                    continue;
+                }
 
-                            if path.is_file() && !path.is_symlink() {
-                                // Check filename filter
-                                let file_name = entry.file_name().to_string_lossy();
-                                if let Some(exclude_filter) = exclude_filter.as_ref()
-                                    && exclude_filter.is_match(file_name.as_ref())
-                                {
-                                    trace!("File '{}' matches an exclude filter", file_name);
-                                    return None;
-                                }
-                                if let Some(include_filter) = include_filter.as_ref() {
-                                    if !include_filter.is_match(file_name.as_ref()) {
-                                        return None;
-                                    } else {
-                                        trace!("File '{}' matches an include filter", file_name);
-                                    }
-                                }
-
-                                // Skip files that are smaller in size
-                                let metadata = entry
-                                    .metadata()
-                                    .inspect_err(|e| error!("Error reading metadata {}", e))
-                                    .ok()?;
-                                let file_size = metadata.len();
-                                if file_size < self.config.min_size {
-                                    trace!(
-                                        "Skipping file {}, size {} smaller than {}",
-                                        file_name, file_size, self.config.min_size,
-                                    );
-                                    return None;
-                                }
-                                if let Some(max_size) = self.config.max_size
-                                    && file_size > max_size
-                                {
-                                    trace!(
-                                        "Skipping file {}, size {} larger than {}",
-                                        file_name, file_size, max_size,
-                                    );
-                                    return None;
-                                }
-
-                                let path = Arc::new(path);
-                                let file = FileEntry::new(&path, &metadata)
-                                    .inspect_err(|e| error!("Error reading File Entry {}", e))
-                                    .ok()?;
-
-                                if let Some(progress) = progress {
-                                    progress.advance();
-                                }
-                                return Some((path, file));
-                            }
-                        }
-                        Err(e) => {
-                            warn!("failed indexing file {}", e);
-                        }
+                let file_name = entry.file_name().to_string_lossy();
+                if exclude_filter
+                    .as_ref()
+                    .is_some_and(|filter| filter.is_match(file_name.as_ref()))
+                {
+                    trace!("File '{}' matches an exclude filter", file_name);
+                    continue;
+                }
+                if let Some(filter) = &include_filter {
+                    if !filter.is_match(file_name.as_ref()) {
+                        continue;
                     }
-                    None
-                })
-                .collect();
-            self.files.extend(index);
+                    trace!("File '{}' matches an include filter", file_name);
+                }
+
+                let metadata = match entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(error) => {
+                        error!("Error reading metadata {}", error);
+                        continue;
+                    }
+                };
+                let file_size = metadata.len();
+                if file_size < self.config.min_size {
+                    trace!(
+                        "Skipping file {}, size {} smaller than {}",
+                        file_name, file_size, self.config.min_size
+                    );
+                    continue;
+                }
+                if let Some(max_size) = self.config.max_size
+                    && file_size > max_size
+                {
+                    trace!(
+                        "Skipping file {}, size {} larger than {}",
+                        file_name, file_size, max_size
+                    );
+                    continue;
+                }
+
+                let path = Arc::new(path);
+                let file = match FileEntry::new(&path, &metadata) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        error!("Error reading File Entry {}", error);
+                        continue;
+                    }
+                };
+                if let Entry::Vacant(entry) = index.entry(path) {
+                    entry.insert(file);
+                    if let Some(progress) = progress {
+                        progress.advance();
+                    }
+                }
+            }
         }
+        if cancelled() {
+            return;
+        }
+        self.files = index;
+        self.duplicates.clear();
     }
 
     /// Processes indexed files and publishes their count as the progress total.
@@ -341,7 +359,112 @@ mod tests {
     use super::*;
     use crate::progress::{Progress, ProgressSnapshot};
     use std::fs;
+    use std::path::Path;
     use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn scan_depth_limits_index() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test_files/folder");
+        let top = "another.txt";
+        let mid = "subfolder/midfile";
+        let deep = "subfolder/deepfolder/deepfile";
+        let file = root.join(top);
+        let cases: &[(&Path, Option<usize>, &[&str])] = &[
+            (&root, Some(0), &[]),
+            (&root, Some(1), &[top]),
+            (&root, Some(2), &[top, mid]),
+            (&root, None, &[top, mid, deep]),
+            (&file, Some(0), &[top]),
+        ];
+        for &(path, depth, expected) in cases {
+            let config = SearchConfig {
+                depth,
+                threads: 1,
+                ..SearchConfig::default()
+            };
+            let mut index = FileIndex::new(HashSet::from([path.to_owned()]), config);
+            index.index_dirs(None, None);
+            let paths: HashSet<_> = index
+                .files
+                .keys()
+                .map(|path| path.strip_prefix(&root).unwrap())
+                .collect();
+            assert_eq!(
+                paths,
+                expected.iter().map(Path::new).collect(),
+                "root {path:?}, depth {depth:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scan_depth_preserves_nested_roots() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../test_files/folder")
+            .canonicalize()
+            .unwrap();
+        let subfolder = root.join("subfolder");
+        let top = root.join("another.txt");
+        let mid = subfolder.join("midfile");
+        let deep = subfolder.join("deepfolder/deepfile");
+        let cases: &[([&Path; 2], usize, &[&Path])] = &[
+            ([&root, &subfolder], 1, &[&top, &mid]),
+            ([&subfolder, &root], 1, &[&top, &mid]),
+            ([&root, &subfolder], 2, &[&top, &mid, &deep]),
+        ];
+        for &(roots, depth, expected) in cases {
+            let config = SearchConfig {
+                depth: Some(depth),
+                threads: 1,
+                ..SearchConfig::default()
+            };
+            let progress = Progress::new();
+            let mut index = FileIndex::new(
+                crate::collect_paths_with_depth(&roots, config.depth),
+                config,
+            );
+            index.index_dirs(Some(&progress), None);
+            assert_eq!(
+                index
+                    .files
+                    .keys()
+                    .map(|path| path.as_path())
+                    .collect::<HashSet<_>>(),
+                expected.iter().copied().collect(),
+                "roots {roots:?}, depth {depth}"
+            );
+            assert_eq!(
+                progress.snapshot().done,
+                expected.len(),
+                "roots {roots:?}, depth {depth}"
+            );
+        }
+    }
+
+    #[test]
+    fn rescan_replaces_files_and_invalidates_duplicates() {
+        let dir = TestDir::new();
+        let nested = dir.0.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let top = dir.0.join("original");
+        fs::write(&top, b"identical contents").unwrap();
+        fs::write(nested.join("copy"), b"identical contents").unwrap();
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), SearchConfig::default());
+        index.index_dirs(None, None);
+        index.process_files(None, None);
+        index.find_duplicates(None, None);
+        assert_eq!(index.duplicates_len(), 2);
+
+        index.config.depth = Some(1);
+        index.index_dirs(None, Some(Arc::new(AtomicBool::new(true))));
+        assert_eq!(index.files_len(), 2);
+        assert_eq!(index.duplicates_len(), 2);
+
+        index.index_dirs(None, None);
+        assert_eq!(index.files_len(), 1);
+        assert!(index.files.contains_key(&top));
+        assert!(index.duplicates.is_empty());
+    }
 
     struct TestDir(PathBuf);
 

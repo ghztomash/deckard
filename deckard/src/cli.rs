@@ -100,10 +100,18 @@ pub fn commands() -> Command {
         )
         .arg(
             Arg::new("disk_usage")
-                .short('d')
+                .short('D')
                 .long("disk_usage")
                 .action(ArgAction::SetTrue)
                 .help("Index the files only and display the size"),
+        )
+        .arg(
+            Arg::new("depth")
+                .short('d')
+                .long("depth")
+                .value_name("DEPTH")
+                .value_parser(value_parser!(usize))
+                .help("Depth to scan (1 scans direct children)"),
         )
         .arg(
             Arg::new("check_image")
@@ -204,6 +212,9 @@ pub fn augment_config(mut config: SearchConfig, args: &ArgMatches) -> SearchConf
     if let Some(s) = args.get_one::<u64>("max_size") {
         config.max_size = Some(*s);
     }
+    if let Some(&depth) = args.get_one::<usize>("depth") {
+        config.depth = Some(depth);
+    }
 
     let check_image = args.get_flag("check_image");
     if check_image {
@@ -242,6 +253,45 @@ pub fn log_level(count: u8) -> Level {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_depth_flags_set_config() {
+        for (mode, depth) in [("-D", "-d"), ("--disk_usage", "--depth")] {
+            let matches = commands()
+                .try_get_matches_from(["app", mode, depth, "1"])
+                .unwrap();
+            assert!(matches.get_flag("disk_usage"));
+            assert_eq!(
+                augment_config(SearchConfig::default(), &matches).depth,
+                Some(1)
+            );
+        }
+    }
+
+    #[test]
+    fn scan_depth_overrides_config_only_when_supplied() {
+        let config = SearchConfig {
+            depth: Some(2),
+            ..SearchConfig::default()
+        };
+        let omitted = commands().try_get_matches_from(["app"]).unwrap();
+        assert_eq!(augment_config(config.clone(), &omitted).depth, Some(2));
+        let zero = commands()
+            .try_get_matches_from(["app", "--depth", "0"])
+            .unwrap();
+        assert_eq!(augment_config(config, &zero).depth, Some(0));
+    }
+
+    #[test]
+    fn scan_depth_rejects_invalid_values() {
+        for args in [
+            &["app", "-d"][..],
+            &["app", "--depth", "-1"],
+            &["app", "--depth", "abc"],
+        ] {
+            assert!(commands().try_get_matches_from(args).is_err());
+        }
+    }
 
     #[test]
     fn test_log_level_conversion() {

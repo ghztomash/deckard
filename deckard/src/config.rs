@@ -139,6 +139,9 @@ pub struct SearchConfig {
     /// Maximum accepted file size in bytes, or no upper bound when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_size: Option<u64>,
+    /// Maximum scan depth from each input path, or unlimited when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<usize>,
     pub hasher_config: HasherConfig,
     pub image_config: ImageConfig,
     pub audio_config: AudioConfig,
@@ -186,6 +189,7 @@ impl Default for SearchConfig {
             exclude_filter: None,
             min_size: 0,
             max_size: None,
+            depth: None,
             hasher_config: HasherConfig::default(),
             image_config: ImageConfig::default(),
             audio_config: AudioConfig::default(),

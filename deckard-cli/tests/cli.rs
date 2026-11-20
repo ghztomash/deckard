@@ -1,7 +1,55 @@
 use assert_cmd::Command;
+use deckard::config::SearchConfig;
 use predicates::prelude::*;
 use std::env;
 use std::path::{Path, PathBuf};
+
+#[test]
+fn scan_depth_reads_config_without_depth() {
+    let config = SearchConfig {
+        skip_hidden: true,
+        ..SearchConfig::default()
+    };
+    let serialized = serde_json::to_value(config).unwrap();
+    assert!(serialized.get("depth").is_none());
+    let config: SearchConfig = serde_json::from_value(serialized).unwrap();
+    assert!(config.skip_hidden);
+    assert_eq!(config.depth, None);
+}
+
+#[test]
+fn scan_depth_limits_disk_usage() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let config_dir = env::temp_dir().join(format!("deckard-depth-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&config_dir).unwrap();
+    let root = test_files_path().join("folder");
+    let subfolder = root.join("subfolder");
+    let output = Command::cargo_bin(env!("CARGO_PKG_NAME"))
+        .unwrap()
+        .env("XDG_CONFIG_HOME", &config_dir)
+        .env("APPDATA", &config_dir)
+        .args(["-D", "-d", "1", "--json"])
+        .arg(&root)
+        .arg(&subfolder)
+        .output();
+    std::fs::remove_dir_all(config_dir).unwrap();
+    let output = output.unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut rows: Vec<(PathBuf, u64)> = serde_json::from_slice(&output.stdout).unwrap();
+    rows.sort_unstable();
+    let expected = [root.join("another.txt"), subfolder.join("midfile")].map(|path| {
+        let size = path.metadata().unwrap().len();
+        (path, size)
+    });
+    assert_eq!(rows, expected);
+}
 
 /// Helper to get path of test_files directory
 fn test_files_path() -> PathBuf {

@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
         Some(values) => values.map(|v| v.as_str()).collect::<Vec<&str>>(),
         None => vec!["."],
     };
-    let target_paths = deckard::collect_paths(target_dirs);
+    let target_paths = deckard::collect_paths_with_depth(&target_dirs, config.depth);
     if !deckard::validate_paths(&target_paths) {
         eprintln!("No valid paths provided");
         std::process::exit(1);
