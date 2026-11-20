@@ -113,8 +113,8 @@ impl Default for AudioConfig {
         Self {
             compare: false,
             read_tags: false,
-            segments_limit: 2,
-            threshold: 5.0,
+            segments_limit: 3,
+            threshold: 2.0,
         }
     }
 }
