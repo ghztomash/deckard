@@ -1,5 +1,7 @@
 use crate::{
-    config::{HashAlgorithm, ImageFilterAlgorithm, ImageHashAlgorithm},
+    config::{
+        HashAlgorithm, HasherConfig as FileHasherConfig, ImageFilterAlgorithm, ImageHashAlgorithm,
+    },
     error::DeckardError,
 };
 use chksum::{md5, sha1, sha2_256, sha2_512};
@@ -68,6 +70,18 @@ impl Display for Hash {
             write!(f, "{b:02x}")?;
         }
         Ok(())
+    }
+}
+
+impl FileHasherConfig {
+    /// Computes the configured full or sampled content digest of an open file.
+    #[inline]
+    pub fn hash_file(&self, file: &mut File) -> Result<Hash, DeckardError> {
+        if self.full_hash {
+            get_full_hash(&self.hash_algorithm, file)
+        } else {
+            get_quick_hash(&self.hash_algorithm, self.size, self.splits, file)
+        }
     }
 }
 

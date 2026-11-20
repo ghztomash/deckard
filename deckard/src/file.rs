@@ -85,25 +85,45 @@ impl FileEntry {
         Some(self.path.file_name()?.into())
     }
 
+    /// Computes the content digest and any enabled media fingerprint.
     pub fn process(&mut self, config: &SearchConfig) -> Result<(), DeckardError> {
-        let mut file = File::open(self.path.as_ref())?;
+        self.process_hashes(config, true)
+    }
 
-        if config.hasher_config.full_hash {
-            self.hash = Some(hasher::get_full_hash(
-                &config.hasher_config.hash_algorithm,
-                &mut file,
-            )?);
+    /// Processes a scan candidate, optionally skipping its content digest.
+    pub(crate) fn process_hashes(
+        &mut self,
+        config: &SearchConfig,
+        hash_content: bool,
+    ) -> Result<(), DeckardError> {
+        self.hash = None;
+        self.image_hash = None;
+        self.audio_hash = None;
+
+        let media_type = if config.image_config.compare || config.audio_config.compare {
+            mime_guess::from_path(self.path.as_ref())
+                .first_raw()
+                .map(MediaType::from)
         } else {
-            self.hash = Some(hasher::get_quick_hash(
-                &config.hasher_config.hash_algorithm,
-                config.hasher_config.size,
-                config.hasher_config.splits,
-                &mut file,
-            )?)
+            Some(MediaType::Other)
+        };
+        let check_media = match media_type {
+            Some(MediaType::Image) => config.image_config.compare,
+            Some(MediaType::Audio) => config.audio_config.compare,
+            Some(_) => false,
+            None => true, // Unknown extension: inspect the file header.
+        };
+        if !hash_content && !check_media {
+            return Ok(());
         }
 
-        if config.image_config.compare || config.audio_config.compare {
-            match MediaType::from(get_mime_type(self.path.as_ref(), &mut file).unwrap_or_default())
+        let mut file = File::open(self.path.as_ref())?;
+        if hash_content {
+            self.hash = Some(config.hasher_config.hash_file(&mut file)?);
+        }
+        if check_media {
+            match media_type
+                .unwrap_or_else(|| MediaType::from(sniff_mime_type(&mut file).unwrap_or_default()))
             {
                 MediaType::Image if config.image_config.compare => {
                     self.image_hash = hasher::get_image_hash(
@@ -210,14 +230,15 @@ pub fn get_mime_type<P: AsRef<Path> + std::fmt::Debug, R: Read + Seek>(
     let mime = mime_guess::from_path(&path).first_raw();
     match mime {
         Some(mime_type) => Ok(mime_type),
-        None => {
-            let mut magic = [0; MAGIC_SIZE];
-            file.rewind()?;
-            let n = file.read(&mut magic)?;
-            // Find the MIME type
-            Ok(tree_magic::from_u8(&magic[..n]))
-        }
+        None => sniff_mime_type(file),
     }
+}
+
+fn sniff_mime_type(file: &mut (impl Read + Seek)) -> Result<&'static str, DeckardError> {
+    let mut magic = [0; MAGIC_SIZE];
+    file.rewind()?;
+    let n = file.read(&mut magic)?;
+    Ok(tree_magic::from_u8(&magic[..n]))
 }
 
 pub fn read_id3_tags(file: &mut File) -> Option<AudioTags> {

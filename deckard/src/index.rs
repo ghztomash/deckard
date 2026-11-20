@@ -179,24 +179,37 @@ impl FileIndex {
         self.duplicates = HashMap::new();
     }
 
-    /// Processes indexed files and publishes their count as the progress total.
+    /// Hashes content only for repeated sizes and processes all enabled media candidates.
+    /// Progress counts all indexed files, including files skipped by the size filter.
     pub fn process_files(&mut self, progress: Option<&Progress>, cancel: Option<Arc<AtomicBool>>) {
         let total = self.files_len();
         if let Some(progress) = progress {
             progress.publish_total(total);
         }
 
+        let cancelled = || {
+            cancel
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        };
+        let mut repeated_sizes = HashMap::new();
+        for file in self.files.values() {
+            if cancelled() {
+                return;
+            }
+            repeated_sizes
+                .entry(file.size)
+                .and_modify(|repeated| *repeated = true)
+                .or_insert(false);
+        }
+
         let mut process_op = || {
             let _ = self.files.values_mut().par_bridge().try_for_each(|f| {
-                if let Some(cancel) = cancel.as_ref()
-                    && cancel.load(Ordering::Relaxed)
-                {
-                    // short circit the parallel iterator
-                    // TODO: this still doesn't cancel ongoing processing
+                if cancelled() {
                     return Err(());
                 }
 
-                if let Err(e) = f.process(&self.config) {
+                if let Err(e) = f.process_hashes(&self.config, repeated_sizes[&f.size]) {
                     error!("Error processing file {}", e);
                 }
                 if let Some(progress) = progress {
@@ -733,6 +746,66 @@ mod tests {
                 total: None,
             }
         );
+    }
+
+    #[test]
+    fn unique_sizes_skip_content_hashing() {
+        let dir = TestDir::new();
+        let single = dir.0.join("single");
+        let first = dir.0.join("first");
+        let second = dir.0.join("second");
+        fs::write(&single, b"longer").unwrap();
+        fs::write(&first, b"same").unwrap();
+        fs::write(&second, b"same").unwrap();
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), SearchConfig::default());
+        index.index_dirs(None, None);
+
+        for full_hash in [false, true] {
+            index.config.hasher_config.full_hash = full_hash;
+            let progress = Progress::new();
+            index.process_files(Some(&progress), None);
+            index.find_duplicates(None, None);
+            assert!(index.files[&single].hash.is_none());
+            assert!(index.files[&first].hash.is_some());
+            assert_eq!(
+                index.duplicates[&first],
+                HashSet::from([Arc::new(second.clone())])
+            );
+            assert_eq!(
+                progress.snapshot(),
+                ProgressSnapshot {
+                    done: 3,
+                    total: Some(3)
+                }
+            );
+        }
+
+        index.files.remove(&second);
+        index.process_files(None, None);
+        assert!(index.files[&first].hash.is_none());
+    }
+
+    #[test]
+    fn unique_sizes_still_match_images() {
+        let dir = TestDir::new();
+        let first = dir.0.join("first.png");
+        let second = dir.0.join("second.png");
+        for (size, path) in [(8, &first), (128, &second)] {
+            image::GrayImage::new(size, size).save(path).unwrap();
+        }
+        let mut index = FileIndex::new(HashSet::from([dir.0.clone()]), SearchConfig::default());
+        index.config.image_config.compare = true;
+        index.index_dirs(None, None);
+        assert_ne!(index.files[&first].size, index.files[&second].size);
+        index.process_files(None, None);
+        index.find_duplicates(None, None);
+        assert!(
+            index
+                .files
+                .values()
+                .all(|f| f.hash.is_none() && f.image_hash.is_some())
+        );
+        assert!(index.duplicates[&first].contains(&second));
     }
 
     #[test]

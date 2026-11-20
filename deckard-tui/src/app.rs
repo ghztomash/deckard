@@ -31,7 +31,10 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, SystemTime},
 };
-use tokio::{sync::watch, task::AbortHandle};
+use tokio::{
+    sync::watch,
+    task::{AbortHandle, JoinSet},
+};
 use tracing::{debug, error, warn};
 
 const SHIFT_TABLE_JUMP_DIVISOR: usize = 4;
@@ -327,6 +330,8 @@ impl App {
         self.abort_handle = Some(task_handle.abort_handle());
 
         let mut should_redraw = true;
+        let mut info_hash_task = JoinSet::new();
+        let mut last_hash_request = None;
         while !self.should_exit {
             tokio::select! {
                 // interval timer
@@ -334,6 +339,15 @@ impl App {
                     let state = rx.borrow_and_update().display_state();
                     should_redraw |= self.handle_state(state);
                     if should_redraw {
+                        if self.is_done() && self.show_file_info && !self.disk_usage_mode && info_hash_task.is_empty() {
+                            let selected = self.active_selected_file();
+                            if selected != last_hash_request {
+                                if let Some(path) = &selected {
+                                    self.load_info_hash(path, &mut info_hash_task);
+                                }
+                                last_hash_request = selected;
+                            }
+                        }
                         should_redraw = false;
                         let render_start = Instant::now();
                         terminal.draw(|frame| {
@@ -349,6 +363,12 @@ impl App {
                 // terminal events
                 Some(Ok(event)) = events.next() => {
                     should_redraw |= self.handle_events(event)?;
+                },
+                Some(result) = info_hash_task.join_next(), if !info_hash_task.is_empty() => {
+                    if let Err(error) = result {
+                        warn!(%error, "File info hash task failed");
+                    }
+                    should_redraw = true;
                 },
                 else => break,
             }
@@ -1205,6 +1225,39 @@ impl App {
         block.render(area, buf)
     }
 
+    fn load_info_hash(&self, path: &Arc<PathBuf>, tasks: &mut JoinSet<()>) {
+        let config = {
+            let Ok(index) = self.file_index.read() else {
+                return;
+            };
+            if !index
+                .files
+                .get(path)
+                .is_some_and(|file| file.hash.is_none())
+            {
+                return;
+            }
+            index.config.hasher_config
+        };
+        let index = self.file_index.clone();
+        let path = path.clone();
+        tasks.spawn_blocking(move || {
+            let result = fs::File::open(path.as_ref())
+                .map_err(deckard::error::DeckardError::from)
+                .and_then(|mut file| config.hash_file(&mut file));
+            match result {
+                Ok(hash) => {
+                    if let Ok(mut index) = index.write()
+                        && let Some(entry) = index.files.get_mut(&path)
+                    {
+                        entry.hash = Some(hash);
+                    }
+                }
+                Err(error) => warn!(?path, %error, "Could not load file info hash"),
+            }
+        });
+    }
+
     fn render_file_info(&self, buf: &mut Buffer, area: Rect) {
         let info_lines = self.selected_info_lines();
 
@@ -1875,6 +1928,27 @@ fn shift_table_jump_step(table_len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn file_info_caches_deferred_digest() {
+        let app = app_with_empty_tables();
+        let path =
+            Arc::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test_files/file.txt"));
+        let mut entry = FileEntry::new(&path, &path.metadata().unwrap()).unwrap();
+        app.file_index
+            .write()
+            .unwrap()
+            .files
+            .insert(path.clone(), entry.clone());
+        entry.process(&SearchConfig::default()).unwrap();
+
+        let mut tasks = JoinSet::new();
+        app.load_info_hash(&path, &mut tasks);
+        tasks.join_next().await.unwrap().unwrap();
+        assert_eq!(app.file_index.read().unwrap().files[&path].hash, entry.hash);
+        app.load_info_hash(&path, &mut tasks);
+        assert!(tasks.is_empty());
+    }
 
     #[test]
     fn worker_indexing_state_reads_progress() {
