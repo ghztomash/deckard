@@ -15,7 +15,7 @@ clap.workspace = true
 open.workspace = true
 
 chksum = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 tree_magic = { version = "0.2", features = ["staticmime"] }
 mime_guess = "2.0"
 thiserror = "2.0"
@@ -23,7 +23,7 @@ thiserror = "2.0"
 confy = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 rayon = "1.11"
-jwalk = "0.8"
+jwalk = "0.9"
 globset = "0.4"
 
 image_hasher = "3.0"
@@ -35,7 +35,7 @@ common-path = "1.0"
 pathdiff = "0.2"
 
 dashmap = "6.1"
-lofty = "0.24"
+lofty = "0.25"
 
 [dev-dependencies]
 criterion = "0.8"
